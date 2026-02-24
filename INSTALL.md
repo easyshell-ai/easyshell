@@ -71,7 +71,7 @@ The fastest way to get infrastructure running. Server and Web are built/run sepa
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/easyshell-org/easyshell.git
+git clone https://github.com/easyshell-ai/easyshell.git
 cd easyshell
 ```
 
@@ -98,7 +98,7 @@ java -jar build/libs/easyshell-server-0.1.0-SNAPSHOT.jar --server.port=18080
 
 The server will:
 - Auto-create all database tables on first start (Hibernate DDL auto)
-- Create a default admin user: `admin` / `admin123` (change immediately)
+- Create a default admin user: `easyshell` / `easyshell@changeme` (change immediately)
 - Listen on port `18080`
 
 ### 4. Build and serve the Web frontend
@@ -482,7 +482,7 @@ redis-cli ping
 ```bash
 curl -s http://localhost:18080/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"admin123"}' | head -c 200
+  -d '{"username":"easyshell","password":"easyshell@changeme"}' | head -c 200
 
 # Expected: JSON response with token
 ```
@@ -546,9 +546,9 @@ mysql -u root -p -e "SHOW DATABASES LIKE 'easyshell';"
 
 | Service | Port | Protocol | Description |
 |---------|------|----------|-------------|
-| EasyShell Web | 80/443 | HTTP/HTTPS | Frontend (via Nginx) |
+| EasyShell Web | 18880 | HTTP | Frontend (via Nginx/Docker) |
 | EasyShell Server | 18080 | HTTP/WS | Backend API & WebSocket |
-| MySQL | 3306 | TCP | Primary database |
-| Redis | 6379 | TCP | Cache/session store |
+| MySQL | 13306 | TCP | Primary database (Docker) |
+| Redis | 16379 | TCP | Cache/session store (Docker) |
 | Vite Dev Server | 5173 | HTTP | Development only |
 | Swagger UI | 18080/swagger-ui | HTTP | API documentation (dev) |

@@ -50,7 +50,7 @@ cp .env.example .env      # Edit .env if needed
 docker compose up -d
 ```
 
-Open `http://localhost` → login with `admin` / `admin123`.
+Open `http://localhost:18880` → login with `easyshell` / `easyshell@changeme`.
 
 ### Manual Development Setup
 

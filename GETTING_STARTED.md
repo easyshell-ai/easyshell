@@ -25,8 +25,8 @@ Welcome to EasyShell — a lightweight server management and intelligent operati
 Open EasyShell in your browser (e.g. `http://your-server-ip`).
 
 **Default credentials:**
-- Username: `admin`
-- Password: `admin123`
+- Username: `easyshell`
+- Password: `easyshell@changeme`
 
 > Change the default password immediately after first login via **System** → **Users**.
 

@@ -40,15 +40,15 @@ public class DataInitializer implements CommandLineRunner {
     }
 
     private void initAdmin() {
-        if (!userRepository.existsByUsername("admin")) {
+        if (!userRepository.existsByUsername("easyshell")) {
             User admin = new User();
-            admin.setUsername("admin");
-            admin.setPassword(passwordEncoder.encode("admin123"));
+            admin.setUsername("easyshell");
+            admin.setPassword(passwordEncoder.encode("easyshell@changeme"));
             admin.setEmail("admin@easyshell.com");
             admin.setRole("super_admin");
             admin.setStatus(1);
             userRepository.save(admin);
-            log.info("Default admin user created: admin / admin123");
+            log.info("Default admin user created: easyshell / easyshell@changeme");
         }
     }
 

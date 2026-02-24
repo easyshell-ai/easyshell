@@ -6,7 +6,7 @@ services:
       MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:-18923ce29fdab04e}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-easyshell}
     ports:
-      - "${MYSQL_PORT:-3306}:3306"
+      - "${MYSQL_PORT:-13306}:3306"
     volumes:
       - mysql_data:/var/lib/mysql
     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
@@ -21,7 +21,7 @@ services:
     image: redis:7-alpine
     container_name: easyshell-redis
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "${REDIS_PORT:-16379}:6379"
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes
@@ -64,7 +64,7 @@ services:
       dockerfile: Dockerfile.web
     container_name: easyshell-web
     ports:
-      - "${WEB_PORT:-80}:80"
+      - "${WEB_PORT:-18880}:80"
     depends_on:
       easyshell-server:
         condition: service_healthy
