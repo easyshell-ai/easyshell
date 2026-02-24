@@ -18,9 +18,12 @@ Server-Agent Architecture | Batch Script Execution | Real-time Logs | AI-Powered
 ```
 easyshell/
 ├── easyshell-server/     # Central management server (Java 17 + Spring Boot 3.5)
-├── easyshell-agent/      # Agent client (Go 1.23, single binary)
+├── easyshell-agent/      # Agent client (Go 1.24, single binary)
 ├── easyshell-web/        # Web frontend (React + TypeScript + Ant Design)
-├── docker-compose.yml    # Infrastructure services (MySQL, Redis)
+├── docker-compose.yml    # Full-stack deployment (MySQL, Redis, Server, Web)
+├── Dockerfile.server     # Server + Agent binaries multi-stage build
+├── Dockerfile.web        # Web frontend multi-stage build
+├── .env.example          # Environment configuration template
 ├── INSTALL.md            # Detailed installation guide
 ├── GETTING_STARTED.md    # Getting started handbook
 └── README.md
@@ -31,46 +34,27 @@ easyshell/
 | Component | Technology | Details |
 |-----------|-----------|---------|
 | Server | Java 17 + Spring Boot 3.5.10 | Gradle, JPA/Hibernate, QueryDSL, Spring AI, Spring Security |
-| Agent | Go 1.23 | Single binary, zero runtime dependencies |
+| Agent | Go 1.24 | Single binary, zero runtime dependencies |
 | Web | React 19 + TypeScript + Vite 7 | Ant Design 6 UI components |
 | Database | MySQL 8.0 | Primary store, Hibernate auto-DDL |
 | Cache | Redis 7 | Session/cache store |
 | Vector Store | SimpleVectorStore (file-based) | AI memory & SOP features |
 
 ## Quick Start
-
-### 1. Start infrastructure
+### Docker (Recommended)
 
 ```bash
+git clone https://github.com/easyshell-ai/easyshell.git
+cd easyshell
+cp .env.example .env      # Edit .env if needed
 docker compose up -d
 ```
 
-### 2. Start the Server
+Open `http://localhost` → login with `admin` / `admin123`.
 
-```bash
-cd easyshell-server
-./gradlew bootJar
-java -jar build/libs/easyshell-server-0.1.0-SNAPSHOT.jar --server.port=18080
-```
+### Manual Development Setup
 
-### 3. Start the Web frontend
-
-```bash
-cd easyshell-web
-npm install
-npm run dev
-```
-
-### 4. Build the Agent (optional — pre-built binaries included)
-
-```bash
-cd easyshell-agent
-GOOS=linux GOARCH=amd64 go build -o easyshell-agent-linux-amd64 ./cmd/agent
-```
-
-### 5. Login
-
-Open `http://localhost:5173` → login with `admin` / `admin123`.
+See **[Installation Guide](./INSTALL.md)** for manual build instructions.
 
 ## Communication Protocol
 

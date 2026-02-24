@@ -1,5 +1,5 @@
 server:
-  port: 18080
+  port: ${SERVER_PORT:18080}
   servlet:
     context-path: /
 
@@ -11,9 +11,9 @@ spring:
     name: easyshell-server
 
   datasource:
-    url: jdbc:mysql://127.0.0.1:3306/easyshell?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
-    username: root
-    password: 18923ce29fdab04e
+    url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:easyshell}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD:18923ce29fdab04e}
     driver-class-name: com.mysql.cj.jdbc.Driver
 
   jpa:
@@ -28,8 +28,8 @@ spring:
 
   data:
     redis:
-      host: 127.0.0.1
-      port: 6379
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
       database: 0
 
   ai:
@@ -56,17 +56,17 @@ springdoc:
 
 logging:
   level:
-    com.easyshell: debug
+    com.easyshell: ${LOG_LEVEL:debug}
     org.springframework.web: info
     org.hibernate.SQL: debug
 
 easyshell:
   auth:
-    jwt-secret: easyshell-jwt-secret-key-for-development-only-change-in-production-must-be-at-least-64-chars-long
+    jwt-secret: ${JWT_SECRET:easyshell-jwt-secret-key-for-development-only-change-in-production-must-be-at-least-64-chars-long}
     jwt-expire: 86400000
     refresh-expire: 604800000
   security:
-    encryption-key: easyshell-aes256-encryption-key!!
+    encryption-key: ${ENCRYPTION_KEY:easyshell-aes256-encryption-key!!}
   provision:
-    server-url: http://152.53.23.212:18080
-    agent-binary-dir: /root/easyshell/easyshell-agent
+    server-url: ${PROVISION_SERVER_URL:http://127.0.0.1:18080}
+    agent-binary-dir: ${AGENT_BINARY_DIR:/opt/easyshell/agent-binaries}
