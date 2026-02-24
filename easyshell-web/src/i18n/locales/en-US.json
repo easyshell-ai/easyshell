@@ -866,7 +866,9 @@
     "confirmDeleteHost": "Confirm delete this host from database?",
     "deleteHostDescription": "Only removes the host record from the database without remote uninstallation. Use this when the host is unreachable.",
     "deleteHostSuccess": "Host deleted",
-    "deleteHostFailed": "Failed to delete host"
+    "deleteHostFailed": "Failed to delete host",
+    "serverUrlNotConfigured": "Server external URL is not configured. Agents deployed to hosts will not be able to connect back to the server. Please go to System → Configuration and set server.external-url.",
+    "serverUrlNotConfiguredTitle": "Server URL Not Configured"
   },
   "script": {
     "title": "Script Management",

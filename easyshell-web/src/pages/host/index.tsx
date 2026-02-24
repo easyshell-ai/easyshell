@@ -2,17 +2,18 @@ import { useRef, useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
-  Tag, Progress, Space, Button, message, theme, Steps,
+  Tag, Progress, Space, Button, message, theme, Steps, Alert,
   Modal, Form, Input, InputNumber, Drawer, Badge, Popconfirm, Typography, Empty,
 } from 'antd';
 import {
   DesktopOutlined, EyeOutlined, CodeOutlined, DownloadOutlined,
-  PlusOutlined, HistoryOutlined, ReloadOutlined, DeleteOutlined, DisconnectOutlined,
+  PlusOutlined, HistoryOutlined, ReloadOutlined, DeleteOutlined, DisconnectOutlined, SettingOutlined,
 } from '@ant-design/icons';
 import { ProTable } from '@ant-design/pro-components';
 import type { ProColumns, ActionType } from '@ant-design/pro-components';
 import dayjs from 'dayjs';
 import { getHostList, getAgentTags, deleteHost } from '../../api/host';
+import { getSystemConfigList } from '../../api/system';
 import { provisionHost, getProvisionList, getProvisionById, deleteProvision, retryProvision, reinstallAgent, batchReinstallAgents, uninstallAgent } from '../../api/provision';
 import { hostStatusMap, provisionStatusMap, getProvisionStep, provisionStepItems, getResourceColor } from '../../utils/status';
 import { formatBytes } from '../../utils/format';
@@ -57,6 +58,7 @@ const Host: React.FC = () => {
   const actionRef = useRef<ActionType>(null);
   const [agentTags, setAgentTags] = useState<Record<string, TagVO[]>>({});
   const [dataSource, setDataSource] = useState<Agent[]>([]);
+  const [serverUrlConfigured, setServerUrlConfigured] = useState(true);
 
   // Provision states
   const [addModalVisible, setAddModalVisible] = useState(false);
@@ -73,6 +75,16 @@ const Host: React.FC = () => {
       actionRef.current?.reload();
     }, 30000);
     return () => clearInterval(timer);
+  }, []);
+
+  // Check if server.external-url is configured
+  useEffect(() => {
+    getSystemConfigList('system').then((res) => {
+      if (res.code === 200) {
+        const serverUrl = (res.data || []).find((c) => c.configKey === 'server.external-url');
+        setServerUrlConfigured(!!serverUrl?.configValue?.trim());
+      }
+    }).catch(() => { /* ignore */ });
   }, []);
 
   useEffect(() => {
@@ -477,6 +489,21 @@ const Host: React.FC = () => {
 
   return (
     <>
+      {!serverUrlConfigured && (
+        <Alert
+          message={t('host.serverUrlNotConfiguredTitle')}
+          description={t('host.serverUrlNotConfigured')}
+          type="warning"
+          showIcon
+          banner
+          action={
+            <Button size="small" type="primary" icon={<SettingOutlined />} onClick={() => navigate('/system/config')}>
+              {t('nav.system_config')}
+            </Button>
+          }
+          style={{ marginBottom: 16 }}
+        />
+      )}
       <ProTable<Agent>
       columns={columns}
       actionRef={actionRef}

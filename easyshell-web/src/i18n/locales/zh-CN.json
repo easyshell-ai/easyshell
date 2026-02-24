@@ -866,7 +866,9 @@
     "confirmDeleteHost": "确认从数据库中删除此主机？",
     "deleteHostDescription": "仅从平台数据库中移除主机记录，不会远程卸载Agent。适用于主机已不可达的情况。",
     "deleteHostSuccess": "主机已删除",
-    "deleteHostFailed": "删除主机失败"
+    "deleteHostFailed": "删除主机失败",
+    "serverUrlNotConfigured": "尚未配置服务器公网地址，Agent 部署后将无法连接到服务器。请前往 系统管理 → 系统配置 设置 server.external-url。",
+    "serverUrlNotConfiguredTitle": "服务器地址未配置"
   },
   "script": {
     "title": "脚本管理",
