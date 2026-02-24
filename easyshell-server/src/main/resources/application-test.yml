@@ -1,0 +1,56 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: easyshell-server-test
+
+  datasource:
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=MySQL
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
+
+  ai:
+    chat:
+      client:
+        enabled: false
+    openai:
+      api-key: "test-placeholder"
+    anthropic:
+      api-key: "test-placeholder"
+    ollama:
+      base-url: "http://localhost:11434"
+
+easyshell:
+  auth:
+    jwt-secret: easyshell-jwt-secret-key-for-development-only-change-in-production-must-be-at-least-64-chars-long
+    jwt-expire: 86400000
+    refresh-expire: 604800000
+  security:
+    encryption-key: easyshell-aes256-encryption-key!!
+  provision:
+    server-url: http://localhost:8080
+    agent-binary-dir: /tmp/easyshell-agent
+
+logging:
+  level:
+    com.easyshell: warn

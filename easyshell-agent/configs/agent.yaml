@@ -1,0 +1,14 @@
+server:
+  url: http://localhost:18080
+
+agent:
+  id: ""
+
+heartbeat:
+  interval: 30
+
+metrics:
+  interval: 60
+
+log:
+  level: info

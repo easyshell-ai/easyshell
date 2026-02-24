@@ -1,0 +1,25 @@
+# EasyShell Server
+
+## Build
+build/
+target/
+*.class
+*.jar
+*.war
+*.log
+
+## Gradle
+.gradle/
+!gradle/wrapper/gradle-wrapper.jar
+
+## IDE
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+
+## OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,57 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: easyshell-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: 18923ce29fdab04e
+      MYSQL_DATABASE: easyshell
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: easyshell-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ClickHouse is reserved for future execution log storage (Phase 2).
+  # Uncomment when the ClickHouse log integration is implemented.
+  #
+  # clickhouse:
+  #   image: clickhouse/clickhouse-server:24-alpine
+  #   container_name: easyshell-clickhouse
+  #   environment:
+  #     CLICKHOUSE_DB: easyshell_logs
+  #     CLICKHOUSE_USER: easyshell
+  #     CLICKHOUSE_PASSWORD: easyshell
+  #   ports:
+  #     - "8123:8123"
+  #     - "9000:9000"
+  #   volumes:
+  #     - clickhouse_data:/var/lib/clickhouse
+  #   healthcheck:
+  #     test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+
+volumes:
+  mysql_data:
+  redis_data:
+  # clickhouse_data:

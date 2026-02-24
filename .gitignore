@@ -1,0 +1,52 @@
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# IDEs
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+.classpath
+.project
+.settings/
+
+# Java / Gradle
+easyshell-server/build/
+easyshell-server/target/
+easyshell-server/.gradle/
+*.class
+*.jar
+*.war
+
+# Go
+easyshell-agent/easyshell-agent
+easyshell-agent/easyshell-agent-*
+easyshell-agent/vendor/
+*.exe
+*.test
+*.out
+
+# Node.js
+node_modules/
+easyshell-web/dist/
+*.tsbuildinfo
+
+# Docker
+docker-compose.override.yml
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs/
+
+# Data
+data/

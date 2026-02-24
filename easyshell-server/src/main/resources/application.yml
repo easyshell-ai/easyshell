@@ -1,0 +1,72 @@
+server:
+  port: 18080
+  servlet:
+    context-path: /
+
+spring:
+  mvc:
+    async:
+      request-timeout: 300000
+  application:
+    name: easyshell-server
+
+  datasource:
+    url: jdbc:mysql://127.0.0.1:3306/easyshell?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
+    username: root
+    password: 18923ce29fdab04e
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+        format_sql: true
+    show-sql: false
+
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 6379
+      database: 0
+
+  ai:
+    chat:
+      client:
+        enabled: false    # 禁用 ChatClient 自动配置，由 ChatModelFactory 管理
+    openai:
+      api-key: "placeholder"  # 占位，实际使用 DB 中的加密配置
+    anthropic:
+      api-key: "placeholder"
+    ollama:
+      base-url: "http://localhost:11434"
+
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: Asia/Shanghai
+    default-property-inclusion: non_null
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+logging:
+  level:
+    com.easyshell: debug
+    org.springframework.web: info
+    org.hibernate.SQL: debug
+
+easyshell:
+  auth:
+    jwt-secret: easyshell-jwt-secret-key-for-development-only-change-in-production-must-be-at-least-64-chars-long
+    jwt-expire: 86400000
+    refresh-expire: 604800000
+  security:
+    encryption-key: easyshell-aes256-encryption-key!!
+  provision:
+    server-url: http://152.53.23.212:18080
+    agent-binary-dir: /root/easyshell/easyshell-agent

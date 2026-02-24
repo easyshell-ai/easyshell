@@ -1,0 +1,16 @@
+# Build output
+easyshell-agent
+easyshell-agent.exe
+
+# Go
+vendor/
+*.test
+*.out
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
