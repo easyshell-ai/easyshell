@@ -102,6 +102,7 @@ public class DataInitializer implements CommandLineRunner {
     }
 
     private void initSystemConfigs() {
+        createConfigIfAbsent("server.external-url", "", "Server 公网访问地址，Agent 通过此地址连接 Server（例如 http://your-ip:18080）", "system");
         createConfigIfAbsent("agent.heartbeat.interval", "30", "Agent心跳上报间隔（秒）", "agent");
         createConfigIfAbsent("agent.metrics.interval", "60", "Agent指标上报间隔（秒）", "agent");
         createConfigIfAbsent("task.default.timeout", "600", "任务默认超时时间（秒）", "task");

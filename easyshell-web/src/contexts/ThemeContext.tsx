@@ -6,7 +6,7 @@ interface ThemeContextType {
 }
 
 const ThemeContext = createContext<ThemeContextType>({
-  isDark: true,
+  isDark: false,
   toggleTheme: () => {},
 });
 
@@ -16,7 +16,7 @@ export const ThemeProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [isDark, setIsDark] = useState<boolean>(() => {
     const stored = localStorage.getItem(THEME_STORAGE_KEY);
     if (stored !== null) return stored === 'dark';
-    return true;
+    return false;
   });
 
   useEffect(() => {

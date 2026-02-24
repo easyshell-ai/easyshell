@@ -8,6 +8,8 @@ import com.easyshell.server.model.vo.HostCredentialVO;
 import com.easyshell.server.repository.AgentRepository;
 import com.easyshell.server.repository.HostCredentialRepository;
 import com.easyshell.server.service.HostProvisionService;
+import com.easyshell.server.model.entity.SystemConfig;
+import com.easyshell.server.repository.SystemConfigRepository;
 import com.easyshell.server.util.CryptoUtils;
 import com.jcraft.jsch.*;
 import lombok.RequiredArgsConstructor;
@@ -33,6 +35,7 @@ public class HostProvisionServiceImpl implements HostProvisionService {
     private final AgentRepository agentRepository;
     private final CryptoUtils cryptoUtils;
     private final TransactionTemplate transactionTemplate;
+    private final SystemConfigRepository systemConfigRepository;
 
     @Value("${easyshell.provision.server-url:http://127.0.0.1:18080}")
     private String serverUrl;
@@ -317,7 +320,8 @@ public class HostProvisionServiceImpl implements HostProvisionService {
 
             saveStatus(credentialId, "INSTALLING", "正在创建配置和服务...");
 
-            String agentYaml = "server:\n  url: " + serverUrl + "\n\nagent:\n  id: \"\"\n\nheartbeat:\n  interval: 30\n\nmetrics:\n  interval: 60\n\nlog:\n  level: info\n";
+            String resolvedServerUrl = resolveServerUrl();
+            String agentYaml = "server:\n  url: " + resolvedServerUrl + "\n\nagent:\n  id: \"\"\n\nheartbeat:\n  interval: 30\n\nmetrics:\n  interval: 60\n\nlog:\n  level: info\n";
 
             execCommand(session, "cat > /opt/easyshell/configs/agent.yaml << 'EOFCONFIG'\n" + agentYaml + "EOFCONFIG");
             saveLog(credentialId, "Agent配置文件已写入 /opt/easyshell/configs/agent.yaml");
@@ -537,6 +541,37 @@ public class HostProvisionServiceImpl implements HostProvisionService {
         String existing = credential.getProvisionLog() != null ? credential.getProvisionLog() : "";
         if (!existing.isEmpty()) existing += "\n";
         credential.setProvisionLog(existing + message);
+    }
+
+    /**
+     * Resolve the server URL for agent configuration.
+     * Priority: DB config (server.external-url) > env var (PROVISION_SERVER_URL) > application.yml default.
+     * Throws if no usable URL is configured.
+     */
+    private String resolveServerUrl() {
+        // 1. Try DB config first
+        String dbUrl = systemConfigRepository.findByConfigKey("server.external-url")
+                .map(SystemConfig::getConfigValue)
+                .map(String::trim)
+                .filter(v -> !v.isEmpty())
+                .orElse(null);
+        if (dbUrl != null) {
+            log.info("Using server URL from system config: {}", dbUrl);
+            return dbUrl;
+        }
+
+        // 2. Fallback to env / application.yml value
+        if (serverUrl != null && !serverUrl.trim().isEmpty()
+                && !"http://127.0.0.1:18080".equals(serverUrl)
+                && !"http://localhost:18080".equals(serverUrl)
+                && !serverUrl.contains("easyshell-server")) {
+            log.info("Using server URL from environment: {}", serverUrl);
+            return serverUrl;
+        }
+
+        // 3. No valid URL — abort
+        throw new BusinessException(400,
+                "请先在【系统管理 → 系统配置】中设置 server.external-url 为本服务器的公网可访问地址（例如 http://your-ip:18080），否则 Agent 无法连接 Server");
     }
 
     private HostCredentialVO toVO(HostCredential entity) {
