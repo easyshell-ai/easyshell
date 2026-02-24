@@ -1,18 +1,25 @@
-FROM golang:1.24-alpine AS agent-builder
+ARG VERSION=0.1.0
+
+# ---- Stage 1: Build Go Agent binaries (always cross-compile both) ----
+FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS agent-builder
+
+ARG VERSION
 
 WORKDIR /build
 COPY easyshell-agent/ .
 RUN go mod download
 
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.version=0.1.0" -o easyshell-agent-linux-amd64 ./cmd/agent && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w -X main.version=0.1.0" -o easyshell-agent-linux-arm64 ./cmd/agent
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.version=${VERSION}" -o easyshell-agent-linux-amd64 ./cmd/agent && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w -X main.version=${VERSION}" -o easyshell-agent-linux-arm64 ./cmd/agent
 
-FROM gradle:8-jdk17 AS server-builder
+# ---- Stage 2: Build Java Server jar ----
+FROM --platform=$BUILDPLATFORM gradle:8-jdk17 AS server-builder
 
 WORKDIR /build
 COPY easyshell-server/ .
 RUN gradle bootJar --no-daemon -x test
 
+# ---- Stage 3: Production runtime ----
 FROM eclipse-temurin:17-jre-alpine
 
 RUN apk add --no-cache curl tzdata && \

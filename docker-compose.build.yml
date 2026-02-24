@@ -1,0 +1,77 @@
+# Development: local build from source
+# Usage: docker compose -f docker-compose.build.yml up -d
+services:
+  easyshell-mysql:
+    image: mysql:8.0
+    container_name: easyshell-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:-18923ce29fdab04e}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-easyshell}
+    ports:
+      - "${MYSQL_PORT:-13306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  easyshell-redis:
+    image: redis:7-alpine
+    container_name: easyshell-redis
+    ports:
+      - "${REDIS_PORT:-16379}:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  easyshell-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: easyshell-server
+    ports:
+      - "${SERVER_PORT:-18080}:18080"
+    environment:
+      MYSQL_HOST: easyshell-mysql
+      MYSQL_PORT: 3306
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-easyshell}
+      MYSQL_USER: root
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-18923ce29fdab04e}
+      REDIS_HOST: easyshell-redis
+      REDIS_PORT: 6379
+      PROVISION_SERVER_URL: ${PROVISION_SERVER_URL:-http://easyshell-server:18080}
+      JWT_SECRET: ${JWT_SECRET:-easyshell-jwt-secret-key-for-development-only-change-in-production-must-be-at-least-64-chars-long}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-easyshell-aes256-encryption-key!!}
+      JAVA_OPTS: ${JAVA_OPTS:--Xms256m -Xmx512m}
+    depends_on:
+      easyshell-mysql:
+        condition: service_healthy
+      easyshell-redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  easyshell-web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    container_name: easyshell-web
+    ports:
+      - "${WEB_PORT:-18880}:80"
+    depends_on:
+      easyshell-server:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  mysql_data:
+  redis_data:
