@@ -20,10 +20,11 @@ COPY easyshell-server/ .
 RUN gradle bootJar --no-daemon -x test
 
 # ---- Stage 3: Production runtime ----
-FROM eclipse-temurin:17-jre-alpine
+FROM eclipse-temurin:17-jre-jammy
 
-RUN apk add --no-cache curl tzdata && \
-    cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
+RUN apt-get update && apt-get install -y --no-install-recommends curl tzdata && \
+    rm -rf /var/lib/apt/lists/* && \
+    ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
     echo "Asia/Shanghai" > /etc/timezone
 
 WORKDIR /opt/easyshell
