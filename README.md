@@ -18,9 +18,20 @@ cp .env.example .env      # Edit .env if needed
 docker compose up -d
 ```
 
+No local build required — pre-built images are pulled automatically from [GHCR](https://github.com/orgs/easyshell-ai/packages).
+
 Open `http://localhost:18880` → login with `easyshell` / `easyshell@changeme`.
 
-📖 For detailed installation, configuration, and usage guides, visit **[docs.easyshell.ai](https://docs.easyshell.ai)**.
+> **Want to use Docker Hub instead?** Set in `.env`:
+> ```
+> EASYSHELL_SERVER_IMAGE=easyshellai/easyshell-server:latest
+> EASYSHELL_WEB_IMAGE=easyshellai/easyshell-web:latest
+> ```
+
+> **Developer? Build from source:**
+> ```bash
+> docker compose -f docker-compose.build.yml up -d
+> ```
 
 ## Architecture
 
@@ -61,13 +72,15 @@ Open `http://localhost:18880` → login with `easyshell` / `easyshell@changeme`.
 
 ```
 easyshell/
-├── easyshell-server/     # Central management server
-├── easyshell-agent/      # Agent client
-├── easyshell-web/        # Web frontend
-├── docker-compose.yml    # Full-stack deployment
-├── Dockerfile.server     # Server + Agent multi-stage build
-├── Dockerfile.web        # Web frontend multi-stage build
-└── .env.example          # Environment configuration template
+├── easyshell-server/           # Central management server (Java / Spring Boot)
+├── easyshell-agent/            # Agent client (Go, single binary)
+├── easyshell-web/              # Web frontend (React + Ant Design)
+├── docker-compose.yml          # Production deployment (pulls pre-built images)
+├── docker-compose.build.yml    # Development (local build from source)
+├── Dockerfile.server           # Server + Agent multi-stage build
+├── Dockerfile.web              # Web frontend multi-stage build
+├── .github/workflows/          # CI/CD: build & publish Docker images
+└── .env.example                # Environment configuration template
 ```
 
 ## Documentation
