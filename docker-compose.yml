@@ -33,7 +33,7 @@ services:
     restart: unless-stopped
 
   easyshell-server:
-    image: ${EASYSHELL_SERVER_IMAGE:-ghcr.io/easyshell-ai/easyshell/easyshell-server:latest}
+    image: ${EASYSHELL_SERVER_IMAGE:-laolupaojiao/easyshell-server:latest}
     container_name: easyshell-server
     ports:
       - "${SERVER_PORT:-18080}:18080"
@@ -57,7 +57,7 @@ services:
     restart: unless-stopped
 
   easyshell-web:
-    image: ${EASYSHELL_WEB_IMAGE:-ghcr.io/easyshell-ai/easyshell/easyshell-web:latest}
+    image: ${EASYSHELL_WEB_IMAGE:-laolupaojiao/easyshell-web:latest}
     container_name: easyshell-web
     ports:
       - "${WEB_PORT:-18880}:80"

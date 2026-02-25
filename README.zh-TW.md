@@ -20,14 +20,14 @@ cp .env.example .env      # 按需修改 .env
 docker compose up -d
 ```
 
-無需本地建構 — 預建構映像檔將自動從 [GHCR](https://github.com/orgs/easyshell-ai/packages) 拉取。
+無需本地建構 — 預建構映像檔將自動從 [Docker Hub](https://hub.docker.com/u/laolupaojiao) 拉取。
 
 開啟 `http://localhost:18880` → 使用 `easyshell` / `easyshell@changeme` 登入。
 
-> **想使用 Docker Hub？** 在 `.env` 中設定：
+> **想使用 GHCR？** 在 `.env` 中設定：
 > ```
-> EASYSHELL_SERVER_IMAGE=laolupaojiao/easyshell-server:latest
-> EASYSHELL_WEB_IMAGE=laolupaojiao/easyshell-web:latest
+> EASYSHELL_SERVER_IMAGE=ghcr.io/easyshell-ai/easyshell/easyshell-server:latest
+> EASYSHELL_WEB_IMAGE=ghcr.io/easyshell-ai/easyshell/easyshell-web:latest
 > ```
 
 > **開發者？從原始碼建構：**

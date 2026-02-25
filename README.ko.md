@@ -20,14 +20,14 @@ cp .env.example .env      # 필요시 .env 수정
 docker compose up -d
 ```
 
-로컬 빌드 불필요 — 사전 빌드된 이미지가 [GHCR](https://github.com/orgs/easyshell-ai/packages)에서 자동으로 풀링됩니다.
+로컬 빌드 불필요 — 사전 빌드된 이미지가 [Docker Hub](https://hub.docker.com/u/laolupaojiao)에서 자동으로 풀링됩니다.
 
 `http://localhost:18880` 접속 → `easyshell` / `easyshell@changeme`로 로그인.
 
-> **Docker Hub를 사용하려면?** `.env`에 설정:
+> **GHCR을 사용하려면?** `.env`에 설정:
 > ```
-> EASYSHELL_SERVER_IMAGE=laolupaojiao/easyshell-server:latest
-> EASYSHELL_WEB_IMAGE=laolupaojiao/easyshell-web:latest
+> EASYSHELL_SERVER_IMAGE=ghcr.io/easyshell-ai/easyshell/easyshell-server:latest
+> EASYSHELL_WEB_IMAGE=ghcr.io/easyshell-ai/easyshell/easyshell-web:latest
 > ```
 
 > **개발자용 소스 빌드:**

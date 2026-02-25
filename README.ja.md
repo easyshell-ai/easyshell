@@ -20,14 +20,14 @@ cp .env.example .env      # 必要に応じて .env を編集
 docker compose up -d
 ```
 
-ローカルビルド不要 — ビルド済みイメージが [GHCR](https://github.com/orgs/easyshell-ai/packages) から自動的にプルされます。
+ローカルビルド不要 — ビルド済みイメージが [Docker Hub](https://hub.docker.com/u/laolupaojiao) から自動的にプルされます。
 
 `http://localhost:18880` を開く → `easyshell` / `easyshell@changeme` でログイン。
 
-> **Docker Hub を使用する場合は？** `.env` で設定：
+> **GHCR を使用する場合は？** `.env` で設定：
 > ```
-> EASYSHELL_SERVER_IMAGE=laolupaojiao/easyshell-server:latest
-> EASYSHELL_WEB_IMAGE=laolupaojiao/easyshell-web:latest
+> EASYSHELL_SERVER_IMAGE=ghcr.io/easyshell-ai/easyshell/easyshell-server:latest
+> EASYSHELL_WEB_IMAGE=ghcr.io/easyshell-ai/easyshell/easyshell-web:latest
 > ```
 
 > **開発者向け：ソースからビルド：**

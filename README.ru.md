@@ -20,14 +20,14 @@ cp .env.example .env      # Отредактируйте .env при необх�
 docker compose up -d
 ```
 
-Локальная сборка не требуется — готовые образы автоматически загружаются из [GHCR](https://github.com/orgs/easyshell-ai/packages).
+Локальная сборка не требуется — готовые образы автоматически загружаются из [Docker Hub](https://hub.docker.com/u/laolupaojiao).
 
 Откройте `http://localhost:18880` → войдите с логином `easyshell` / `easyshell@changeme`.
 
-> **Хотите использовать Docker Hub?** Укажите в `.env`:
+> **Хотите использовать GHCR?** Укажите в `.env`:
 > ```
-> EASYSHELL_SERVER_IMAGE=laolupaojiao/easyshell-server:latest
-> EASYSHELL_WEB_IMAGE=laolupaojiao/easyshell-web:latest
+> EASYSHELL_SERVER_IMAGE=ghcr.io/easyshell-ai/easyshell/easyshell-server:latest
+> EASYSHELL_WEB_IMAGE=ghcr.io/easyshell-ai/easyshell/easyshell-web:latest
 > ```
 
 > **Разработчик? Сборка из исходного кода:**

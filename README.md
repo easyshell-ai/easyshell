@@ -20,14 +20,14 @@ cp .env.example .env      # Edit .env if needed
 docker compose up -d
 ```
 
-No local build required — pre-built images are pulled automatically from [GHCR](https://github.com/orgs/easyshell-ai/packages).
+No local build required — pre-built images are pulled automatically from [Docker Hub](https://hub.docker.com/u/laolupaojiao).
 
 Open `http://localhost:18880` → login with `easyshell` / `easyshell@changeme`.
 
-> **Want to use Docker Hub instead?** Set in `.env`:
+> **Want to use GHCR instead?** Set in `.env`:
 > ```
-> EASYSHELL_SERVER_IMAGE=laolupaojiao/easyshell-server:latest
-> EASYSHELL_WEB_IMAGE=laolupaojiao/easyshell-web:latest
+> EASYSHELL_SERVER_IMAGE=ghcr.io/easyshell-ai/easyshell/easyshell-server:latest
+> EASYSHELL_WEB_IMAGE=ghcr.io/easyshell-ai/easyshell/easyshell-web:latest
 > ```
 
 > **Developer? Build from source:**
