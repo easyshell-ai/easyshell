@@ -24,8 +24,8 @@ Open `http://localhost:18880` → login with `easyshell` / `easyshell@changeme`.
 
 > **Want to use Docker Hub instead?** Set in `.env`:
 > ```
-> EASYSHELL_SERVER_IMAGE=easyshellai/easyshell-server:latest
-> EASYSHELL_WEB_IMAGE=easyshellai/easyshell-web:latest
+> EASYSHELL_SERVER_IMAGE=laolupaojiao/easyshell-server:latest
+> EASYSHELL_WEB_IMAGE=laolupaojiao/easyshell-web:latest
 > ```
 
 > **Developer? Build from source:**

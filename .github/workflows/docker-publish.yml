@@ -13,7 +13,7 @@ on:
 
 env:
   GHCR_REGISTRY: ghcr.io
-  DOCKERHUB_NAMESPACE: easyshellai
+  DOCKERHUB_NAMESPACE: laolupaojiao
   GHCR_NAMESPACE: easyshell-ai/easyshell
 
 permissions:
