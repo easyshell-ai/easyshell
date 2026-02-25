@@ -68,6 +68,26 @@ Open `http://localhost:18880` → login with `easyshell` / `easyshell@changeme`.
 | **Administration** | User management, system config, AI model settings, risk control, agent orchestration |
 | **Platform** | i18n (EN / ZH), dark/light theme, responsive design, audit logging |
 
+## Screenshots
+
+### Host Management
+![Host Management](https://easyshell.ai/images/features/host-management.png)
+
+### Script Execution
+![Script Execution](https://easyshell.ai/images/features/script-execution.png)
+
+### Real-time Logs
+![Real-time Logs](https://easyshell.ai/images/features/realtime-logs.png)
+
+### Web Terminal
+![Web Terminal](https://easyshell.ai/images/features/web-terminal.png)
+
+### AI Operations
+![AI Operations](https://easyshell.ai/images/features/ai-operations.png)
+
+### Security Controls
+![Security Controls](https://easyshell.ai/images/features/security-controls.png)
+
 ## Project Structure
 
 ```
