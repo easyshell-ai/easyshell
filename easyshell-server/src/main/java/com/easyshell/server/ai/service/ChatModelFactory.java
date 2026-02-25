@@ -18,13 +18,16 @@ import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.lang.Nullable;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.retry.support.RetryTemplate;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestClient;
 
+import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-
 @Slf4j
 @Service
 public class ChatModelFactory {
@@ -101,6 +104,7 @@ public class ChatModelFactory {
         var api = OpenAiApi.builder()
                 .apiKey(apiKey)
                 .baseUrl(baseUrl)
+                .restClientBuilder(restClientWithTimeout())
                 .build();
 
         return OpenAiChatModel.builder()
@@ -155,6 +159,7 @@ public class ChatModelFactory {
         var api = OpenAiApi.builder()
                 .apiKey(apiKey)
                 .baseUrl(baseUrl)
+                .restClientBuilder(restClientWithTimeout())
                 .build();
 
         return OpenAiChatModel.builder()
@@ -176,6 +181,7 @@ public class ChatModelFactory {
                 .baseUrl(baseUrl)
                 .completionsPath("/chat/completions")
                 .headers(copilotHeaders())
+                .restClientBuilder(restClientWithTimeout())
                 .build();
 
         return OpenAiChatModel.builder()
@@ -213,5 +219,27 @@ public class ChatModelFactory {
         headers.add("Copilot-Integration-Id", "vscode-chat");
         headers.add("User-Agent", "GithubCopilot/1.155.0");
         return headers;
+    }
+
+    /**
+     * Create a RestClient.Builder with configured connect and read timeouts.
+     * LLM API calls can take 30-120s; default Reactor Netty timeout (~10s) is too short.
+     */
+    private RestClient.Builder restClientWithTimeout() {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(Duration.ofSeconds(30));
+        factory.setReadTimeout(Duration.ofSeconds(180));
+        return RestClient.builder().requestFactory(factory);
+    }
+
+    /**
+     * Create a RetryTemplate with reduced retries, suitable for scheduled/background tasks.
+     * Default Spring AI retry (10 attempts, exponential backoff) can block for 8+ minutes.
+     */
+    static RetryTemplate schedulerRetryTemplate() {
+        return RetryTemplate.builder()
+                .maxAttempts(3)
+                .exponentialBackoff(Duration.ofSeconds(2), 2.0, Duration.ofSeconds(10))
+                .build();
     }
 }

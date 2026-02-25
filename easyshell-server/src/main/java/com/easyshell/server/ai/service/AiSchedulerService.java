@@ -27,8 +27,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.*;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -128,6 +127,7 @@ public class AiSchedulerService {
             return;
         }
 
+        AiInspectReport runningReport = null;
         try {
             TaskCreateRequest request = new TaskCreateRequest();
             request.setName("[定时] " + scheduledTask.getName());
@@ -135,7 +135,7 @@ public class AiSchedulerService {
             request.setAgentIds(agentIds);
             request.setTimeoutSeconds(120);
 
-            AiInspectReport runningReport = saveReport(scheduledTask, null, null, "running");
+            runningReport = saveReport(scheduledTask, null, null, "running");
 
             Task task = taskService.createAndDispatch(request, scheduledTask.getCreatedBy());
 
@@ -177,7 +177,14 @@ public class AiSchedulerService {
 
         } catch (Exception e) {
             log.error("Failed to execute scheduled task [{}]: {}", scheduledTask.getName(), e.getMessage(), e);
-            saveReport(scheduledTask, "执行异常: " + e.getMessage(), null, "failed");
+            // Update the EXISTING running report instead of creating a duplicate
+            if (runningReport != null) {
+                runningReport.setStatus("failed");
+                runningReport.setAiAnalysis("执行异常: " + e.getMessage());
+                reportRepository.save(runningReport);
+            } else {
+                saveReport(scheduledTask, "执行异常: " + e.getMessage(), null, "failed");
+            }
             scheduledTask.setLastRunAt(LocalDateTime.now());
             scheduledTaskRepository.save(scheduledTask);
         }
@@ -285,11 +292,20 @@ public class AiSchedulerService {
         try {
             ChatModel chatModel = chatModelFactory.getChatModel(null);
             String fullPrompt = aiPrompt + "\n\n以下是脚本执行输出:\n" + truncateOutput(scriptOutput, 8000);
-            var response = chatModel.call(new Prompt(fullPrompt));
-            return response.getResult().getOutput().getText();
+            // Wrap with overall timeout to prevent blocking scheduler thread indefinitely.
+            // Spring AI internal retry can take 8+ minutes; cap total wait at 3 minutes.
+            var future = CompletableFuture.supplyAsync(() -> {
+                var response = chatModel.call(new Prompt(fullPrompt));
+                return response.getResult().getOutput().getText();
+            });
+            return future.get(3, TimeUnit.MINUTES);
+        } catch (TimeoutException e) {
+            log.error("AI analysis timed out after 3 minutes");
+            return "AI 分析超时: 请检查 AI 服务是否可用";
         } catch (Exception e) {
-            log.error("AI analysis failed: {}", e.getMessage());
-            return "AI 分析失败: " + e.getMessage();
+            Throwable cause = e instanceof ExecutionException ? e.getCause() : e;
+            log.error("AI analysis failed: {}", cause != null ? cause.getMessage() : e.getMessage());
+            return "AI 分析失败: " + (cause != null ? cause.getMessage() : e.getMessage());
         }
     }
 
