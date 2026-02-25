@@ -25,4 +25,15 @@ public interface BotChannelService {
      * 当前是否运行中
      */
     boolean isRunning();
+
+    /**
+     * 主动推送消息到指定目标（如 chatId / channelId / webhook）。
+     * 用于定时任务通知等非交互式场景。
+     * @param targetId 目标标识（Telegram chatId, Discord channelId, DingTalk 固定为 "webhook"）
+     * @param message 消息内容
+     * @return 是否发送成功
+     */
+    default boolean pushMessage(String targetId, String message) {
+        return false;
+    }
 }

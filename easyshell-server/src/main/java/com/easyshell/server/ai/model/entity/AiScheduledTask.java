@@ -65,4 +65,16 @@ public class AiScheduledTask extends BaseEntity {
 
     @Column(name = "created_by")
     private Long createdBy;
+
+    /**
+     * 通知策略: none / always / on_alert / on_failure
+     */
+    @Column(name = "notify_strategy", length = 32)
+    private String notifyStrategy = "none";
+
+    /**
+     * 通知渠道（逗号分隔），如 "telegram,discord"
+     */
+    @Column(name = "notify_channels", length = 256)
+    private String notifyChannels;
 }

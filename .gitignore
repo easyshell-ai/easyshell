@@ -50,3 +50,7 @@ logs/
 
 # Data
 data/
+
+
+# Spec (local design docs)
+spec/

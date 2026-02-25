@@ -47,6 +47,7 @@ public class AiSchedulerService {
     private final AuditLogService auditLogService;
     private final TaskScheduler taskScheduler;
     private final SensitiveDataFilter sensitiveDataFilter;
+    private final ScheduledTaskNotifier scheduledTaskNotifier;
 
     private final Map<Long, ScheduledFuture<?>> scheduledFutures = new ConcurrentHashMap<>();
 
@@ -155,6 +156,14 @@ public class AiSchedulerService {
 
             if (aiAnalysis != null) {
                 checkAndAlertCriticalFindings(scheduledTask, aiAnalysis);
+            }
+
+            // 推送通知到机器人渠道
+            String notifyStrategy = scheduledTask.getNotifyStrategy();
+            if (notifyStrategy != null && !"none".equals(notifyStrategy) && scheduledTask.getNotifyChannels() != null) {
+                List<String> channels = Arrays.stream(scheduledTask.getNotifyChannels().split(","))
+                        .map(String::trim).filter(s -> !s.isEmpty()).toList();
+                scheduledTaskNotifier.notify(scheduledTask, runningReport, notifyStrategy, channels);
             }
 
             scheduledTask.setLastRunAt(LocalDateTime.now());

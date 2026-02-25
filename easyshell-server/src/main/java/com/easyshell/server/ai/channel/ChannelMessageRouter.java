@@ -14,9 +14,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.util.Iterator;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -293,5 +295,79 @@ public class ChannelMessageRouter {
             log.warn("Failed to decrypt config {}: {}", key, e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * 主动推送消息到指定渠道的配置目标。
+     * @param channelKey 渠道标识 (telegram / discord / dingtalk)
+     * @param content 消息内容
+     */
+    public void pushMessage(String channelKey, String content) {
+        BotChannelService svc = serviceMap.get(channelKey);
+        if (svc == null || !svc.isRunning()) {
+            log.warn("Cannot push message: channel '{}' not available or not running", channelKey);
+            return;
+        }
+        List<String> targets = resolvePushTargets(channelKey);
+        if (targets.isEmpty()) {
+            log.warn("No push targets resolved for channel '{}'", channelKey);
+            return;
+        }
+        for (String target : targets) {
+            try {
+                boolean sent = svc.pushMessage(target, content);
+                if (sent) {
+                    log.info("Pushed message to {} target '{}'", channelKey, target);
+                } else {
+                    log.warn("Failed to push message to {} target '{}'", channelKey, target);
+                }
+            } catch (Exception e) {
+                log.error("Error pushing message to {} target '{}': {}", channelKey, target, e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * 异步推送消息到多个渠道。
+     * @param channelKeys 渠道标识列表
+     * @param content 消息内容
+     */
+    @Async
+    public void pushToChannelsAsync(List<String> channelKeys, String content) {
+        for (String channelKey : channelKeys) {
+            pushMessage(channelKey, content);
+        }
+    }
+
+    /**
+     * 根据渠道配置解析推送目标。
+     * Telegram → allowed-chat-ids 配置
+     * Discord → allowed-channel-ids 配置
+     * DingTalk → 固定返回 "webhook"
+     */
+    private List<String> resolvePushTargets(String channelKey) {
+        return switch (channelKey) {
+            case "telegram" -> {
+                String chatIds = getConfigValue("ai.channel.telegram.allowed-chat-ids");
+                yield parseCsvList(chatIds);
+            }
+            case "discord" -> {
+                String channelIds = getConfigValue("ai.channel.discord.allowed-channel-ids");
+                yield parseCsvList(channelIds);
+            }
+            case "dingtalk" -> List.of("webhook");
+            default -> {
+                log.warn("Unknown channel key for push targets: {}", channelKey);
+                yield List.of();
+            }
+        };
+    }
+
+    private List<String> parseCsvList(String csv) {
+        if (csv == null || csv.isBlank()) return List.of();
+        return Arrays.stream(csv.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .toList();
     }
 }

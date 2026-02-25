@@ -28,4 +28,8 @@ public class AiScheduledTaskRequest {
     private String aiPrompt;
 
     private Boolean enabled = true;
+
+    private String notifyStrategy;
+
+    private String notifyChannels;
 }

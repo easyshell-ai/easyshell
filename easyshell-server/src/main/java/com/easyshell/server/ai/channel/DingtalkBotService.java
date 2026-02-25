@@ -96,6 +96,21 @@ public class DingtalkBotService implements BotChannelService {
         return reply;
     }
 
+    @Override
+    public boolean pushMessage(String targetId, String message) {
+        if (!running.get()) {
+            log.warn("DingTalk bot not running, cannot push message");
+            return false;
+        }
+        try {
+            sendWebhookMessage(message);
+            return true;
+        } catch (Exception e) {
+            log.error("Failed to push DingTalk webhook message: {}", e.getMessage());
+            return false;
+        }
+    }
+
     public void sendWebhookMessage(String content) {
         if (webhookUrl == null || webhookUrl.isBlank()) return;
 

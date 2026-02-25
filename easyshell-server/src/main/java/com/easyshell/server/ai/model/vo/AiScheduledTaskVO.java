@@ -24,4 +24,6 @@ public class AiScheduledTaskVO {
     private Long createdBy;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
+    private String notifyStrategy;
+    private String notifyChannels;
 }
