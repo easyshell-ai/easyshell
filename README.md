@@ -2,7 +2,7 @@
 
 **Lightweight Server Management & Intelligent Operations Platform**
 
-Server-Agent Architecture | Batch Script Execution | Real-time Logs | AI-Powered Ops
+Server-Agent Architecture | Batch Script Execution | Real-time Logs | AI-Powered Ops | Bot Notifications
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Docs](https://img.shields.io/badge/Docs-docs.easyshell.ai-green.svg)](https://docs.easyshell.ai)
@@ -10,6 +10,29 @@ Server-Agent Architecture | Batch Script Execution | Real-time Logs | AI-Powered
 **Language**: English | [简体中文](./README.zh-CN.md) | [繁體中文](./README.zh-TW.md) | [한국어](./README.ko.md) | [Русский](./README.ru.md) | [日本語](./README.ja.md)
 
 ---
+
+## Highlights: AI-Powered Scheduled Inspections
+
+> **Cron → Script → AI Analysis → Bot Notification** — fully automated server inspection pipeline.
+
+EasyShell can run **scheduled inspection tasks** on your servers via cron expressions, automatically collect script output (disk usage, service health, logs, etc.), send results to an **AI model for intelligent analysis**, and push the analysis report to your team through **bot channels** — all without human intervention.
+
+**Supported Bot Channels** ([Configuration Guide](https://docs.easyshell.ai/configuration/bot-channels/)):
+
+| Bot | Status |
+|-----|--------|
+| [Telegram](https://docs.easyshell.ai/configuration/bot-channels/) | ✅ Supported |
+| [Discord](https://docs.easyshell.ai/configuration/bot-channels/) | ✅ Supported |
+| [Slack](https://docs.easyshell.ai/configuration/bot-channels/) | ✅ Supported |
+| [DingTalk (钉钉)](https://docs.easyshell.ai/configuration/bot-channels/) | ✅ Supported |
+| [Feishu (飞书)](https://docs.easyshell.ai/configuration/bot-channels/) | ✅ Supported |
+| [WeCom (企业微信)](https://docs.easyshell.ai/configuration/bot-channels/) | ✅ Supported |
+
+**How it works:**
+1. **Configure** a scheduled task with cron expression + shell script + AI prompt
+2. **Execute** — EasyShell dispatches the script to target agents on schedule
+3. **Analyze** — Script output is sent to your configured AI model (OpenAI / Gemini / GitHub Copilot / Custom)
+4. **Notify** — AI analysis report is pushed to your bot channel (Telegram, Discord, Slack, etc.)
 
 ## Quick Start
 
@@ -66,7 +89,7 @@ Open `http://localhost:18880` → login with `easyshell` / `easyshell@changeme`.
 |----------|----------|
 | **Infrastructure** | Host management, monitoring, cluster grouping |
 | **Operations** | Script library, batch execution, real-time logs, web terminal |
-| **AI Intelligence** | AI chat, scheduled inspections, reports, operation approvals |
+| **AI Intelligence** | AI chat, **scheduled inspections with AI analysis & bot push**, inspection reports, operation approvals |
 | **Administration** | User management, system config, AI model settings, risk control, agent orchestration |
 | **Platform** | i18n (EN / ZH), dark/light theme, responsive design, audit logging |
 
@@ -90,7 +113,10 @@ Open `http://localhost:18880` → login with `easyshell` / `easyshell@changeme`.
 ### Security Controls
 ![Security Controls](https://easyshell.ai/images/features/security-controls.png)
 
-### Bot Integration (Telegram / Discord / DingTalk / Feishu / Slack / WeCom)
+### Bot Integration
+
+Supports [Telegram](https://docs.easyshell.ai/configuration/bot-channels/) · [Discord](https://docs.easyshell.ai/configuration/bot-channels/) · [Slack](https://docs.easyshell.ai/configuration/bot-channels/) · [DingTalk](https://docs.easyshell.ai/configuration/bot-channels/) · [Feishu](https://docs.easyshell.ai/configuration/bot-channels/) · [WeCom](https://docs.easyshell.ai/configuration/bot-channels/) — interactive chat & scheduled inspection notifications.
+
 ![Bot Integration](docs/images/bot-integration.png)
 
 ## Project Structure

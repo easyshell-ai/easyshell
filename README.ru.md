@@ -2,7 +2,7 @@
 
 **Легковесная платформа управления серверами и интеллектуальной эксплуатации**
 
-Архитектура Server-Agent | Пакетное выполнение скриптов | Логи в реальном времени | AI-операции
+Архитектура Server-Agent | Пакетное выполнение скриптов | Логи в реальном времени | AI-операции | Уведомления через ботов
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Docs](https://img.shields.io/badge/Docs-docs.easyshell.ai-green.svg)](https://docs.easyshell.ai)
@@ -10,6 +10,29 @@
 **Язык**: [English](./README.md) | [简体中文](./README.zh-CN.md) | [繁體中文](./README.zh-TW.md) | [한국어](./README.ko.md) | Русский | [日本語](./README.ja.md)
 
 ---
+
+## Особенность: AI-управляемые плановые проверки
+
+> **Плановая задача → Выполнение скрипта → AI-анализ → Уведомление бота** — полностью автоматизированный конвейер проверки серверов.
+
+EasyShell может запускать **плановые задачи проверки** на ваших серверах по cron-выражениям, автоматически собирать вывод скриптов (использование дисков, состояние сервисов, логи и т.д.), отправлять результаты в **AI-модель для интеллектуального анализа** и отправлять аналитический отчёт вашей команде через **бот-каналы** — без какого-либо участия человека.
+
+**Поддерживаемые бот-каналы** ([Руководство по настройке](https://docs.easyshell.ai/configuration/bot-channels/)):
+
+| Бот | Статус |
+|-----|--------|
+| [Telegram](https://docs.easyshell.ai/configuration/bot-channels/) | ✅ Поддерживается |
+| [Discord](https://docs.easyshell.ai/configuration/bot-channels/) | ✅ Поддерживается |
+| [Slack](https://docs.easyshell.ai/configuration/bot-channels/) | ✅ Поддерживается |
+| [DingTalk (ДингТок)](https://docs.easyshell.ai/configuration/bot-channels/) | ✅ Поддерживается |
+| [Feishu (ФейШу)](https://docs.easyshell.ai/configuration/bot-channels/) | ✅ Поддерживается |
+| [WeCom (ВиКом)](https://docs.easyshell.ai/configuration/bot-channels/) | ✅ Поддерживается |
+
+**Как это работает:**
+1. **Настройте** плановую задачу: cron-выражение + shell-скрипт + AI-промпт
+2. **Выполнение** — EasyShell отправляет скрипт на целевые агенты по расписанию
+3. **Анализ** — Вывод скрипта отправляется в настроенную AI-модель (OpenAI / Gemini / GitHub Copilot / пользовательская)
+4. **Уведомление** — AI-отчёт отправляется в бот-канал (Telegram, Discord, Slack и др.)
 
 ## Быстрый старт
 
@@ -66,7 +89,7 @@ docker compose up -d
 |-----------|---------|
 | **Инфраструктура** | Управление хостами, мониторинг, группировка кластеров |
 | **Эксплуатация** | Библиотека скриптов, пакетное выполнение, логи в реальном времени, веб-терминал |
-| **AI-интеллект** | AI-чат, плановые проверки, отчёты, утверждение операций |
+| **AI-интеллект** | AI-чат, **плановые проверки + AI-анализ + уведомления ботов**, отчёты, утверждение операций |
 | **Администрирование** | Управление пользователями, системные настройки, конфигурация AI-моделей, контроль рисков, оркестрация агентов |
 | **Платформа** | Интернационализация (EN / ZH), тёмная/светлая тема, адаптивный дизайн, журнал аудита |
 
@@ -90,7 +113,10 @@ docker compose up -d
 ### Контроль безопасности
 ![Контроль безопасности](https://easyshell.ai/images/features/security-controls.png)
 
-### Интеграция ботов (Telegram / Discord / DingTalk / Feishu / Slack / WeCom)
+### Интеграция ботов
+
+Поддерживается [Telegram](https://docs.easyshell.ai/configuration/bot-channels/) · [Discord](https://docs.easyshell.ai/configuration/bot-channels/) · [Slack](https://docs.easyshell.ai/configuration/bot-channels/) · [DingTalk](https://docs.easyshell.ai/configuration/bot-channels/) · [Feishu](https://docs.easyshell.ai/configuration/bot-channels/) · [WeCom](https://docs.easyshell.ai/configuration/bot-channels/) — интерактивный чат и уведомления плановых проверок.
+
 ![Интеграция ботов](docs/images/bot-integration.png)
 
 ## Структура проекта

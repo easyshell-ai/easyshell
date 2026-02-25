@@ -2,7 +2,7 @@
 
 **軽量サーバー管理＆インテリジェント運用プラットフォーム**
 
-Server-Agent アーキテクチャ | バッチスクリプト実行 | リアルタイムログ | AI 駆動オペレーション
+Server-Agent アーキテクチャ | バッチスクリプト実行 | リアルタイムログ | AI 駆動オペレーション | Bot 通知
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Docs](https://img.shields.io/badge/Docs-docs.easyshell.ai-green.svg)](https://docs.easyshell.ai)
@@ -10,6 +10,29 @@ Server-Agent アーキテクチャ | バッチスクリプト実行 | リアル�
 **言語**: [English](./README.md) | [简体中文](./README.zh-CN.md) | [繁體中文](./README.zh-TW.md) | [한국어](./README.ko.md) | [Русский](./README.ru.md) | 日本語
 
 ---
+
+## ハイライト: AI 駆動の定期点検
+
+> **定期タスク → スクリプト実行 → AI インテリジェント分析 → Bot 通知** — 完全自動化のサーバー点検パイプライン。
+
+EasyShell は cron 式でサーバー上の**定期点検タスク**を実行し、スクリプト出力（ディスク使用量、サービス健全性、ログなど）を自動収集し、結果を **AI モデルにインテリジェント分析**させ、**Bot チャネル**を通じて分析レポートをチームにプッシュします — 人手を介さず完全自動で実行されます。
+
+**対応 Bot チャネル** ([設定ガイド](https://docs.easyshell.ai/configuration/bot-channels/)):
+
+| Bot | ステータス |
+|-----|----------|
+| [Telegram](https://docs.easyshell.ai/configuration/bot-channels/) | ✅ 対応済み |
+| [Discord](https://docs.easyshell.ai/configuration/bot-channels/) | ✅ 対応済み |
+| [Slack](https://docs.easyshell.ai/configuration/bot-channels/) | ✅ 対応済み |
+| [DingTalk (ディントーク)](https://docs.easyshell.ai/configuration/bot-channels/) | ✅ 対応済み |
+| [Feishu (フェイシュー)](https://docs.easyshell.ai/configuration/bot-channels/) | ✅ 対応済み |
+| [WeCom (ウィーコム)](https://docs.easyshell.ai/configuration/bot-channels/) | ✅ 対応済み |
+
+**動作の流れ:**
+1. **設定** 定期タスク: cron 式 + Shell スクリプト + AI 分析プロンプト
+2. **実行** — EasyShell がスケジュールに従ってターゲット Agent にスクリプトを配布
+3. **分析** — スクリプト出力を設定済み AI モデルに送信 (OpenAI / Gemini / GitHub Copilot / カスタム)
+4. **通知** — AI 分析レポートを Bot チャネルにプッシュ (Telegram, Discord, Slack など)
 
 ## クイックスタート
 
@@ -66,7 +89,7 @@ docker compose up -d
 |---------|------|
 | **インフラ** | ホスト管理、モニタリング、クラスターグルーピング |
 | **運用** | スクリプトライブラリ、バッチ実行、リアルタイムログ、Web ターミナル |
-| **AI インテリジェンス** | AI チャット、定期点検、レポート、操作承認 |
+| **AI インテリジェンス** | AI チャット、**定期点検 + AI 分析 + Bot プッシュ**、点検レポート、操作承認 |
 | **管理** | ユーザー管理、システム設定、AI モデル構成、リスク制御、Agent オーケストレーション |
 | **プラットフォーム** | 国際化（EN / ZH）、ダーク/ライトテーマ、レスポンシブデザイン、監査ログ |
 
@@ -90,7 +113,10 @@ docker compose up -d
 ### セキュリティ制御
 ![セキュリティ制御](https://easyshell.ai/images/features/security-controls.png)
 
-### Bot 連携（Telegram / Discord / DingTalk / Feishu / Slack / WeCom）
+### Bot 連携
+
+[Telegram](https://docs.easyshell.ai/configuration/bot-channels/) · [Discord](https://docs.easyshell.ai/configuration/bot-channels/) · [Slack](https://docs.easyshell.ai/configuration/bot-channels/) · [DingTalk](https://docs.easyshell.ai/configuration/bot-channels/) · [Feishu](https://docs.easyshell.ai/configuration/bot-channels/) · [WeCom](https://docs.easyshell.ai/configuration/bot-channels/) 対応 — インタラクティブチャット & 定期点検通知プッシュ。
+
 ![Bot 連携](docs/images/bot-integration.png)
 
 ## プロジェクト構造

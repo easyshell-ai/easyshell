@@ -2,7 +2,7 @@
 
 **경량 서버 관리 & 지능형 운영 플랫폼**
 
-Server-Agent 아키텍처 | 일괄 스크립트 실행 | 실시간 로그 | AI 기반 운영
+Server-Agent 아키텍처 | 일괄 스크립트 실행 | 실시간 로그 | AI 기반 운영 | 봇 알림
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Docs](https://img.shields.io/badge/Docs-docs.easyshell.ai-green.svg)](https://docs.easyshell.ai)
@@ -10,6 +10,29 @@ Server-Agent 아키텍처 | 일괄 스크립트 실행 | 실시간 로그 | AI �
 **언어**: [English](./README.md) | [简体中文](./README.zh-CN.md) | [繁體中文](./README.zh-TW.md) | 한국어 | [Русский](./README.ru.md) | [日本語](./README.ja.md)
 
 ---
+
+## 하이라이트: AI 기반 정기 점검
+
+> **정기 작업 → 스크립트 실행 → AI 지능 분석 → 봇 알림** — 완전 자동화된 서버 점검 파이프라인.
+
+EasyShell은 cron 표현식을 통해 서버에서 **정기 점검 작업**을 실행하고, 스크립트 출력(디스크 사용량, 서비스 건강 상태, 로그 등)을 자동 수집하여 **AI 모델에 지능형 분석**을 요청하고, **봇 채널**을 통해 분석 보고서를 팀에 푸시합니다 — 사람의 개입 없이 완전 자동으로 수행됩니다.
+
+**지원 봇 채널** ([구성 가이드](https://docs.easyshell.ai/configuration/bot-channels/)):
+
+| 봇 | 상태 |
+|-----|------|
+| [Telegram](https://docs.easyshell.ai/configuration/bot-channels/) | ✅ 지원 |
+| [Discord](https://docs.easyshell.ai/configuration/bot-channels/) | ✅ 지원 |
+| [Slack](https://docs.easyshell.ai/configuration/bot-channels/) | ✅ 지원 |
+| [DingTalk (딩톡)](https://docs.easyshell.ai/configuration/bot-channels/) | ✅ 지원 |
+| [Feishu (페이슈)](https://docs.easyshell.ai/configuration/bot-channels/) | ✅ 지원 |
+| [WeCom (위컴)](https://docs.easyshell.ai/configuration/bot-channels/) | ✅ 지원 |
+
+**작동 방식:**
+1. **구성** 정기 작업: cron 표현식 + Shell 스크립트 + AI 분석 프롬프트
+2. **실행** — EasyShell이 일정에 따라 대상 Agent에 스크립트 배포
+3. **분석** — 스크립트 출력이 구성된 AI 모델로 전송 (OpenAI / Gemini / GitHub Copilot / 사용자 정의)
+4. **알림** — AI 분석 보고서가 봇 채널로 푸시 (Telegram, Discord, Slack 등)
 
 ## 빠른 시작
 
@@ -66,7 +89,7 @@ docker compose up -d
 |----------|------|
 | **인프라** | 호스트 관리, 모니터링, 클러스터 그룹화 |
 | **운영** | 스크립트 라이브러리, 일괄 실행, 실시간 로그, 웹 터미널 |
-| **AI 지능** | AI 채팅, 정기 점검, 보고서, 운영 승인 |
+| **AI 지능** | AI 채팅, **정기 점검 + AI 분석 + 봇 푸시**, 점검 보고서, 운영 승인 |
 | **관리** | 사용자 관리, 시스템 설정, AI 모델 구성, 위험 제어, Agent 오케스트레이션 |
 | **플랫폼** | 다국어 (EN / ZH), 다크/라이트 테마, 반응형 디자인, 감사 로깅 |
 
@@ -90,7 +113,10 @@ docker compose up -d
 ### 보안 제어
 ![보안 제어](https://easyshell.ai/images/features/security-controls.png)
 
-### Bot 연동 (Telegram / Discord / DingTalk / Feishu / Slack / WeCom)
+### Bot 연동
+
+[Telegram](https://docs.easyshell.ai/configuration/bot-channels/) · [Discord](https://docs.easyshell.ai/configuration/bot-channels/) · [Slack](https://docs.easyshell.ai/configuration/bot-channels/) · [DingTalk](https://docs.easyshell.ai/configuration/bot-channels/) · [Feishu](https://docs.easyshell.ai/configuration/bot-channels/) · [WeCom](https://docs.easyshell.ai/configuration/bot-channels/) 지원 — 대화형 채팅 & 정기 점검 알림 푸시.
+
 ![Bot 연동](docs/images/bot-integration.png)
 
 ## 프로젝트 구조

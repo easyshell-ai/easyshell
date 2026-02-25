@@ -2,7 +2,7 @@
 
 **轻量级服务器管理与智能运维平台**
 
-Server-Agent 架构 | 批量脚本执行 | 实时日志 | AI 驱动运维
+Server-Agent 架构 | 批量脚本执行 | 实时日志 | AI 驱动运维 | 机器人通知
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Docs](https://img.shields.io/badge/Docs-docs.easyshell.ai-green.svg)](https://docs.easyshell.ai)
@@ -10,6 +10,29 @@ Server-Agent 架构 | 批量脚本执行 | 实时日志 | AI 驱动运维
 **语言**: [English](./README.md) | 简体中文 | [繁體中文](./README.zh-TW.md) | [한국어](./README.ko.md) | [Русский](./README.ru.md) | [日本語](./README.ja.md)
 
 ---
+
+## 亮点功能：AI 驱动的定时巡检
+
+> **定时任务 → 脚本执行 → AI 智能分析 → 机器人推送** —— 全自动服务器巡检流水线。
+
+EasyShell 可通过 cron 表达式在服务器上运行**定时巡检任务**，自动收集脚本输出（磁盘使用率、服务健康状态、日志等），将结果发送给 **AI 模型进行智能分析**，并通过**机器人渠道**将分析报告推送给您的团队 —— 全程无需人工干预。
+
+**支持的机器人渠道**（[配置指南](https://docs.easyshell.ai/configuration/bot-channels/)）：
+
+| 机器人 | 状态 |
+|--------|------|
+| [Telegram](https://docs.easyshell.ai/configuration/bot-channels/) | ✅ 已支持 |
+| [Discord](https://docs.easyshell.ai/configuration/bot-channels/) | ✅ 已支持 |
+| [Slack](https://docs.easyshell.ai/configuration/bot-channels/) | ✅ 已支持 |
+| [钉钉 (DingTalk)](https://docs.easyshell.ai/configuration/bot-channels/) | ✅ 已支持 |
+| [飞书 (Feishu)](https://docs.easyshell.ai/configuration/bot-channels/) | ✅ 已支持 |
+| [企业微信 (WeCom)](https://docs.easyshell.ai/configuration/bot-channels/) | ✅ 已支持 |
+
+**工作流程：**
+1. **配置** 定时任务：cron 表达式 + Shell 脚本 + AI 分析提示词
+2. **执行** —— EasyShell 按计划将脚本分发到目标 Agent 执行
+3. **分析** —— 脚本输出发送到您配置的 AI 模型（OpenAI / Gemini / GitHub Copilot / 自定义）
+4. **通知** —— AI 分析报告推送到您的机器人渠道（Telegram、Discord、Slack 等）
 
 ## 快速开始
 
@@ -66,7 +89,7 @@ docker compose up -d
 |------|------|
 | **基础设施** | 主机管理、监控、集群分组 |
 | **运维操作** | 脚本库、批量执行、实时日志、Web 终端 |
-| **AI 智能** | AI 对话、定时巡检、自动报告、操作审批 |
+| **AI 智能** | AI 对话、**定时巡检 + AI 分析 + 机器人推送**、巡检报告、操作审批 |
 | **系统管理** | 用户管理、系统配置、AI 模型设置、风险控制、Agent 编排 |
 | **平台特性** | 国际化（EN / ZH）、深色/浅色主题、响应式设计、审计日志 |
 
@@ -90,7 +113,10 @@ docker compose up -d
 ### 安全管控
 ![安全管控](https://easyshell.ai/images/features/security-controls.png)
 
-### Bot 集成（Telegram / Discord / DingTalk / Feishu / Slack / WeCom）
+### Bot 集成
+
+支持 [Telegram](https://docs.easyshell.ai/configuration/bot-channels/) · [Discord](https://docs.easyshell.ai/configuration/bot-channels/) · [Slack](https://docs.easyshell.ai/configuration/bot-channels/) · [钉钉](https://docs.easyshell.ai/configuration/bot-channels/) · [飞书](https://docs.easyshell.ai/configuration/bot-channels/) · [企业微信](https://docs.easyshell.ai/configuration/bot-channels/) —— 交互式对话 & 定时巡检通知推送。
+
 ![Bot 集成](docs/images/bot-integration.png)
 
 ## 项目结构
