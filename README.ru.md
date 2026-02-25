@@ -7,7 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Docs](https://img.shields.io/badge/Docs-docs.easyshell.ai-green.svg)](https://docs.easyshell.ai)
 
-**Язык**: [English](./README.md) | [繁體中文](./README.zh-TW.md) | [한국어](./README.ko.md) | Русский | [日本語](./README.ja.md)
+**Язык**: [English](./README.md) | [简体中文](./README.zh-CN.md) | [繁體中文](./README.zh-TW.md) | [한국어](./README.ko.md) | Русский | [日本語](./README.ja.md)
 
 ---
 

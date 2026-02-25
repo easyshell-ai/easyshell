@@ -7,7 +7,7 @@ Server-Agent 아키텍처 | 일괄 스크립트 실행 | 실시간 로그 | AI �
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Docs](https://img.shields.io/badge/Docs-docs.easyshell.ai-green.svg)](https://docs.easyshell.ai)
 
-**언어**: [English](./README.md) | [繁體中文](./README.zh-TW.md) | 한국어 | [Русский](./README.ru.md) | [日本語](./README.ja.md)
+**언어**: [English](./README.md) | [简体中文](./README.zh-CN.md) | [繁體中文](./README.zh-TW.md) | 한국어 | [Русский](./README.ru.md) | [日本語](./README.ja.md)
 
 ---
 
