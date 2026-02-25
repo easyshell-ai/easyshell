@@ -268,7 +268,9 @@
       "copilotDeviceCodeError": "获取设备码失败",
       "copilotLogoutSuccess": "已注销 GitHub Copilot",
       "copilotLogoutError": "注销失败",
-      "refreshModels": "刷新模型列表"
+      "refreshModels": "刷新模型列表",
+      "refreshModelsSuccess": "已刷新模型列表，共 {{count}} 个模型",
+      "refreshModelsError": "刷新模型列表失败"
     },
     "quota": {
       "title": "使用限制",
@@ -413,7 +415,15 @@
       "scriptPlaceholder": "脚本内容（选择内置类型时自动填充）",
       "aiPrompt": "AI 分析提示词",
       "aiPromptPlaceholder": "AI 分析时使用的提示词（可选）",
-      "enabled": "立即启用"
+      "enabled": "立即启用",
+      "notifyStrategy": "通知策略",
+      "notifyStrategyPlaceholder": "选择通知策略",
+      "notifyChannels": "通知渠道",
+      "notifyChannelsPlaceholder": "选择通知渠道",
+      "notifyStrategyNone": "不通知",
+      "notifyStrategyAlways": "每次通知",
+      "notifyStrategyOnAlert": "告警时通知",
+      "notifyStrategyOnFailure": "失败时通知"
     },
     "cron": {
       "visual": "可视化",

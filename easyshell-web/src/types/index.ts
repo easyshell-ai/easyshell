@@ -568,6 +568,8 @@ export interface AiScheduledTask {
   createdBy: number;
   createdAt: string;
   updatedAt: string;
+  notifyStrategy: string | null;
+  notifyChannels: string | null;
 }
 
 export interface AiScheduledTaskRequest {
@@ -580,6 +582,8 @@ export interface AiScheduledTaskRequest {
   scriptTemplate?: string;
   aiPrompt?: string;
   enabled?: boolean;
+  notifyStrategy?: string;
+  notifyChannels?: string;
 }
 
 export interface AiInspectReport {

@@ -268,7 +268,9 @@
       "copilotDeviceCodeError": "Failed to get device code",
       "copilotLogoutSuccess": "GitHub Copilot logged out",
       "copilotLogoutError": "Logout failed",
-      "refreshModels": "Refresh Models"
+      "refreshModels": "Refresh Models",
+      "refreshModelsSuccess": "Model list refreshed, {{count}} models found",
+      "refreshModelsError": "Failed to refresh model list"
     },
     "quota": {
       "title": "Usage Limits",
@@ -413,7 +415,15 @@
       "scriptPlaceholder": "Script content (auto-filled for built-in types)",
       "aiPrompt": "AI Analysis Prompt",
       "aiPromptPlaceholder": "Prompt for AI analysis (optional)",
-      "enabled": "Enable immediately"
+      "enabled": "Enable immediately",
+      "notifyStrategy": "Notification Strategy",
+      "notifyStrategyPlaceholder": "Select notification strategy",
+      "notifyChannels": "Notification Channels",
+      "notifyChannelsPlaceholder": "Select notification channels",
+      "notifyStrategyNone": "None",
+      "notifyStrategyAlways": "Always",
+      "notifyStrategyOnAlert": "On Alert",
+      "notifyStrategyOnFailure": "On Failure"
     },
     "cron": {
       "visual": "Visual",

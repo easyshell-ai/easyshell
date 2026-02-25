@@ -253,7 +253,7 @@ const AiScheduled: React.FC = () => {
   const handleCreate = () => {
     setEditingTask(null);
     form.resetFields();
-    form.setFieldsValue({ taskType: 'inspect', targetType: 'agent', enabled: true, cronExpression: '0 0 2 * * ?' });
+    form.setFieldsValue({ taskType: 'inspect', targetType: 'agent', enabled: true, cronExpression: '0 0 2 * * ?', notifyStrategy: 'none' });
     setModalVisible(true);
   };
 
@@ -269,6 +269,8 @@ const AiScheduled: React.FC = () => {
       scriptTemplate: task.scriptTemplate,
       aiPrompt: task.aiPrompt,
       enabled: task.enabled,
+      notifyStrategy: task.notifyStrategy || 'none',
+      notifyChannels: task.notifyChannels ? task.notifyChannels.split(',').map(s => s.trim()).filter(Boolean) : [],
     });
     setModalVisible(true);
   };
@@ -287,6 +289,8 @@ const AiScheduled: React.FC = () => {
         scriptTemplate: values.scriptTemplate,
         aiPrompt: values.aiPrompt,
         enabled: values.enabled,
+        notifyStrategy: values.notifyStrategy,
+        notifyChannels: Array.isArray(values.notifyChannels) ? values.notifyChannels.join(',') : (values.notifyChannels || ''),
       };
 
       let res;
@@ -560,6 +564,23 @@ const AiScheduled: React.FC = () => {
 
           <Form.Item name="enabled" label={t('scheduled.field.enabled')} valuePropName="checked">
             <Switch />
+          </Form.Item>
+
+          <Form.Item name="notifyStrategy" label={t('scheduled.field.notifyStrategy')}>
+            <Select placeholder={t('scheduled.field.notifyStrategyPlaceholder')}>
+              <Select.Option value="none">{t('scheduled.field.notifyStrategyNone')}</Select.Option>
+              <Select.Option value="always">{t('scheduled.field.notifyStrategyAlways')}</Select.Option>
+              <Select.Option value="on_alert">{t('scheduled.field.notifyStrategyOnAlert')}</Select.Option>
+              <Select.Option value="on_failure">{t('scheduled.field.notifyStrategyOnFailure')}</Select.Option>
+            </Select>
+          </Form.Item>
+
+          <Form.Item name="notifyChannels" label={t('scheduled.field.notifyChannels')}>
+            <Select mode="multiple" placeholder={t('scheduled.field.notifyChannelsPlaceholder')}>
+              <Select.Option value="telegram">Telegram</Select.Option>
+              <Select.Option value="discord">Discord</Select.Option>
+              <Select.Option value="dingtalk">DingTalk</Select.Option>
+            </Select>
           </Form.Item>
         </Form>
       </Modal>
