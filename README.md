@@ -88,6 +88,9 @@ Open `http://localhost:18880` → login with `easyshell` / `easyshell@changeme`.
 ### Security Controls
 ![Security Controls](https://easyshell.ai/images/features/security-controls.png)
 
+### Bot Integration (Telegram / Discord / DingTalk / Feishu / Slack / WeCom)
+![Bot Integration](docs/images/bot-integration.png)
+
 ## Project Structure
 
 ```
