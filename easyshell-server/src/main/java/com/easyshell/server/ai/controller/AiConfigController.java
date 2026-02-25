@@ -9,6 +9,7 @@ import com.easyshell.server.ai.model.vo.AiTestResult;
 import com.easyshell.server.ai.security.AiQuotaService;
 import com.easyshell.server.ai.service.ChatModelFactory;
 import com.easyshell.server.ai.service.CopilotAuthService;
+import com.easyshell.server.common.exception.BusinessException;
 import com.easyshell.server.common.result.R;
 import com.easyshell.server.model.entity.SystemConfig;
 import com.easyshell.server.repository.SystemConfigRepository;
@@ -281,6 +282,121 @@ public class AiConfigController {
                     .modelInfo(null)
                     .build());
         }
+    }
+
+    @GetMapping("/models")
+    public R<List<Map<String, Object>>> listModels(@RequestParam String provider) {
+        try {
+            List<Map<String, Object>> models = fetchModelsForProvider(provider);
+            return R.ok(models);
+        } catch (BusinessException e) {
+            return R.fail(e.getCode(), e.getMessage());
+        } catch (Exception e) {
+            log.warn("Failed to list models for provider {}: {}", provider, e.getMessage());
+            return R.fail(502, "获取模型列表失败: " + e.getMessage());
+        }
+    }
+
+    private List<Map<String, Object>> fetchModelsForProvider(String provider) throws Exception {
+        return switch (provider) {
+            case "github-copilot" -> copilotAuthService.listModels();
+            case "ollama" -> fetchOllamaModels();
+            case "openai" -> fetchOpenAiCompatibleModels("ai.openai", "https://api.openai.com");
+            case "gemini" -> fetchOpenAiCompatibleModels("ai.gemini",
+                    "https://generativelanguage.googleapis.com/v1beta/openai/");
+            case "anthropic" -> fetchAnthropicModels();
+            default -> fetchOpenAiCompatibleModels("ai." + provider, null);
+        };
+    }
+
+    private List<Map<String, Object>> fetchOllamaModels() throws Exception {
+        String baseUrl = getConfigValue("ai.ollama.base-url");
+        if (baseUrl == null || baseUrl.isBlank()) baseUrl = "http://localhost:11434";
+        String url = baseUrl.endsWith("/") ? baseUrl + "api/tags" : baseUrl + "/api/tags";
+
+        java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
+                .connectTimeout(java.time.Duration.ofSeconds(10)).build();
+        java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
+                .uri(java.net.URI.create(url))
+                .header("Accept", "application/json")
+                .GET()
+                .timeout(java.time.Duration.ofSeconds(15))
+                .build();
+        java.net.http.HttpResponse<String> response = client.send(request,
+                java.net.http.HttpResponse.BodyHandlers.ofString());
+
+        if (response.statusCode() != 200) {
+            throw new BusinessException(502, "Ollama 返回错误: HTTP " + response.statusCode());
+        }
+
+        var json = objectMapper.readTree(response.body());
+        List<Map<String, Object>> models = new java.util.ArrayList<>();
+        var modelsNode = json.has("models") ? json.get("models") : json;
+        if (modelsNode.isArray()) {
+            for (var node : modelsNode) {
+                Map<String, Object> model = new LinkedHashMap<>();
+                model.put("id", node.path("name").asText());
+                model.put("name", node.path("name").asText());
+                models.add(model);
+            }
+        }
+        return models;
+    }
+
+    private List<Map<String, Object>> fetchOpenAiCompatibleModels(String configPrefix,
+            String defaultBaseUrl) throws Exception {
+        String baseUrl = getConfigValue(configPrefix + ".base-url");
+        if ((baseUrl == null || baseUrl.isBlank()) && defaultBaseUrl != null) baseUrl = defaultBaseUrl;
+        if (baseUrl == null || baseUrl.isBlank()) {
+            throw new BusinessException(400, "未配置 base-url，无法获取模型列表");
+        }
+
+        String apiKeyEncrypted = getConfigValue(configPrefix + ".api-key");
+        String apiKey = "";
+        if (apiKeyEncrypted != null && !apiKeyEncrypted.isBlank()) {
+            try { apiKey = cryptoUtils.decrypt(apiKeyEncrypted); } catch (Exception ignored) {}
+        }
+
+        String url = baseUrl.endsWith("/") ? baseUrl + "v1/models" : baseUrl + "/v1/models";
+
+        java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
+                .connectTimeout(java.time.Duration.ofSeconds(10)).build();
+        var reqBuilder = java.net.http.HttpRequest.newBuilder()
+                .uri(java.net.URI.create(url))
+                .header("Accept", "application/json")
+                .GET()
+                .timeout(java.time.Duration.ofSeconds(15));
+        if (!apiKey.isBlank()) {
+            reqBuilder.header("Authorization", "Bearer " + apiKey);
+        }
+        java.net.http.HttpResponse<String> response = client.send(reqBuilder.build(),
+                java.net.http.HttpResponse.BodyHandlers.ofString());
+
+        if (response.statusCode() != 200) {
+            throw new BusinessException(502, "获取模型列表失败: HTTP " + response.statusCode());
+        }
+
+        var json = objectMapper.readTree(response.body());
+        List<Map<String, Object>> models = new java.util.ArrayList<>();
+        var dataNode = json.has("data") ? json.get("data") : json;
+        if (dataNode.isArray()) {
+            for (var node : dataNode) {
+                Map<String, Object> model = new LinkedHashMap<>();
+                model.put("id", node.path("id").asText());
+                model.put("name", node.path("id").asText());
+                models.add(model);
+            }
+        }
+        return models;
+    }
+
+    private List<Map<String, Object>> fetchAnthropicModels() {
+        // Anthropic doesn't have a public model list API, return known models
+        return List.of(
+            Map.of("id", "claude-sonnet-4-20250514", "name", "Claude Sonnet 4"),
+            Map.of("id", "claude-opus-4-20250514", "name", "Claude Opus 4"),
+            Map.of("id", "claude-3-5-haiku-20241022", "name", "Claude 3.5 Haiku")
+        );
     }
 
     @GetMapping("/quota")

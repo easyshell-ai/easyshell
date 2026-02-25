@@ -273,3 +273,7 @@ export function copilotLogout(): Promise<ApiResponse<null>> {
 export function getCopilotModels(): Promise<ApiResponse<{ id: string; name: string; version: string }[]>> {
   return request.get('/v1/ai/copilot/models');
 }
+
+export function getProviderModels(provider: string): Promise<ApiResponse<{ id: string; name: string }[]>> {
+  return request.get('/v1/ai/config/models', { params: { provider } });
+}
