@@ -40,7 +40,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { useResponsive } from '../../hooks/useResponsive';
-import { getAiConfig, saveAiConfig, testAiConnection, copilotRequestDeviceCode, copilotPollToken, copilotGetStatus, copilotLogout, getCopilotModels } from '../../api/ai';
+import { getAiConfig, saveAiConfig, testAiConnection, copilotRequestDeviceCode, copilotPollToken, copilotGetStatus, copilotLogout, getCopilotModels, getProviderModels } from '../../api/ai';
 import type { AiTestResult } from '../../types';
 
 const { Title, Text } = Typography;
@@ -192,9 +192,9 @@ const AiConfig: React.FC = () => {
   const [copilotLoading, setCopilotLoading] = useState(false);
   const [copilotDeviceInfo, setCopilotDeviceInfo] = useState<{ userCode: string; verificationUri: string; deviceCode: string } | null>(null);
   const [copilotPolling, setCopilotPolling] = useState(false);
-  const copilotPollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [copilotModels, setCopilotModels] = useState<{ id: string; name: string }[]>([]);
-  const [copilotModelsLoading, setCopilotModelsLoading] = useState(false);
+  const copilotPollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [providerModels, setProviderModels] = useState<Record<string, { id: string; name: string }[]>>({});
+  const [providerModelsLoading, setProviderModelsLoading] = useState<Record<string, boolean>>({});
 
   // Embedding config state
   const [embeddingForm, setEmbeddingForm] = useState<EmbeddingForm>({
@@ -312,28 +312,34 @@ const AiConfig: React.FC = () => {
       .catch(() => {});
   }, []);
 
-  const fetchCopilotModels = useCallback(() => {
-    setCopilotModelsLoading(true);
-    getCopilotModels()
+  const fetchProviderModelsList = useCallback((provider: string) => {
+    setProviderModelsLoading((prev) => ({ ...prev, [provider]: true }));
+    const apiFn = provider === 'github-copilot' ? getCopilotModels() : getProviderModels(provider);
+    apiFn
       .then((res) => {
         if (res.code === 200 && res.data) {
-          setCopilotModels(res.data.map((m) => ({ id: m.id, name: m.name || m.id })));
+          const models = res.data.map((m: { id: string; name?: string }) => ({ id: m.id, name: m.name || m.id }));
+          setProviderModels((prev) => ({ ...prev, [provider]: models }));
+          message.success(t('aiConfig.provider.refreshModelsSuccess', { count: models.length }));
+        } else {
+          message.error(res.message || t('aiConfig.provider.refreshModelsError'));
         }
       })
-      .catch(() => {})
-      .finally(() => setCopilotModelsLoading(false));
-  }, []);
+      .catch(() => message.error(t('aiConfig.provider.refreshModelsError')))
+      .finally(() => setProviderModelsLoading((prev) => ({ ...prev, [provider]: false })));
+  }, [t]);
 
   useEffect(() => {
     if (copilotAuthed) {
-      fetchCopilotModels();
+      fetchProviderModelsList('github-copilot');
     }
-  }, [copilotAuthed, fetchCopilotModels]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [copilotAuthed]);
 
   useEffect(() => {
     return () => {
       if (copilotPollTimer.current) {
-        clearInterval(copilotPollTimer.current);
+        clearTimeout(copilotPollTimer.current);
       }
     };
   }, []);
@@ -483,30 +489,34 @@ const AiConfig: React.FC = () => {
         setCopilotDeviceInfo({ userCode, verificationUri, deviceCode });
         window.open(verificationUri, '_blank');
         setCopilotPolling(true);
-        const pollInterval = Math.max((interval || 5) * 1000, 5000);
-        copilotPollTimer.current = setInterval(async () => {
+        let currentInterval = Math.max((interval || 5) * 1000, 5000);
+        const poll = async () => {
           try {
             const pollRes = await copilotPollToken(deviceCode);
             if (pollRes.code === 200 && pollRes.data) {
               if (pollRes.data.status === 'success') {
-                clearInterval(copilotPollTimer.current!);
                 copilotPollTimer.current = null;
                 setCopilotPolling(false);
                 setCopilotDeviceInfo(null);
                 setCopilotAuthed(true);
                 message.success(t('aiConfig.provider.copilotAuthSuccess'));
-              } else if (pollRes.data.status === 'expired' || pollRes.data.status === 'denied') {
-                clearInterval(copilotPollTimer.current!);
+                return;
+              } else if (pollRes.data.status === 'expired_token' || pollRes.data.status === 'access_denied') {
                 copilotPollTimer.current = null;
                 setCopilotPolling(false);
                 setCopilotDeviceInfo(null);
                 message.error(pollRes.data.message || t('aiConfig.provider.copilotAuthFailed'));
+                return;
+              } else if (pollRes.data.status === 'slow_down') {
+                currentInterval += 5000;
               }
             }
           } catch {
             // ignore poll errors
           }
-        }, pollInterval);
+          copilotPollTimer.current = setTimeout(poll, currentInterval);
+        };
+        copilotPollTimer.current = setTimeout(poll, currentInterval);
       } else {
         message.error(res.message || t('aiConfig.provider.copilotDeviceCodeError'));
       }
@@ -533,9 +543,10 @@ const AiConfig: React.FC = () => {
     const builtIn = BUILTIN_PROVIDERS[providerKey];
     const hasApiKey = builtIn ? builtIn.hasApiKey : true;
     const hasBaseUrl = builtIn ? builtIn.hasBaseUrl : true;
-    const modelSuggestions = providerKey === 'github-copilot' && copilotModels.length > 0 ? copilotModels.map((m) => m.id) : (builtIn ? builtIn.models : []);
-    const isCustom = !builtIn;
+    const fetchedModels = providerModels[providerKey] || [];
+    const modelSuggestions = fetchedModels.length > 0 ? fetchedModels.map((m) => m.id) : (builtIn ? builtIn.models : []);
     const providerLabel = builtIn ? builtIn.label : customProviders[providerKey] || providerKey;
+    const isCustom = !builtIn;
 
     return (
       <div style={{ opacity: enabled ? 1 : 0.5, pointerEvents: enabled ? 'auto' : 'none' }}>
@@ -664,11 +675,11 @@ const AiConfig: React.FC = () => {
                 }
                 style={{ flex: 1 }}
               />
-              {providerKey === 'github-copilot' && copilotAuthed && (
+              {(providerKey !== 'github-copilot' || copilotAuthed) && (
                 <Button
-                  icon={copilotModelsLoading ? <LoadingOutlined /> : <ApiOutlined />}
-                  loading={copilotModelsLoading}
-                  onClick={fetchCopilotModels}
+                  icon={providerModelsLoading[providerKey] ? <LoadingOutlined /> : <ApiOutlined />}
+                  loading={providerModelsLoading[providerKey]}
+                  onClick={() => fetchProviderModelsList(providerKey)}
                 >
                   {t('aiConfig.provider.refreshModels')}
                 </Button>
