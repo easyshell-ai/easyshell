@@ -13,6 +13,9 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
@@ -28,6 +31,7 @@ public class TelegramBotService implements BotChannelService {
     private volatile Set<String> allowedChatIds;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private volatile ExecutorService pollingExecutor;
+    private volatile ExecutorService messageExecutor;
     private volatile boolean stopRequested = false;
     private volatile long lastUpdateId = 0;
 
@@ -63,8 +67,19 @@ public class TelegramBotService implements BotChannelService {
             t.setDaemon(true);
             return t;
         });
+        // Separate thread pool for message handling so polling is never blocked
+        messageExecutor = new ThreadPoolExecutor(
+                2, 4, 60L, TimeUnit.SECONDS,
+                new LinkedBlockingQueue<>(50),
+                r -> {
+                    Thread t = new Thread(r, "telegram-msg-handler");
+                    t.setDaemon(true);
+                    return t;
+                },
+                new ThreadPoolExecutor.CallerRunsPolicy()
+        );
         pollingExecutor.submit(this::pollLoop);
-        log.info("Telegram bot started (long-polling mode)");
+        log.info("Telegram bot started (long-polling mode, async message handling)");
     }
 
     @Override
@@ -74,6 +89,10 @@ public class TelegramBotService implements BotChannelService {
         if (pollingExecutor != null) {
             pollingExecutor.shutdownNow();
             pollingExecutor = null;
+        }
+        if (messageExecutor != null) {
+            messageExecutor.shutdownNow();
+            messageExecutor = null;
         }
         log.info("Telegram bot stopped");
     }
@@ -106,7 +125,9 @@ public class TelegramBotService implements BotChannelService {
                     if (updateId > lastUpdateId) {
                         lastUpdateId = updateId;
                     }
-                    handleUpdate(update);
+                    // Dispatch to message handler thread pool — never block polling
+                    final JsonNode updateCopy = update;
+                    messageExecutor.submit(() -> handleUpdate(updateCopy));
                 }
             } catch (Exception e) {
                 if (!stopRequested) {
@@ -133,6 +154,8 @@ public class TelegramBotService implements BotChannelService {
         }
 
         try {
+            // Send typing indicator so user knows we're processing
+            sendChatAction(chatId, "typing");
             log.info("Routing Telegram message to AI for chat {}", chatId);
             String reply = router.routeMessage("telegram", text, fromUser);
             log.info("AI replied for chat {} ({} chars)", chatId, reply != null ? reply.length() : 0);
@@ -140,6 +163,37 @@ public class TelegramBotService implements BotChannelService {
         } catch (Exception e) {
             log.error("Error handling Telegram message from chat {}: {}", chatId, e.getMessage(), e);
             sendMessage(chatId, "处理消息时发生错误，请稍后重试。");
+        }
+    }
+
+    @Override
+    public boolean pushMessage(String chatId, String message) {
+        if (!running.get()) {
+            log.warn("Telegram bot not running, cannot push message to chat {}", chatId);
+            return false;
+        }
+        try {
+            sendMessage(chatId, message);
+            return true;
+        } catch (Exception e) {
+            log.error("Failed to push message to Telegram chat {}: {}", chatId, e.getMessage());
+            return false;
+        }
+    }
+
+    private void sendChatAction(String chatId, String action) {
+        try {
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("chat_id", chatId);
+            body.put("action", action);
+            webClient.post()
+                    .uri("/sendChatAction")
+                    .bodyValue(body)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .block();
+        } catch (Exception e) {
+            log.debug("Failed to send chat action to {}: {}", chatId, e.getMessage());
         }
     }
 

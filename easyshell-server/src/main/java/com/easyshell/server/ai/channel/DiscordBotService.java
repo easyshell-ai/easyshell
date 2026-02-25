@@ -11,6 +11,9 @@ import java.util.Arrays;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
@@ -28,6 +31,7 @@ public class DiscordBotService implements BotChannelService {
     private volatile String botUserId;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private volatile ExecutorService pollingExecutor;
+    private volatile ExecutorService messageExecutor;
     private volatile boolean stopRequested = false;
     private volatile String lastMessageId;
 
@@ -70,8 +74,19 @@ public class DiscordBotService implements BotChannelService {
             t.setDaemon(true);
             return t;
         });
+        // Separate thread pool for message handling so polling is never blocked
+        messageExecutor = new ThreadPoolExecutor(
+                2, 4, 60L, TimeUnit.SECONDS,
+                new LinkedBlockingQueue<>(50),
+                r -> {
+                    Thread t = new Thread(r, "discord-msg-handler");
+                    t.setDaemon(true);
+                    return t;
+                },
+                new ThreadPoolExecutor.CallerRunsPolicy()
+        );
         pollingExecutor.submit(this::pollLoop);
-        log.info("Discord bot started (REST polling mode, guild={})", guildId);
+        log.info("Discord bot started (REST polling mode, guild={}, async message handling)", guildId);
     }
 
     @Override
@@ -81,6 +96,10 @@ public class DiscordBotService implements BotChannelService {
         if (pollingExecutor != null) {
             pollingExecutor.shutdownNow();
             pollingExecutor = null;
+        }
+        if (messageExecutor != null) {
+            messageExecutor.shutdownNow();
+            messageExecutor = null;
         }
         log.info("Discord bot stopped");
     }
@@ -180,7 +199,11 @@ public class DiscordBotService implements BotChannelService {
                     lastMessageId = msgId;
                 }
 
-                handleDiscordMessage(channelId, content, username);
+                // Dispatch to message handler thread pool — never block polling
+                final String cId = channelId;
+                final String c = content;
+                final String u = username;
+                messageExecutor.submit(() -> handleDiscordMessage(cId, c, u));
             }
         } catch (Exception e) {
             log.warn("Error polling Discord channel {}: {}", channelId, e.getMessage());
@@ -194,6 +217,21 @@ public class DiscordBotService implements BotChannelService {
         } catch (Exception e) {
             log.error("Error handling Discord message: {}", e.getMessage(), e);
             sendMessage(channelId, "处理消息时发生错误，请稍后重试。");
+        }
+    }
+
+    @Override
+    public boolean pushMessage(String channelId, String message) {
+        if (!running.get()) {
+            log.warn("Discord bot not running, cannot push message to channel {}", channelId);
+            return false;
+        }
+        try {
+            sendMessage(channelId, message);
+            return true;
+        } catch (Exception e) {
+            log.error("Failed to push message to Discord channel {}: {}", channelId, e.getMessage());
+            return false;
         }
     }
 
