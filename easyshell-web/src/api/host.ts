@@ -49,3 +49,7 @@ export function getHostInventory(agentId: string): Promise<ApiResponse<HostSoftw
 export function deleteHost(agentId: string): Promise<ApiResponse<void>> {
   return request.delete(`/v1/host/${agentId}`);
 }
+
+export function deleteCredential(id: number): Promise<ApiResponse<void>> {
+  return request.delete(`/v1/host/credential/${id}`);
+}

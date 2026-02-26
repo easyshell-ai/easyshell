@@ -18,6 +18,25 @@ public class HostProvisionRequest {
     @NotBlank(message = "SSH username is required")
     private String sshUsername;
 
-    @NotBlank(message = "SSH password is required")
     private String sshPassword;
+
+    /**
+     * Authentication type: password or key (default: password)
+     */
+    private String authType = "password";
+
+    /**
+     * SSH private key content (PEM format), used when authType=key
+     */
+    private String sshPrivateKey;
+
+    /**
+     * Display name / alias for the host
+     */
+    private String hostName;
+
+    /**
+     * Whether to deploy immediately after adding (default: true for backward compatibility)
+     */
+    private Boolean deployNow = true;
 }

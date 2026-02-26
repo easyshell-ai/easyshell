@@ -33,3 +33,26 @@ export function batchReinstallAgents(agentIds: string[]): Promise<ApiResponse<Ho
 export function uninstallAgent(agentId: string): Promise<ApiResponse<HostCredentialVO>> {
   return request.post(`/v1/host/provision/uninstall/${agentId}`);
 }
+
+export function batchDeploy(credentialIds: number[]): Promise<ApiResponse<HostCredentialVO[]>> {
+  return request.post('/v1/host/provision/deploy/batch', credentialIds);
+}
+
+export function importCsv(file: File): Promise<ApiResponse<HostCredentialVO[]>> {
+  const formData = new FormData();
+  formData.append('file', file);
+  return request.post('/v1/host/provision/import/csv', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+}
+
+export function downloadTemplate(): void {
+  const link = document.createElement('a');
+  link.href = '/api/v1/host/provision/import/template';
+  link.download = 'host_import_template.csv';
+  link.click();
+}
+
+export function getUnifiedHostList(): Promise<ApiResponse<HostCredentialVO[]>> {
+  return request.get('/v1/host/provision/unified-list');
+}

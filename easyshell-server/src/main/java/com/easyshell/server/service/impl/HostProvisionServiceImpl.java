@@ -21,9 +21,9 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.time.format.DateTimeFormatter;
-import java.util.List;
-import java.util.Properties;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -56,11 +56,34 @@ public class HostProvisionServiceImpl implements HostProvisionService {
             credentialRepository.flush();
         });
 
+        String authType = request.getAuthType() != null ? request.getAuthType() : "password";
+
+        // Validate based on auth type
+        if ("password".equals(authType)) {
+            if (request.getSshPassword() == null || request.getSshPassword().isBlank()) {
+                throw new BusinessException(400, "密码登录方式必须提供SSH密码");
+            }
+        } else if ("key".equals(authType)) {
+            if (request.getSshPrivateKey() == null || request.getSshPrivateKey().isBlank()) {
+                throw new BusinessException(400, "密钥登录方式必须提供SSH私钥");
+            }
+        } else {
+            throw new BusinessException(400, "不支持的认证方式: " + authType);
+        }
+
         HostCredential credential = new HostCredential();
         credential.setIp(request.getIp());
         credential.setSshPort(request.getSshPort() != null ? request.getSshPort() : 22);
         credential.setSshUsername(request.getSshUsername());
-        credential.setSshPasswordEncrypted(cryptoUtils.encrypt(request.getSshPassword()));
+        credential.setAuthType(authType);
+        credential.setHostName(request.getHostName());
+
+        if ("password".equals(authType)) {
+            credential.setSshPasswordEncrypted(cryptoUtils.encrypt(request.getSshPassword()));
+        } else {
+            credential.setSshPrivateKeyEncrypted(cryptoUtils.encrypt(request.getSshPrivateKey()));
+        }
+
         credential.setProvisionStatus("PENDING");
         credential.setProvisionLog("");
 
@@ -183,18 +206,10 @@ public class HostProvisionServiceImpl implements HostProvisionService {
 
         Session session = null;
         try {
-            String password = cryptoUtils.decrypt(credential.getSshPasswordEncrypted());
-
             saveStatus(credentialId, "UNINSTALLING", "正在连接 " + credential.getIp() + ":" + credential.getSshPort() + " ...");
 
             JSch jsch = new JSch();
-            session = jsch.getSession(credential.getSshUsername(), credential.getIp(), credential.getSshPort());
-            session.setPassword(password);
-            Properties config = new Properties();
-            config.put("StrictHostKeyChecking", "no");
-            session.setConfig(config);
-            session.setTimeout(30000);
-            session.connect(30000);
+            session = createSshSession(jsch, credential);
 
             saveLog(credentialId, "SSH连接已建立，开始卸载Agent");
 
@@ -259,18 +274,10 @@ public class HostProvisionServiceImpl implements HostProvisionService {
 
         Session session = null;
         try {
-            String password = cryptoUtils.decrypt(credential.getSshPasswordEncrypted());
-
             saveStatus(credentialId, "CONNECTING", "正在连接 " + credential.getIp() + ":" + credential.getSshPort() + " ...");
 
             JSch jsch = new JSch();
-            session = jsch.getSession(credential.getSshUsername(), credential.getIp(), credential.getSshPort());
-            session.setPassword(password);
-            Properties config = new Properties();
-            config.put("StrictHostKeyChecking", "no");
-            session.setConfig(config);
-            session.setTimeout(30000);
-            session.connect(30000);
+            session = createSshSession(jsch, credential);
 
             saveLog(credentialId, "SSH连接已建立");
 
@@ -580,6 +587,8 @@ public class HostProvisionServiceImpl implements HostProvisionService {
                 .ip(entity.getIp())
                 .sshPort(entity.getSshPort())
                 .sshUsername(entity.getSshUsername())
+                .authType(entity.getAuthType())
+                .hostName(entity.getHostName())
                 .agentId(entity.getAgentId())
                 .provisionStatus(entity.getProvisionStatus())
                 .provisionLog(entity.getProvisionLog())
@@ -587,5 +596,229 @@ public class HostProvisionServiceImpl implements HostProvisionService {
                 .createdAt(entity.getCreatedAt() != null ? entity.getCreatedAt().format(FMT) : null)
                 .updatedAt(entity.getUpdatedAt() != null ? entity.getUpdatedAt().format(FMT) : null)
                 .build();
+    }
+
+    /**
+     * Build a HostCredentialVO that merges Agent data when available.
+     */
+    private HostCredentialVO toUnifiedVO(HostCredential entity, Agent agent) {
+        HostCredentialVO.HostCredentialVOBuilder builder = HostCredentialVO.builder()
+                .id(entity.getId())
+                .ip(entity.getIp())
+                .sshPort(entity.getSshPort())
+                .sshUsername(entity.getSshUsername())
+                .authType(entity.getAuthType())
+                .hostName(entity.getHostName())
+                .agentId(entity.getAgentId())
+                .provisionStatus(entity.getProvisionStatus())
+                .provisionLog(entity.getProvisionLog())
+                .errorMessage(entity.getErrorMessage())
+                .createdAt(entity.getCreatedAt() != null ? entity.getCreatedAt().format(FMT) : null)
+                .updatedAt(entity.getUpdatedAt() != null ? entity.getUpdatedAt().format(FMT) : null);
+
+        if (agent != null) {
+            builder.hostname(agent.getHostname())
+                    .os(agent.getOs())
+                    .arch(agent.getArch())
+                    .kernel(agent.getKernel())
+                    .cpuModel(agent.getCpuModel())
+                    .cpuCores(agent.getCpuCores())
+                    .memTotal(agent.getMemTotal())
+                    .agentVersion(agent.getAgentVersion())
+                    .agentStatus(agent.getStatus())
+                    .lastHeartbeat(agent.getLastHeartbeat() != null ? agent.getLastHeartbeat().format(FMT) : null)
+                    .cpuUsage(agent.getCpuUsage())
+                    .memUsage(agent.getMemUsage())
+                    .diskUsage(agent.getDiskUsage())
+                    .registeredAt(agent.getRegisteredAt() != null ? agent.getRegisteredAt().format(FMT) : null);
+        }
+
+        return builder.build();
+    }
+
+    /**
+     * Create SSH session supporting both password and key authentication.
+     */
+    private Session createSshSession(JSch jsch, HostCredential credential) throws Exception {
+        String authType = credential.getAuthType() != null ? credential.getAuthType() : "password";
+
+        if ("key".equals(authType)) {
+            String privateKey = cryptoUtils.decrypt(credential.getSshPrivateKeyEncrypted());
+            jsch.addIdentity("deploy-key-" + credential.getId(), privateKey.getBytes(StandardCharsets.UTF_8), null, null);
+        }
+
+        Session session = jsch.getSession(credential.getSshUsername(), credential.getIp(), credential.getSshPort());
+
+        if ("password".equals(authType)) {
+            String password = cryptoUtils.decrypt(credential.getSshPasswordEncrypted());
+            session.setPassword(password);
+        }
+
+        Properties config = new Properties();
+        config.put("StrictHostKeyChecking", "no");
+        session.setConfig(config);
+        session.setTimeout(30000);
+        session.connect(30000);
+        return session;
+    }
+
+    // ===== New methods for host deployment enhancement =====
+
+    @Override
+    public List<HostCredentialVO> listUnified() {
+        List<HostCredential> credentials = credentialRepository.findAllByOrderByCreatedAtDesc();
+        // Build agent lookup map by IP
+        List<Agent> agents = agentRepository.findAll();
+        Map<String, Agent> agentByIp = new HashMap<>();
+        Map<String, Agent> agentById = new HashMap<>();
+        for (Agent agent : agents) {
+            if (agent.getIp() != null) agentByIp.put(agent.getIp(), agent);
+            agentById.put(agent.getId(), agent);
+        }
+
+        // Track which agent IPs are covered by credentials
+        Set<String> coveredIps = new HashSet<>();
+
+        List<HostCredentialVO> result = new ArrayList<>();
+        for (HostCredential cred : credentials) {
+            Agent agent = null;
+            if (cred.getAgentId() != null) {
+                agent = agentById.get(cred.getAgentId());
+            }
+            if (agent == null && cred.getIp() != null) {
+                agent = agentByIp.get(cred.getIp());
+            }
+            result.add(toUnifiedVO(cred, agent));
+            coveredIps.add(cred.getIp());
+        }
+
+        // Add agents that have no corresponding credential (legacy agents registered before this feature)
+        for (Agent agent : agents) {
+            if (agent.getIp() != null && !coveredIps.contains(agent.getIp())) {
+                HostCredentialVO vo = HostCredentialVO.builder()
+                        .ip(agent.getIp())
+                        .agentId(agent.getId())
+                        .provisionStatus("SUCCESS")
+                        .hostname(agent.getHostname())
+                        .os(agent.getOs())
+                        .arch(agent.getArch())
+                        .kernel(agent.getKernel())
+                        .cpuModel(agent.getCpuModel())
+                        .cpuCores(agent.getCpuCores())
+                        .memTotal(agent.getMemTotal())
+                        .agentVersion(agent.getAgentVersion())
+                        .agentStatus(agent.getStatus())
+                        .lastHeartbeat(agent.getLastHeartbeat() != null ? agent.getLastHeartbeat().format(FMT) : null)
+                        .cpuUsage(agent.getCpuUsage())
+                        .memUsage(agent.getMemUsage())
+                        .diskUsage(agent.getDiskUsage())
+                        .registeredAt(agent.getRegisteredAt() != null ? agent.getRegisteredAt().format(FMT) : null)
+                        .build();
+                result.add(vo);
+            }
+        }
+
+        return result;
+    }
+
+    @Override
+    public List<HostCredentialVO> batchDeploy(List<Long> credentialIds) {
+        List<HostCredential> credentials = credentialRepository.findAllByIdIn(credentialIds);
+        List<HostCredentialVO> results = new ArrayList<>();
+        for (HostCredential credential : credentials) {
+            if (!"PENDING".equals(credential.getProvisionStatus()) && !"FAILED".equals(credential.getProvisionStatus())) {
+                log.warn("Skipping batch deploy for credential {} (status={})", credential.getId(), credential.getProvisionStatus());
+                continue;
+            }
+            credential.setProvisionStatus("PENDING");
+            credential.setProvisionLog("");
+            credential.setErrorMessage(null);
+            credentialRepository.save(credential);
+            startProvisionAsync(credential.getId());
+            results.add(toVO(credential));
+        }
+        return results;
+    }
+
+    @Override
+    public List<HostCredentialVO> importFromCsv(InputStream csvInputStream) {
+        List<HostCredentialVO> results = new ArrayList<>();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(csvInputStream, StandardCharsets.UTF_8))) {
+            String headerLine = reader.readLine();
+            if (headerLine == null) {
+                throw new BusinessException(400, "CSV文件为空");
+            }
+            // Skip BOM if present
+            if (headerLine.startsWith("\uFEFF")) {
+                headerLine = headerLine.substring(1);
+            }
+
+            String line;
+            int lineNum = 1;
+            while ((line = reader.readLine()) != null) {
+                lineNum++;
+                line = line.trim();
+                if (line.isEmpty()) continue;
+
+                String[] parts = line.split(",", -1);
+                if (parts.length < 3) {
+                    log.warn("CSV line {} has insufficient columns, skipping: {}", lineNum, line);
+                    continue;
+                }
+
+                String ip = parts[0].trim();
+                String sshPortStr = parts.length > 1 ? parts[1].trim() : "22";
+                String sshUsername = parts.length > 2 ? parts[2].trim() : "";
+                String sshPassword = parts.length > 3 ? parts[3].trim() : "";
+                String hostName = parts.length > 4 ? parts[4].trim() : "";
+
+                if (ip.isEmpty() || sshUsername.isEmpty() || sshPassword.isEmpty()) {
+                    log.warn("CSV line {} missing required fields (ip, username, password), skipping", lineNum);
+                    continue;
+                }
+
+                int sshPort;
+                try {
+                    sshPort = sshPortStr.isEmpty() ? 22 : Integer.parseInt(sshPortStr);
+                } catch (NumberFormatException e) {
+                    log.warn("CSV line {} has invalid port '{}', using default 22", lineNum, sshPortStr);
+                    sshPort = 22;
+                }
+
+                // Check if IP already exists
+                Optional<HostCredential> existing = credentialRepository.findByIp(ip);
+                if (existing.isPresent()) {
+                    log.warn("CSV line {} IP {} already exists, skipping", lineNum, ip);
+                    continue;
+                }
+
+                HostCredential credential = new HostCredential();
+                credential.setIp(ip);
+                credential.setSshPort(sshPort);
+                credential.setSshUsername(sshUsername);
+                credential.setSshPasswordEncrypted(cryptoUtils.encrypt(sshPassword));
+                credential.setAuthType("password");
+                credential.setHostName(hostName.isEmpty() ? null : hostName);
+                credential.setProvisionStatus("PENDING");
+                credential.setProvisionLog("");
+
+                credential = credentialRepository.save(credential);
+                results.add(toVO(credential));
+            }
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new BusinessException(400, "CSV解析失败: " + e.getMessage());
+        }
+        return results;
+    }
+
+    @Override
+    public byte[] generateCsvTemplate() {
+        String bom = "\uFEFF";
+        String header = "ip,ssh_port,ssh_username,ssh_password,host_name";
+        String example = "192.168.1.100,22,root,your_password,Web服务器1";
+        String content = bom + header + "\n" + example + "\n";
+        return content.getBytes(StandardCharsets.UTF_8);
     }
 }

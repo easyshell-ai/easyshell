@@ -28,8 +28,26 @@ public class HostCredential extends BaseEntity {
     /**
      * AES-256-CBC encrypted SSH password (Base64 encoded)
      */
-    @Column(name = "ssh_password_encrypted", nullable = false, length = 512)
+    @Column(name = "ssh_password_encrypted", length = 512)
     private String sshPasswordEncrypted;
+
+    /**
+     * Authentication type: password or key
+     */
+    @Column(name = "auth_type", nullable = false, length = 20)
+    private String authType = "password";
+
+    /**
+     * AES-256-CBC encrypted SSH private key (Base64 encoded), used when authType=key
+     */
+    @Column(name = "ssh_private_key_encrypted", columnDefinition = "TEXT")
+    private String sshPrivateKeyEncrypted;
+
+    /**
+     * Display name / alias for the host
+     */
+    @Column(name = "host_name", length = 128)
+    private String hostName;
 
     /**
      * Associated agent ID after successful provisioning

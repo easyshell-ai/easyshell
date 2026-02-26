@@ -246,20 +246,41 @@ export interface HostProvisionRequest {
   ip: string;
   sshPort: number;
   sshUsername: string;
-  sshPassword: string;
+  sshPassword?: string;
+  authType?: 'password' | 'key';
+  sshPrivateKey?: string;
+  hostName?: string;
+  deployNow?: boolean;
 }
 
 export interface HostCredentialVO {
-  id: number;
+  id: number | null;
   ip: string;
   sshPort: number;
   sshUsername: string;
+  authType: string;
+  hostName: string | null;
   agentId: string | null;
   provisionStatus: string;
   provisionLog: string;
   errorMessage: string | null;
   createdAt: string;
   updatedAt: string;
+  // Agent-merged fields (from unified list)
+  hostname: string | null;
+  os: string | null;
+  arch: string | null;
+  kernel: string | null;
+  cpuModel: string | null;
+  cpuCores: number | null;
+  memTotal: number | null;
+  agentVersion: string | null;
+  agentStatus: number | null;
+  lastHeartbeat: string | null;
+  cpuUsage: number | null;
+  memUsage: number | null;
+  diskUsage: number | null;
+  registeredAt: string | null;
 }
 
 export type HostInfo = Agent;

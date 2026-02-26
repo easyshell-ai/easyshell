@@ -4,6 +4,7 @@ import com.easyshell.server.common.exception.BusinessException;
 import com.easyshell.server.repository.AgentTagRepository;
 import com.easyshell.server.repository.HostCredentialRepository;
 import org.springframework.transaction.annotation.Transactional;
+import com.easyshell.server.service.HostProvisionService;
 
 import com.easyshell.server.common.result.R;
 import com.easyshell.server.model.entity.Agent;
@@ -40,6 +41,8 @@ public class HostController {
 
     private final AgentTagRepository agentTagRepository;
     private final HostCredentialRepository credentialRepository;
+    private final HostProvisionService hostProvisionService;
+
 
     @GetMapping("/list")
     public R<List<Agent>> list() {
@@ -63,6 +66,17 @@ public class HostController {
         metricSnapshotRepository.deleteByAgentId(agentId);
         agentRepository.deleteById(agentId);
         credentialRepository.findByIp(agent.getIp()).ifPresent(credentialRepository::delete);
+        return R.ok();
+    }
+
+    /**
+     * Delete a pending/failed host credential (before agent deployment).
+     * This is different from deleteHost which deletes an agent.
+     */
+    @DeleteMapping("/credential/{id}")
+    @Transactional
+    public R<Void> deleteCredential(@PathVariable Long id) {
+        hostProvisionService.deleteById(id);
         return R.ok();
     }
     @GetMapping("/{agentId}/tags")
