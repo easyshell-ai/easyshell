@@ -836,6 +836,8 @@ public class HostProvisionServiceImpl implements HostProvisionService {
 
                 credential = credentialRepository.save(credential);
                 results.add(toVO(credential));
+                // Auto-deploy after import
+                self().startProvisionAsync(credential.getId());
             }
         } catch (BusinessException e) {
             throw e;

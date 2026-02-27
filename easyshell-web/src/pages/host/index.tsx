@@ -393,10 +393,13 @@ const Host: React.FC = () => {
     try {
       const res = await importCsv(importFileList[0].originFileObj);
       if (res.code === 200 && res.data) {
-        message.success(t('host.importSuccess', { count: res.data.length }), 5);
+        message.success(t('host.importSuccess', { count: res.data.length }));
         setImportModalVisible(false);
         setImportFileList([]);
         actionRef.current?.reload();
+        // Auto-deploy triggered by backend — open deploy history to show progress
+        setHistoryDrawerVisible(true);
+        loadProvisionHistory();
       } else {
         message.error(res.message || t('host.importFailed'));
       }
@@ -405,7 +408,7 @@ const Host: React.FC = () => {
     } finally {
       setImporting(false);
     }
-  }, [importFileList, t]);
+  }, [importFileList, t, loadProvisionHistory]);
 
   // Count pending/failed/uninstalled selected for batch deploy
   const pendingSelectedCount = selectedRowKeys.filter((k) => {
