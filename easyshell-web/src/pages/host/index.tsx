@@ -393,7 +393,7 @@ const Host: React.FC = () => {
     try {
       const res = await importCsv(importFileList[0].originFileObj);
       if (res.code === 200 && res.data) {
-        message.success(t('host.importSuccess', { count: res.data.length }));
+        message.success(t('host.importSuccess', { count: res.data.length }), 5);
         setImportModalVisible(false);
         setImportFileList([]);
         actionRef.current?.reload();

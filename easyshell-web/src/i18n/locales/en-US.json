@@ -902,7 +902,7 @@
     "importDescription": "Import hosts via CSV file. Imported hosts will have 'Pending' status and can be batch deployed.",
     "downloadTemplate": "Download Template",
     "selectCsvFile": "Select CSV File",
-    "importSuccess": "Successfully imported {{count}} hosts",
+    "importSuccess": "Successfully imported {{count}} hosts. Select them and click Batch Deploy.",
     "importFailed": "Import failed",
     "statusAll": "All",
     "statusPending": "Pending",

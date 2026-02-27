@@ -902,7 +902,7 @@
     "importDescription": "通过 CSV 文件批量导入主机信息，导入后主机状态为待部署，可批量选择后部署。",
     "downloadTemplate": "下载导入模板",
     "selectCsvFile": "选择 CSV 文件",
-    "importSuccess": "成功导入 {{count}} 台主机",
+    "importSuccess": "成功导入 {{count}} 台主机，请勾选主机后点击批量部署",
     "importFailed": "导入失败",
     "statusAll": "全部",
     "statusPending": "待部署",
