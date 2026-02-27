@@ -153,6 +153,18 @@ public class HostProvisionServiceImpl implements HostProvisionService {
         return toVO(credential);
     }
 
+    @Override
+    @Transactional
+    public HostCredentialVO reinstallByCredentialId(Long credentialId) {
+        HostCredential credential = credentialRepository.findById(credentialId)
+                .orElseThrow(() -> new BusinessException(404, "凭证记录不存在: " + credentialId));
+        credential.setProvisionStatus("PENDING");
+        credential.setProvisionLog("");
+        credential.setErrorMessage(null);
+        credentialRepository.save(credential);
+        return toVO(credential);
+    }
+
     @Async
     @Override
     public void startReinstallAsync(Long credentialId) {
@@ -237,13 +249,19 @@ public class HostProvisionServiceImpl implements HostProvisionService {
             execCommand(session, "rm -rf /opt/easyshell/");
             saveLog(credentialId, "已删除Agent文件 /opt/easyshell/");
 
-            // Clean up DB records
+            // Mark as UNINSTALLED instead of deleting
             String agentId = credential.getAgentId();
             transactionTemplate.executeWithoutResult(status -> {
                 if (agentId != null) {
                     agentRepository.deleteById(agentId);
                 }
-                credentialRepository.deleteById(credentialId);
+                HostCredential c = credentialRepository.findById(credentialId).orElse(null);
+                if (c != null) {
+                    c.setProvisionStatus("UNINSTALLED");
+                    c.setAgentId(null);
+                    appendLog(c, "卸载完成");
+                    credentialRepository.save(c);
+                }
             });
 
             log.info("Uninstall completed for host {} (credential {})", credential.getIp(), credentialId);
@@ -730,7 +748,7 @@ public class HostProvisionServiceImpl implements HostProvisionService {
         List<HostCredential> credentials = credentialRepository.findAllByIdIn(credentialIds);
         List<HostCredentialVO> results = new ArrayList<>();
         for (HostCredential credential : credentials) {
-            if (!"PENDING".equals(credential.getProvisionStatus()) && !"FAILED".equals(credential.getProvisionStatus())) {
+            if (!"PENDING".equals(credential.getProvisionStatus()) && !"FAILED".equals(credential.getProvisionStatus()) && !"UNINSTALLED".equals(credential.getProvisionStatus())) {
                 log.warn("Skipping batch deploy for credential {} (status={})", credential.getId(), credential.getProvisionStatus());
                 continue;
             }

@@ -20,9 +20,9 @@ import { getSystemConfigList } from '../../api/system';
 import {
   provisionHost, getProvisionList, getProvisionById, deleteProvision, retryProvision,
   reinstallAgent, batchReinstallAgents, uninstallAgent,
-  getUnifiedHostList, batchDeploy, importCsv, downloadTemplate,
+  getUnifiedHostList, batchDeploy, importCsv, downloadTemplate, reinstallByCredentialId,
 } from '../../api/provision';
-import { hostStatusMap, provisionStatusMap, getProvisionStep, provisionStepItems, getResourceColor } from '../../utils/status';
+import { hostStatusMap, provisionStatusMap, getProvisionStep, provisionStepItems, getResourceColor, uninstallStepItems, getUninstallStep } from '../../utils/status';
 import { formatBytes } from '../../utils/format';
 import type { TagVO, HostCredentialVO } from '../../types';
 
@@ -131,7 +131,7 @@ const Host: React.FC = () => {
             prev.map((r) => (r.id === id ? res.data : r))
           );
           const status = res.data.provisionStatus;
-          if (status === 'SUCCESS' || status === 'FAILED') {
+          if (status === 'SUCCESS' || status === 'FAILED' || status === 'UNINSTALLED' || status === 'UNINSTALL_FAILED') {
             clearInterval(timer);
             delete pollingTimers.current[id];
             if (status === 'SUCCESS') {
@@ -253,6 +253,28 @@ const Host: React.FC = () => {
         if (res.data.id) pollStatus(res.data.id);
         setHistoryDrawerVisible(true);
         loadProvisionHistory();
+      } else {
+        message.error(res.message || t('host.reinstallFailed'));
+      }
+    } catch {
+      message.error(t('host.reinstallFailed'));
+    }
+  }, [pollStatus, loadProvisionHistory, t]);
+
+  const handleReinstallByCredential = useCallback(async (credentialId: number) => {
+    try {
+      const res = await reinstallByCredentialId(credentialId);
+      if (res.code === 200 && res.data) {
+        message.success(t('host.reinstallSubmitted'));
+        setProvisionRecords((prev) => {
+          const exists = prev.find((r) => r.id === res.data.id);
+          if (exists) return prev.map((r) => (r.id === res.data.id ? res.data : r));
+          return [res.data, ...prev];
+        });
+        if (res.data.id) pollStatus(res.data.id);
+        setHistoryDrawerVisible(true);
+        loadProvisionHistory();
+        actionRef.current?.reload();
       } else {
         message.error(res.message || t('host.reinstallFailed'));
       }
@@ -596,6 +618,20 @@ const Host: React.FC = () => {
           return <Text type="secondary">{t(provisionStatusMap[record.provisionStatus]?.text || 'status.provision.pending')}</Text>;
         }
 
+        // 2.5. Uninstalled host — show reinstall by credential & delete
+        if (record.provisionStatus === 'UNINSTALLED' && record.id) {
+          return (
+            <Space size={4} wrap>
+              <Button type="link" size="small" icon={<RocketOutlined />}
+                onClick={() => handleReinstallByCredential(record.id!)}>{t('host.reinstall')}</Button>
+              <Popconfirm title={t('host.confirmDeleteCredential')}
+                onConfirm={() => handleDeleteCredential(record.id!)} okText={t('common.confirm')} cancelText={t('common.cancel')}>
+                <Button type="link" size="small" danger icon={<DeleteOutlined />}>{t('host.deleteCredential')}</Button>
+              </Popconfirm>
+            </Space>
+          );
+        }
+
         // 3. Pending or failed host (no agent yet) — show deploy & delete
         if (record.provisionStatus === 'PENDING' || record.provisionStatus === 'FAILED') {
           return (
@@ -935,13 +971,20 @@ const Host: React.FC = () => {
                     />
                   </div>
 
-                  <Steps
-                    size="small"
-                    current={getProvisionStep(record.provisionStatus).current}
-                    status={getProvisionStep(record.provisionStatus).status}
-                    items={provisionStepItems.map(item => ({ ...item, title: t(item.title) }))}
-                    style={{ marginBottom: 12 }}
-                  />
+                  {(() => {
+                    const isUninstall = ['UNINSTALLING', 'UNINSTALLED', 'UNINSTALL_FAILED'].includes(record.provisionStatus);
+                    const stepItems = isUninstall ? uninstallStepItems : provisionStepItems;
+                    const stepInfo = isUninstall ? getUninstallStep(record.provisionStatus) : getProvisionStep(record.provisionStatus);
+                    return (
+                      <Steps
+                        size="small"
+                        current={stepInfo.current}
+                        status={stepInfo.status}
+                        items={stepItems.map(item => ({ ...item, title: t(item.title) }))}
+                        style={{ marginBottom: 12 }}
+                      />
+                    );
+                  })()}
 
                   {record.provisionLog && (
                     <pre

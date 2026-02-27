@@ -16,6 +16,7 @@ public interface HostProvisionService {
     void startRetryAsync(Long credentialId);
     HostCredentialVO reinstall(String agentId);
     void startReinstallAsync(Long credentialId);
+    HostCredentialVO reinstallByCredentialId(Long credentialId);
     List<HostCredentialVO> batchReinstall(List<String> agentIds);
     HostCredentialVO uninstall(String agentId);
     void startUninstallAsync(Long credentialId);

@@ -61,6 +61,13 @@ public class HostProvisionController {
         return R.ok(vo);
     }
 
+    @PostMapping("/reinstall/credential/{credentialId}")
+    public R<HostCredentialVO> reinstallByCredential(@PathVariable Long credentialId) {
+        HostCredentialVO vo = hostProvisionService.reinstallByCredentialId(credentialId);
+        hostProvisionService.startProvisionAsync(vo.getId());
+        return R.ok(vo);
+    }
+
     @PostMapping("/reinstall/batch")
     public R<List<HostCredentialVO>> batchReinstall(@RequestBody List<String> agentIds) {
         return R.ok(hostProvisionService.batchReinstall(agentIds));

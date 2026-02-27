@@ -56,3 +56,7 @@ export function downloadTemplate(): void {
 export function getUnifiedHostList(): Promise<ApiResponse<HostCredentialVO[]>> {
   return request.get('/v1/host/provision/unified-list');
 }
+
+export function reinstallByCredentialId(credentialId: number): Promise<ApiResponse<HostCredentialVO>> {
+  return request.post(`/v1/host/provision/reinstall/credential/${credentialId}`);
+}

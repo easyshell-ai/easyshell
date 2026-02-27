@@ -1046,7 +1046,8 @@
       "success": "Success",
       "failed": "Failed",
       "uninstalling": "Uninstalling",
-      "uninstallFailed": "Uninstall Failed"
+      "uninstallFailed": "Uninstall Failed",
+      "uninstalled": "Uninstalled"
     },
     "risk": {
       "low": "Low Risk",
@@ -1086,6 +1087,12 @@
       "upload": "Upload",
       "install": "Install",
       "start": "Start",
+      "complete": "Complete"
+    },
+    "uninstallStep": {
+      "connect": "Connect",
+      "stopService": "Stop Service",
+      "cleanup": "Cleanup",
       "complete": "Complete"
     }
   },

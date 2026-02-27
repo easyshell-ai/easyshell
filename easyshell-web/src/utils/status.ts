@@ -56,6 +56,7 @@ export const provisionStatusMap: Record<string, StatusEntry> = {
   FAILED: { color: 'error', text: 'status.provision.failed', icon: React.createElement(CloseCircleOutlined) },
   UNINSTALLING: { color: 'processing', text: 'status.provision.uninstalling', icon: React.createElement(LoadingOutlined) },
   UNINSTALL_FAILED: { color: 'error', text: 'status.provision.uninstallFailed', icon: React.createElement(CloseCircleOutlined) },
+  UNINSTALLED: { color: 'default', text: 'status.provision.uninstalled', icon: React.createElement(CheckCircleOutlined) },
 };
 
 /**
@@ -146,3 +147,24 @@ export const provisionStepItems = [
   { title: 'status.provisionStep.start' },
   { title: 'status.provisionStep.complete' },
 ];
+
+export const uninstallStepItems = [
+  { title: 'status.uninstallStep.connect' },
+  { title: 'status.uninstallStep.stopService' },
+  { title: 'status.uninstallStep.cleanup' },
+  { title: 'status.uninstallStep.complete' },
+];
+
+export const uninstallStepIndex: Record<string, number> = {
+  UNINSTALLING: 1,
+  UNINSTALLED: 3,
+  UNINSTALL_FAILED: -1,
+};
+
+export function getUninstallStep(status: string): { current: number; status: 'process' | 'finish' | 'error' | 'wait' } {
+  if (status === 'UNINSTALLED') return { current: 3, status: 'finish' };
+  if (status === 'UNINSTALL_FAILED') return { current: 1, status: 'error' };
+  const idx = uninstallStepIndex[status] ?? -1;
+  if (idx < 0) return { current: 0, status: 'wait' };
+  return { current: idx, status: 'process' };
+}

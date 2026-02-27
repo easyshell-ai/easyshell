@@ -1046,7 +1046,8 @@
       "success": "成功",
       "failed": "失败",
       "uninstalling": "卸载中",
-      "uninstallFailed": "卸载失败"
+      "uninstallFailed": "卸载失败",
+      "uninstalled": "已卸载"
     },
     "risk": {
       "low": "低风险",
@@ -1086,6 +1087,12 @@
       "upload": "上传",
       "install": "安装",
       "start": "启动",
+      "complete": "完成"
+    },
+    "uninstallStep": {
+      "connect": "连接",
+      "stopService": "停止服务",
+      "cleanup": "清理文件",
       "complete": "完成"
     }
   },
