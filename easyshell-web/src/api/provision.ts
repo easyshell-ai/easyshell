@@ -46,11 +46,16 @@ export function importCsv(file: File): Promise<ApiResponse<HostCredentialVO[]>> 
   });
 }
 
-export function downloadTemplate(): void {
+export async function downloadTemplate(): Promise<void> {
+  const blob = await request.get('/v1/host/provision/import/template', { responseType: 'blob' });
+  const url = URL.createObjectURL(blob as unknown as Blob);
   const link = document.createElement('a');
-  link.href = '/api/v1/host/provision/import/template';
+  link.href = url;
   link.download = 'host_import_template.csv';
+  document.body.appendChild(link);
   link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
 
 export function getUnifiedHostList(): Promise<ApiResponse<HostCredentialVO[]>> {

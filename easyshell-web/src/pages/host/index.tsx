@@ -165,15 +165,15 @@ const Host: React.FC = () => {
         deployNow: values.deployNow,
       });
       if (res.code === 200 && res.data) {
-        message.success(t('host.deployTaskSubmitted'));
+        message.success(values.deployNow ? t('host.deployTaskSubmitted') : t('host.addHostSuccess'));
         setProvisionRecords((prev) => [res.data, ...prev]);
-        if (values.deployNow !== false && res.data.id) {
+        if (values.deployNow && res.data.id) {
           pollStatus(res.data.id);
         }
         setAddModalVisible(false);
         form.resetFields();
         actionRef.current?.reload();
-        if (values.deployNow !== false) {
+        if (values.deployNow) {
           setHistoryDrawerVisible(true);
           loadProvisionHistory();
         }
@@ -818,14 +818,14 @@ const Host: React.FC = () => {
           form.resetFields();
         }}
         confirmLoading={submitting}
-        okText={deployNow === false ? t('host.addOnly') : t('host.addAndDeploy')}
+        okText={deployNow ? t('host.addAndDeploy') : t('host.addOnly')}
         cancelText={t('common.cancel')}
         destroyOnClose
       >
         <Form
           form={form}
           layout="vertical"
-          initialValues={{ sshPort: 22, sshUsername: 'root', authType: 'password', deployNow: true }}
+          initialValues={{ sshPort: 22, sshUsername: 'root', authType: 'password', deployNow: false }}
         >
           <Form.Item
             name="ip"

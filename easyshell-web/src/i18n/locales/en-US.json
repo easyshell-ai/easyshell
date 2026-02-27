@@ -851,6 +851,7 @@
     "pleaseInputPassword": "Please input password",
     "passwordPlaceholder": "Enter SSH password",
     "deployTaskSubmitted": "Deploy task submitted",
+    "addHostSuccess": "Host added successfully",
     "deploySuccess": "Deploy successful",
     "deployFailed": "Deploy failed",
     "loadHistoryFailed": "Failed to load deploy history",

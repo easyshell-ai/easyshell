@@ -851,6 +851,7 @@
     "pleaseInputPassword": "请输入密码",
     "passwordPlaceholder": "请输入 SSH 密码",
     "deployTaskSubmitted": "部署任务已提交",
+    "addHostSuccess": "主机添加成功",
     "deploySuccess": "部署成功",
     "deployFailed": "部署失败",
     "loadHistoryFailed": "加载部署历史失败",
