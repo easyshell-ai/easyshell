@@ -617,6 +617,10 @@ public class HostProvisionServiceImpl implements HostProvisionService {
                 .updatedAt(entity.getUpdatedAt() != null ? entity.getUpdatedAt().format(FMT) : null);
 
         if (agent != null) {
+            // Override agentId from matched agent when credential doesn't have it
+            if (entity.getAgentId() == null) {
+                builder.agentId(agent.getId());
+            }
             builder.hostname(agent.getHostname())
                     .os(agent.getOs())
                     .arch(agent.getArch())

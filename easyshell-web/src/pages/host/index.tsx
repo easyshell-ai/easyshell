@@ -572,80 +572,53 @@ const Host: React.FC = () => {
       fixed: 'right',
       search: false,
       render: (_, record) => {
-        // Deploying in progress — show no actions
+        // 1. Deployed host (has agent) — always show full actions
+        if (record.agentId) {
+          return (
+            <Space size={4} wrap>
+              <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => navigate(`/host/${record.agentId}`)}>{t('common.detail')}</Button>
+              <Button type="link" size="small" icon={<CodeOutlined />} onClick={() => navigate(`/terminal/${record.agentId}`)} disabled={record.agentStatus !== 1}>{t('host.terminal')}</Button>
+              <Popconfirm title={t('host.confirmReinstall')} description={t('host.reinstallDescription')} onConfirm={() => handleReinstall(record.agentId!)} okText={t('common.confirm')} cancelText={t('common.cancel')}>
+                <Button type="link" size="small" icon={<ReloadOutlined />}>{t('host.reinstall')}</Button>
+              </Popconfirm>
+              <Popconfirm title={t('host.confirmUninstall')} description={t('host.uninstallDescription')} onConfirm={() => handleUninstall(record.agentId!)} okText={t('common.confirm')} cancelText={t('common.cancel')} okButtonProps={{ danger: true }}>
+                <Button type="link" size="small" danger icon={<DisconnectOutlined />}>{t('host.uninstall')}</Button>
+              </Popconfirm>
+              <Popconfirm title={t('host.confirmDeleteHost')} description={t('host.deleteHostDescription')} onConfirm={() => handleDeleteHost(record.agentId!)} okText={t('common.confirm')} cancelText={t('common.cancel')} okButtonProps={{ danger: true }}>
+                <Button type="link" size="small" danger icon={<DeleteOutlined />}>{t('host.deleteHost')}</Button>
+              </Popconfirm>
+            </Space>
+          );
+        }
+
+        // 2. Deploying in progress — show status text only
         if (isDeployingStatus(record.provisionStatus)) {
           return <Text type="secondary">{t(provisionStatusMap[record.provisionStatus]?.text || 'status.provision.pending')}</Text>;
         }
 
-        // Pending or failed host (no agent yet)
-        if (!record.agentId && (record.provisionStatus === 'PENDING' || record.provisionStatus === 'FAILED')) {
+        // 3. Pending or failed host (no agent yet) — show deploy & delete
+        if (record.provisionStatus === 'PENDING' || record.provisionStatus === 'FAILED') {
           return (
             <Space size={4} wrap>
               {record.id && (
-                <Button type="link" size="small" icon={<RocketOutlined />} onClick={() => handleRetry(record.id!)}>
-                  {t('host.deploy')}
-                </Button>
+                <Button type="link" size="small" icon={<RocketOutlined />} onClick={() => handleRetry(record.id!)}>{t('host.deploy')}</Button>
               )}
               {record.id && (
-                <Popconfirm
-                  title={t('host.confirmDeleteCredential')}
-                  onConfirm={() => handleDeleteCredential(record.id!)}
-                  okText={t('common.confirm')}
-                  cancelText={t('common.cancel')}
-                >
-                  <Button type="link" size="small" danger icon={<DeleteOutlined />}>
-                    {t('host.deleteCredential')}
-                  </Button>
+                <Popconfirm title={t('host.confirmDeleteCredential')} onConfirm={() => handleDeleteCredential(record.id!)} okText={t('common.confirm')} cancelText={t('common.cancel')}>
+                  <Button type="link" size="small" danger icon={<DeleteOutlined />}>{t('host.deleteCredential')}</Button>
                 </Popconfirm>
               )}
             </Space>
           );
         }
 
-        // Deployed host (has agent)
-        if (record.agentId) {
+        // 4. SUCCESS but agent not registered yet — show retry deploy
+        if (record.provisionStatus === 'SUCCESS' && record.id) {
           return (
             <Space size={4} wrap>
-              <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => navigate(`/host/${record.agentId}`)}>
-                {t('common.detail')}
-              </Button>
-              <Button type="link" size="small" icon={<CodeOutlined />} onClick={() => navigate(`/terminal/${record.agentId}`)} disabled={record.agentStatus !== 1}>
-                {t('host.terminal')}
-              </Button>
-              <Popconfirm
-                title={t('host.confirmReinstall')}
-                description={t('host.reinstallDescription')}
-                onConfirm={() => handleReinstall(record.agentId!)}
-                okText={t('common.confirm')}
-                cancelText={t('common.cancel')}
-              >
-                <Button type="link" size="small" icon={<ReloadOutlined />}>
-                  {t('host.reinstall')}
-                </Button>
-              </Popconfirm>
-              <Popconfirm
-                title={t('host.confirmUninstall')}
-                description={t('host.uninstallDescription')}
-                onConfirm={() => handleUninstall(record.agentId!)}
-                okText={t('common.confirm')}
-                cancelText={t('common.cancel')}
-                okButtonProps={{ danger: true }}
-              >
-                <Button type="link" size="small" danger icon={<DisconnectOutlined />}>
-                  {t('host.uninstall')}
-                </Button>
-              </Popconfirm>
-              <Popconfirm
-                title={t('host.confirmDeleteHost')}
-                description={t('host.deleteHostDescription')}
-                onConfirm={() => handleDeleteHost(record.agentId!)}
-                okText={t('common.confirm')}
-                cancelText={t('common.cancel')}
-                okButtonProps={{ danger: true }}
-              >
-                <Button type="link" size="small" danger icon={<DeleteOutlined />}>
-                  {t('host.deleteHost')}
-                </Button>
+              <Button type="link" size="small" icon={<RocketOutlined />} onClick={() => handleRetry(record.id!)}>{t('host.reinstall')}</Button>
+              <Popconfirm title={t('host.confirmDeleteCredential')} onConfirm={() => handleDeleteCredential(record.id!)} okText={t('common.confirm')} cancelText={t('common.cancel')}>
+                <Button type="link" size="small" danger icon={<DeleteOutlined />}>{t('host.deleteCredential')}</Button>
               </Popconfirm>
             </Space>
           );
