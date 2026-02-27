@@ -9,4 +9,6 @@ import java.util.Optional;
 public interface HostCredentialRepository extends JpaRepository<HostCredential, Long> {
     Optional<HostCredential> findByIp(String ip);
     List<HostCredential> findAllByOrderByCreatedAtDesc();
+    List<HostCredential> findAllByProvisionStatusIn(List<String> statuses);
+    List<HostCredential> findAllByIdIn(List<Long> ids);
 }
