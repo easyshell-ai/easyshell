@@ -872,6 +872,7 @@
     "confirmUninstall": "确认卸载此主机的 Agent？",
     "uninstallDescription": "将通过SSH远程停止Agent服务、删除Agent文件，并从平台移除该主机记录",
     "uninstallSubmitted": "卸载任务已提交",
+    "uninstallSuccess": "卸载成功",
     "uninstallFailed": "卸载失败",
     "deleteHost": "删除",
     "confirmDeleteHost": "确认从数据库中删除此主机？",

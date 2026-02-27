@@ -137,6 +137,11 @@ const Host: React.FC = () => {
             if (status === 'SUCCESS') {
               message.success(`${res.data.ip} ${t('host.deploySuccess')}`);
               actionRef.current?.reload();
+            } else if (status === 'UNINSTALLED') {
+              message.success(`${res.data.ip} ${t('host.uninstallSuccess')}`);
+              actionRef.current?.reload();
+            } else if (status === 'UNINSTALL_FAILED') {
+              message.error(`${res.data.ip} ${t('host.uninstallFailed')}`);
             } else {
               message.error(`${res.data.ip} ${t('host.deployFailed')}`);
             }
@@ -356,13 +361,13 @@ const Host: React.FC = () => {
   }, [t]);
 
   const handleBatchDeploy = useCallback(async () => {
-    // Filter selected rows to get credential IDs where status is PENDING or FAILED
+    // Filter selected rows to get credential IDs where status is PENDING, FAILED, or UNINSTALLED
     const credentialIds = selectedRowKeys
       .filter((k) => String(k).startsWith('c-'))
       .map((k) => Number(String(k).slice(2)))
       .filter((id) => {
         const record = dataSource.find((r) => r.id === id);
-        return record && (record.provisionStatus === 'PENDING' || record.provisionStatus === 'FAILED');
+        return record && (record.provisionStatus === 'PENDING' || record.provisionStatus === 'FAILED' || record.provisionStatus === 'UNINSTALLED');
       });
     if (credentialIds.length === 0) return;
     try {
@@ -402,12 +407,12 @@ const Host: React.FC = () => {
     }
   }, [importFileList, t]);
 
-  // Count pending/failed selected for batch deploy
+  // Count pending/failed/uninstalled selected for batch deploy
   const pendingSelectedCount = selectedRowKeys.filter((k) => {
     if (!String(k).startsWith('c-')) return false;
     const id = Number(String(k).slice(2));
     const record = dataSource.find((r) => r.id === id);
-    return record && (record.provisionStatus === 'PENDING' || record.provisionStatus === 'FAILED');
+    return record && (record.provisionStatus === 'PENDING' || record.provisionStatus === 'FAILED' || record.provisionStatus === 'UNINSTALLED');
   }).length;
 
   // Count agent-based selected for batch reinstall

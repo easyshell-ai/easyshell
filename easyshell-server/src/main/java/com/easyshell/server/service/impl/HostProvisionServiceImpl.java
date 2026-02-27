@@ -19,6 +19,8 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.context.ApplicationContext;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -30,6 +32,14 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 public class HostProvisionServiceImpl implements HostProvisionService {
+
+    // Self-reference to invoke @Async methods through the Spring proxy
+    @Autowired
+    private ApplicationContext applicationContext;
+
+    private HostProvisionService self() {
+        return applicationContext.getBean(HostProvisionService.class);
+    }
 
     private final HostCredentialRepository credentialRepository;
     private final AgentRepository agentRepository;
@@ -177,7 +187,7 @@ public class HostProvisionServiceImpl implements HostProvisionService {
         for (String agentId : agentIds) {
             try {
                 HostCredentialVO vo = reinstall(agentId);
-                startReinstallAsync(vo.getId());
+                self().startReinstallAsync(vo.getId());
                 results.add(vo);
             } catch (Exception e) {
                 log.warn("Failed to start reinstall for agent {}: {}", agentId, e.getMessage());
@@ -756,7 +766,7 @@ public class HostProvisionServiceImpl implements HostProvisionService {
             credential.setProvisionLog("");
             credential.setErrorMessage(null);
             credentialRepository.save(credential);
-            startProvisionAsync(credential.getId());
+            self().startProvisionAsync(credential.getId());
             results.add(toVO(credential));
         }
         return results;
