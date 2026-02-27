@@ -67,10 +67,17 @@ public class AiScheduledTask extends BaseEntity {
     private Long createdBy;
 
     /**
-     * 通知策略: none / always / on_alert / on_failure
+     * 通知策略: none / always / on_alert / on_failure / ai_decide
      */
     @Column(name = "notify_strategy", length = 32)
     private String notifyStrategy = "none";
+
+    /**
+     * AI 判断通知时的额外用户提示词（仅 ai_decide 策略下使用）
+     */
+    @Lob
+    @Column(name = "notify_ai_prompt", columnDefinition = "TEXT")
+    private String notifyAiPrompt;
 
     /**
      * 通知渠道（逗号分隔），如 "telegram,discord"

@@ -78,7 +78,10 @@
     "logout": "Sign Out",
     "collapse_sidebar": "Collapse sidebar",
     "expand_sidebar": "Expand sidebar",
-    "open_menu": "Open menu"
+    "open_menu": "Open menu",
+    "website": "Official Website",
+    "docs": "Documentation",
+    "discord": "Discord Community"
   },
   "login": {
     "title": "EasyShell",
@@ -423,7 +426,10 @@
       "notifyStrategyNone": "None",
       "notifyStrategyAlways": "Always",
       "notifyStrategyOnAlert": "On Alert",
-      "notifyStrategyOnFailure": "On Failure"
+      "notifyStrategyOnFailure": "On Failure",
+      "notifyStrategyAiDecide": "AI Decides",
+      "notifyAiPrompt": "AI Notification Criteria",
+      "notifyAiPromptPlaceholder": "Optional: e.g. 'Notify me when CPU usage exceeds 90%% or disk usage exceeds 85%%'"
     },
     "cron": {
       "visual": "Visual",
@@ -439,6 +445,17 @@
       "everyDay": "Every day (*)",
       "everyMonth": "Every month (*)",
       "notSpecified": "Not specified (?)",
+      "interval": {
+        "every5min": "Every 5 min (*/5)",
+        "every10min": "Every 10 min (*/10)",
+        "every15min": "Every 15 min (*/15)",
+        "every30min": "Every 30 min (*/30)",
+        "every2hr": "Every 2 hours (*/2)",
+        "every3hr": "Every 3 hours (*/3)",
+        "every4hr": "Every 4 hours (*/4)",
+        "every6hr": "Every 6 hours (*/6)",
+        "every12hr": "Every 12 hours (*/12)"
+      },
       "presets": {
         "daily2am": "Daily at 2 AM",
         "hourly": "Every hour",

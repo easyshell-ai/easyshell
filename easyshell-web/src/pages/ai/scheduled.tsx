@@ -16,8 +16,6 @@ import {
   message,
   theme,
   Segmented,
-  Row,
-  Col,
 } from 'antd';
 import {
   PlusOutlined,
@@ -43,44 +41,51 @@ import { getTagList } from '../../api/tag';
 import type { AiScheduledTask, AiScheduledTaskRequest, BuiltInTemplate, Agent, ClusterVO, TagVO } from '../../types';
 import { taskTypeMap } from '../../utils/status';
 import { formatTime } from '../../utils/format';
+import { Cron } from 'react-js-cron';
+import type { CronError } from 'react-js-cron';
+import 'react-js-cron/dist/styles.css';
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
 
-// --- CronBuilder Component ---
+// --- CronBuilder Component (react-js-cron wrapper for Spring 6-field cron) ---
 
 interface CronBuilderProps {
   value?: string;
   onChange?: (val: string) => void;
 }
 
+/** Convert Spring 6-field cron to 5-field for react-js-cron */
+const springTo5Field = (cron: string | undefined): string => {
+  if (!cron) return '0 2 * * *';
+  const parts = cron.trim().split(/\s+/);
+  // 6-field: sec min hour dayOfMonth month dayOfWeek
+  if (parts.length === 6) {
+    const fiveField = parts.slice(1).join(' ');
+    // Replace '?' with '*' since react-js-cron doesn't support '?'
+    return fiveField.replace(/\?/g, '*');
+  }
+  // Already 5-field
+  if (parts.length === 5) return cron.replace(/\?/g, '*');
+  return '0 2 * * *';
+};
+
+/** Convert 5-field cron back to Spring 6-field (prefix with '0' for seconds) */
+const toSpring6Field = (fiveField: string): string => {
+  return `0 ${fiveField}`;
+};
+
 const CronBuilder: React.FC<CronBuilderProps> = ({ value, onChange }) => {
   const { token } = theme.useToken();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [mode, setMode] = useState<'visual' | 'raw'>('visual');
+  const [cronError, setCronError] = useState<CronError>();
 
-  const parseCron = (cron: string | undefined) => {
-    if (!cron) return { minute: '0', hour: '2', dayOfMonth: '*', month: '*', dayOfWeek: '?' };
-    const parts = cron.trim().split(/\s+/);
-    if (parts.length === 6) {
-      return { minute: parts[1], hour: parts[2], dayOfMonth: parts[3], month: parts[4], dayOfWeek: parts[5] };
-    }
-    if (parts.length === 5) {
-      return { minute: parts[0], hour: parts[1], dayOfMonth: parts[2], month: parts[3], dayOfWeek: parts[4] };
-    }
-    return { minute: '0', hour: '2', dayOfMonth: '*', month: '*', dayOfWeek: '?' };
-  };
+  const fiveFieldValue = useMemo(() => springTo5Field(value), [value]);
 
-  const fields = parseCron(value);
-
-  const buildCron = (overrides: Partial<typeof fields>) => {
-    const merged = { ...fields, ...overrides };
-    return `0 ${merged.minute} ${merged.hour} ${merged.dayOfMonth} ${merged.month} ${merged.dayOfWeek}`;
-  };
-
-  const handleFieldChange = (field: string, val: string) => {
-    onChange?.(buildCron({ [field]: val }));
-  };
+  const handleCronChange = useCallback((newFiveField: string) => {
+    onChange?.(toSpring6Field(newFiveField));
+  }, [onChange]);
 
   const CRON_PRESETS_LABELS = [
     { label: t('scheduled.cron.presets.daily2am'), value: '0 0 2 * * ?' },
@@ -90,32 +95,39 @@ const CronBuilder: React.FC<CronBuilderProps> = ({ value, onChange }) => {
     { label: t('scheduled.cron.presets.weekly3am'), value: '0 0 3 ? * 1' },
   ];
 
-  const MINUTE_OPTIONS_T = [
-    { label: t('scheduled.cron.everyMinute'), value: '*' },
-    ...Array.from({ length: 60 }, (_, i) => ({ label: String(i), value: String(i) })),
-  ];
-
-  const HOUR_OPTIONS_T = [
-    { label: t('scheduled.cron.everyHour'), value: '*' },
-    ...Array.from({ length: 24 }, (_, i) => ({ label: String(i), value: String(i) })),
-  ];
-
-  const DAY_OF_MONTH_OPTIONS_T = [
-    { label: t('scheduled.cron.everyDay'), value: '*' },
-    { label: t('scheduled.cron.notSpecified'), value: '?' },
-    ...Array.from({ length: 31 }, (_, i) => ({ label: String(i + 1), value: String(i + 1) })),
-  ];
-
-  const MONTH_OPTIONS_T = [
-    { label: t('scheduled.cron.everyMonth'), value: '*' },
-    ...Array.from({ length: 12 }, (_, i) => ({ label: `${i + 1} (${t(`scheduled.cron.months.${i + 1}`)})`, value: String(i + 1) })),
-  ];
-
-  const DAY_OF_WEEK_OPTIONS_T = [
-    { label: t('scheduled.cron.everyDay'), value: '*' },
-    { label: t('scheduled.cron.notSpecified'), value: '?' },
-    ...Array.from({ length: 7 }, (_, i) => ({ label: `${i} (${t(`scheduled.cron.weekdays.${i}`)})`, value: String(i) })),
-  ];
+  const cronLocale = useMemo(() => i18n.language === 'zh-CN' ? {
+    everyText: '每',
+    emptyMonths: '每月',
+    emptyMonthDays: '每天',
+    emptyMonthDaysShort: '每天',
+    emptyWeekDays: '每个工作日',
+    emptyWeekDaysShort: '每天',
+    emptyHours: '每小时',
+    emptyMinutes: '每分钟',
+    emptyMinutesForHourPeriod: '每分钟',
+    yearOption: '年',
+    monthOption: '月',
+    weekOption: '周',
+    dayOption: '天',
+    hourOption: '小时',
+    minuteOption: '分钟',
+    rebootOption: '重启时',
+    prefixPeriod: '每',
+    prefixMonths: '的',
+    prefixMonthDays: '的',
+    prefixWeekDays: '的',
+    prefixWeekDaysForMonthAndYearPeriod: '且',
+    prefixHours: '的',
+    prefixMinutes: ':',
+    prefixMinutesForHourPeriod: '的第',
+    suffixMinutesForHourPeriod: '分钟',
+    errorInvalidCron: '无效的 cron 表达式',
+    clearButtonText: '清除',
+    weekDays: ['周日', '周一', '周二', '周三', '周四', '周五', '周六'],
+    months: ['一月', '二月', '三月', '四月', '五月', '六月', '七月', '八月', '九月', '十月', '十一月', '十二月'],
+    altWeekDays: ['周日', '周一', '周二', '周三', '周四', '周五', '周六'],
+    altMonths: ['一月', '二月', '三月', '四月', '五月', '六月', '七月', '八月', '九月', '十月', '十一月', '十二月'],
+  } : undefined, [i18n.language]);
 
   if (mode === 'raw') {
     return (
@@ -153,28 +165,21 @@ const CronBuilder: React.FC<CronBuilderProps> = ({ value, onChange }) => {
         </Space>
       </div>
 
-      <Row gutter={8}>
-        <Col span={5}>
-          <Text type="secondary" style={{ fontSize: 11 }}>{t('scheduled.cron.minute')}</Text>
-          <Select size="small" style={{ width: '100%' }} value={fields.minute} onChange={(v) => handleFieldChange('minute', v)} options={MINUTE_OPTIONS_T} showSearch />
-        </Col>
-        <Col span={5}>
-          <Text type="secondary" style={{ fontSize: 11 }}>{t('scheduled.cron.hour')}</Text>
-          <Select size="small" style={{ width: '100%' }} value={fields.hour} onChange={(v) => handleFieldChange('hour', v)} options={HOUR_OPTIONS_T} showSearch />
-        </Col>
-        <Col span={5}>
-          <Text type="secondary" style={{ fontSize: 11 }}>{t('scheduled.cron.day')}</Text>
-          <Select size="small" style={{ width: '100%' }} value={fields.dayOfMonth} onChange={(v) => handleFieldChange('dayOfMonth', v)} options={DAY_OF_MONTH_OPTIONS_T} showSearch />
-        </Col>
-        <Col span={5}>
-          <Text type="secondary" style={{ fontSize: 11 }}>{t('scheduled.cron.month')}</Text>
-          <Select size="small" style={{ width: '100%' }} value={fields.month} onChange={(v) => handleFieldChange('month', v)} options={MONTH_OPTIONS_T} showSearch />
-        </Col>
-        <Col span={4}>
-          <Text type="secondary" style={{ fontSize: 11 }}>{t('scheduled.cron.week')}</Text>
-          <Select size="small" style={{ width: '100%' }} value={fields.dayOfWeek} onChange={(v) => handleFieldChange('dayOfWeek', v)} options={DAY_OF_WEEK_OPTIONS_T} showSearch />
-        </Col>
-      </Row>
+      <Cron
+        value={fiveFieldValue}
+        setValue={handleCronChange}
+        onError={setCronError}
+        clearButton={false}
+        allowEmpty="never"
+        humanizeLabels
+        locale={cronLocale}
+        allowedPeriods={['year', 'month', 'week', 'day', 'hour', 'minute']}
+      />
+      {cronError && (
+        <Text type="danger" style={{ fontSize: 11, display: 'block', marginTop: 4 }}>
+          {cronError.description}
+        </Text>
+      )}
     </div>
   );
 };
@@ -199,6 +204,7 @@ const AiScheduled: React.FC = () => {
   const [loadingTargets, setLoadingTargets] = useState(false);
 
   const targetType = Form.useWatch('targetType', form);
+  const notifyStrategy = Form.useWatch('notifyStrategy', form);
 
   const fetchTasks = useCallback(() => {
     setLoading(true);
@@ -271,6 +277,7 @@ const AiScheduled: React.FC = () => {
       enabled: task.enabled,
       notifyStrategy: task.notifyStrategy || 'none',
       notifyChannels: task.notifyChannels ? task.notifyChannels.split(',').map(s => s.trim()).filter(Boolean) : [],
+      notifyAiPrompt: task.notifyAiPrompt || '',
     });
     setModalVisible(true);
   };
@@ -291,6 +298,7 @@ const AiScheduled: React.FC = () => {
         enabled: values.enabled,
         notifyStrategy: values.notifyStrategy,
         notifyChannels: Array.isArray(values.notifyChannels) ? values.notifyChannels.join(',') : (values.notifyChannels || ''),
+        notifyAiPrompt: values.notifyAiPrompt || '',
       };
 
       let res;
@@ -572,8 +580,15 @@ const AiScheduled: React.FC = () => {
               <Select.Option value="always">{t('scheduled.field.notifyStrategyAlways')}</Select.Option>
               <Select.Option value="on_alert">{t('scheduled.field.notifyStrategyOnAlert')}</Select.Option>
               <Select.Option value="on_failure">{t('scheduled.field.notifyStrategyOnFailure')}</Select.Option>
+              <Select.Option value="ai_decide">{t('scheduled.field.notifyStrategyAiDecide')}</Select.Option>
             </Select>
           </Form.Item>
+
+          {notifyStrategy === 'ai_decide' && (
+            <Form.Item name="notifyAiPrompt" label={t('scheduled.field.notifyAiPrompt')}>
+              <TextArea rows={3} placeholder={t('scheduled.field.notifyAiPromptPlaceholder')} />
+            </Form.Item>
+          )}
 
           <Form.Item name="notifyChannels" label={t('scheduled.field.notifyChannels')}>
             <Select mode="multiple" placeholder={t('scheduled.field.notifyChannelsPlaceholder')}>

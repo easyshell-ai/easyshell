@@ -64,6 +64,7 @@ public class AiScheduledTaskController {
         task.setEnabled(request.getEnabled() != null ? request.getEnabled() : true);
         task.setNotifyStrategy(request.getNotifyStrategy());
         task.setNotifyChannels(request.getNotifyChannels());
+        task.setNotifyAiPrompt(request.getNotifyAiPrompt());
         task.setCreatedBy(userId);
 
         task = taskRepository.save(task);
@@ -98,6 +99,7 @@ public class AiScheduledTaskController {
         task.setAiPrompt(request.getAiPrompt());
         task.setNotifyStrategy(request.getNotifyStrategy());
         task.setNotifyChannels(request.getNotifyChannels());
+        task.setNotifyAiPrompt(request.getNotifyAiPrompt());
         if (request.getEnabled() != null) {
             task.setEnabled(request.getEnabled());
         }
@@ -207,6 +209,7 @@ public class AiScheduledTaskController {
                 .createdAt(task.getCreatedAt())
                 .notifyStrategy(task.getNotifyStrategy())
                 .notifyChannels(task.getNotifyChannels())
+                .notifyAiPrompt(task.getNotifyAiPrompt())
                 .updatedAt(task.getUpdatedAt())
                 .build();
     }

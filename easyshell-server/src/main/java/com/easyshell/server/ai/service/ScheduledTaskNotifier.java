@@ -4,6 +4,8 @@ import com.easyshell.server.ai.channel.ChannelMessageRouter;
 import com.easyshell.server.ai.model.entity.AiInspectReport;
 import com.easyshell.server.ai.model.entity.AiScheduledTask;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
@@ -11,15 +13,19 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Service
 public class ScheduledTaskNotifier {
-
     private final ChannelMessageRouter channelMessageRouter;
+    private final ChatModelFactory chatModelFactory;
 
-    public ScheduledTaskNotifier(@Lazy ChannelMessageRouter channelMessageRouter) {
+    public ScheduledTaskNotifier(@Lazy ChannelMessageRouter channelMessageRouter,
+                                 ChatModelFactory chatModelFactory) {
         this.channelMessageRouter = channelMessageRouter;
+        this.chatModelFactory = chatModelFactory;
     }
 
     private static final int MAX_ANALYSIS_LENGTH = 1500;
@@ -30,7 +36,7 @@ public class ScheduledTaskNotifier {
      *
      * @param task           定时任务
      * @param report         巡检报告
-     * @param notifyStrategy 通知策略: none / always / on_alert / on_failure
+     * @param notifyStrategy 通知策略: none / always / on_alert / on_failure / ai_decide
      * @param notifyChannels 通知渠道列表
      */
     public void notify(AiScheduledTask task, AiInspectReport report,
@@ -46,6 +52,7 @@ public class ScheduledTaskNotifier {
             case "always" -> true;
             case "on_alert" -> isAlertDetected(aiAnalysis);
             case "on_failure" -> "failed".equals(status);
+            case "ai_decide" -> askAiIfShouldNotify(aiAnalysis, task.getNotifyAiPrompt());
             default -> false;
         };
 
@@ -114,6 +121,39 @@ public class ScheduledTaskNotifier {
         if (aiAnalysis == null || aiAnalysis.isBlank()) return false;
         String lower = aiAnalysis.toLowerCase();
         return ALERT_KEYWORDS.stream().anyMatch(lower::contains);
+    }
+
+    /**
+     * 调用 AI 判断当前分析结果是否需要发送通知。
+     */
+    private boolean askAiIfShouldNotify(String aiAnalysis, String userNotifyPrompt) {
+        if (aiAnalysis == null || aiAnalysis.isBlank()) return false;
+        try {
+            ChatModel chatModel = chatModelFactory.getChatModel(null);
+            StringBuilder sb = new StringBuilder();
+            sb.append("You are a server monitoring assistant. Based on the following AI analysis report of a scheduled server inspection, ")
+                    .append("decide whether this report contains anything important enough to warrant sending a notification to the operations team. ")
+                    .append("Consider: critical errors, security risks, resource exhaustion, service failures, or any anomalies that need human attention. ")
+                    .append("Normal healthy status reports do NOT need notification.\n");
+            if (userNotifyPrompt != null && !userNotifyPrompt.isBlank()) {
+                sb.append("\nAdditional user-defined notification criteria:\n").append(userNotifyPrompt).append("\n");
+            }
+            sb.append("\nReply with ONLY 'YES' or 'NO'.\n\n")
+                    .append("Analysis Report:\n").append(aiAnalysis.length() > 2000 ? aiAnalysis.substring(0, 2000) : aiAnalysis);
+            String prompt = sb.toString();
+            var future = CompletableFuture.supplyAsync(() -> {
+                var response = chatModel.call(new Prompt(prompt));
+                return response.getResult().getOutput().getText();
+            });
+            String result = future.get(60, TimeUnit.SECONDS);
+            boolean shouldNotify = result != null && result.trim().toUpperCase().startsWith("YES");
+            log.info("AI notification decision: {} (raw response: {})", shouldNotify ? "NOTIFY" : "SKIP",
+                    result != null ? result.trim().substring(0, Math.min(result.trim().length(), 50)) : "null");
+            return shouldNotify;
+        } catch (Exception e) {
+            log.error("AI notification decision failed, defaulting to notify: {}", e.getMessage());
+            return true;
+        }
     }
 
     private String translateStatus(String status) {

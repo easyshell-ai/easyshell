@@ -591,6 +591,7 @@ export interface AiScheduledTask {
   updatedAt: string;
   notifyStrategy: string | null;
   notifyChannels: string | null;
+  notifyAiPrompt: string | null;
 }
 
 export interface AiScheduledTaskRequest {
@@ -605,6 +606,7 @@ export interface AiScheduledTaskRequest {
   enabled?: boolean;
   notifyStrategy?: string;
   notifyChannels?: string;
+  notifyAiPrompt?: string;
 }
 
 export interface AiInspectReport {

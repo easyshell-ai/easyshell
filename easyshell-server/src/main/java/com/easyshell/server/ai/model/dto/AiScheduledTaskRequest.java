@@ -32,4 +32,6 @@ public class AiScheduledTaskRequest {
     private String notifyStrategy;
 
     private String notifyChannels;
+
+    private String notifyAiPrompt;
 }

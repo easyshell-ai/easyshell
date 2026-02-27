@@ -78,7 +78,10 @@
     "logout": "退出登录",
     "collapse_sidebar": "收起侧边栏",
     "expand_sidebar": "展开侧边栏",
-    "open_menu": "打开菜单"
+    "open_menu": "打开菜单",
+    "website": "官方网站",
+    "docs": "帮助文档",
+    "discord": "Discord 社区"
   },
   "login": {
     "title": "EasyShell",
@@ -423,7 +426,10 @@
       "notifyStrategyNone": "不通知",
       "notifyStrategyAlways": "每次通知",
       "notifyStrategyOnAlert": "告警时通知",
-      "notifyStrategyOnFailure": "失败时通知"
+      "notifyStrategyOnFailure": "失败时通知",
+      "notifyStrategyAiDecide": "AI 智能判断",
+      "notifyAiPrompt": "AI 通知判断条件",
+      "notifyAiPromptPlaceholder": "可选：例如 '当CPU使用率超过90%或磁盘使用率超过85%时通知我'"
     },
     "cron": {
       "visual": "可视化",
@@ -439,6 +445,17 @@
       "everyDay": "每天 (*)",
       "everyMonth": "每月 (*)",
       "notSpecified": "不指定 (?)",
+      "interval": {
+        "every5min": "每 5 分钟 (*/5)",
+        "every10min": "每 10 分钟 (*/10)",
+        "every15min": "每 15 分钟 (*/15)",
+        "every30min": "每 30 分钟 (*/30)",
+        "every2hr": "每 2 小时 (*/2)",
+        "every3hr": "每 3 小时 (*/3)",
+        "every4hr": "每 4 小时 (*/4)",
+        "every6hr": "每 6 小时 (*/6)",
+        "every12hr": "每 12 小时 (*/12)"
+      },
       "presets": {
         "daily2am": "每天凌晨2点",
         "hourly": "每小时",
