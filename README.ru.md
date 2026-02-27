@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/logo.png" alt="EasyShell Logo" width="200" />
+</p>
+
 # EasyShell
 
 **Легковесная платформа управления серверами и интеллектуальной эксплуатации**
@@ -6,6 +10,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Docs](https://img.shields.io/badge/Docs-docs.easyshell.ai-green.svg)](https://docs.easyshell.ai)
+[![Discord](https://img.shields.io/badge/Discord-Join%20Us-7289da?logo=discord&logoColor=white)](https://discord.gg/WqFD9VQe)
 
 **Язык**: [English](./README.md) | [简体中文](./README.zh-CN.md) | [繁體中文](./README.zh-TW.md) | [한국어](./README.ko.md) | Русский | [日本語](./README.ja.md)
 
@@ -142,6 +147,13 @@ easyshell/
 - Начало работы
 - Справочник по конфигурации
 - Руководство для разработчиков
+
+## Сообщество
+
+[![Discord](https://img.shields.io/badge/Discord-Join%20Us-7289da?logo=discord&logoColor=white)](https://discord.gg/WqFD9VQe)
+
+Присоединяйтесь к нашему Discord-сообществу для поддержки, обсуждений и новостей:
+**[https://discord.gg/WqFD9VQe](https://discord.gg/WqFD9VQe)**
 
 ## Лицензия
 

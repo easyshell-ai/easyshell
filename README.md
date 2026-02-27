@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/logo.png" alt="EasyShell Logo" width="200" />
+</p>
+
 # EasyShell
 
 **Lightweight Server Management & Intelligent Operations Platform**
@@ -6,6 +10,7 @@ Server-Agent Architecture | Batch Script Execution | Real-time Logs | AI-Powered
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Docs](https://img.shields.io/badge/Docs-docs.easyshell.ai-green.svg)](https://docs.easyshell.ai)
+[![Discord](https://img.shields.io/badge/Discord-Join%20Us-7289da?logo=discord&logoColor=white)](https://discord.gg/WqFD9VQe)
 
 **Language**: English | [简体中文](./README.zh-CN.md) | [繁體中文](./README.zh-TW.md) | [한국어](./README.ko.md) | [Русский](./README.ru.md) | [日本語](./README.ja.md)
 
@@ -142,6 +147,13 @@ Visit **[docs.easyshell.ai](https://docs.easyshell.ai)** for:
 - Getting started walkthrough
 - Configuration reference
 - Development guide
+
+## Community
+
+[![Discord](https://img.shields.io/badge/Discord-Join%20Us-7289da?logo=discord&logoColor=white)](https://discord.gg/WqFD9VQe)
+
+Join our Discord community for support, discussions, and updates:
+**[https://discord.gg/WqFD9VQe](https://discord.gg/WqFD9VQe)**
 
 ## License
 

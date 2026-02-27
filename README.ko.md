@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/logo.png" alt="EasyShell Logo" width="200" />
+</p>
+
 # EasyShell
 
 **경량 서버 관리 & 지능형 운영 플랫폼**
@@ -6,6 +10,7 @@ Server-Agent 아키텍처 | 일괄 스크립트 실행 | 실시간 로그 | AI �
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Docs](https://img.shields.io/badge/Docs-docs.easyshell.ai-green.svg)](https://docs.easyshell.ai)
+[![Discord](https://img.shields.io/badge/Discord-Join%20Us-7289da?logo=discord&logoColor=white)](https://discord.gg/WqFD9VQe)
 
 **언어**: [English](./README.md) | [简体中文](./README.zh-CN.md) | [繁體中文](./README.zh-TW.md) | 한국어 | [Русский](./README.ru.md) | [日本語](./README.ja.md)
 
@@ -142,6 +147,13 @@ easyshell/
 - 시작 안내
 - 구성 레퍼런스
 - 개발 가이드
+
+## 커뮤니티
+
+[![Discord](https://img.shields.io/badge/Discord-Join%20Us-7289da?logo=discord&logoColor=white)](https://discord.gg/WqFD9VQe)
+
+Discord 커뮤니티에 참여하여 지원, 토론 및 최신 소식을 확인하세요:
+**[https://discord.gg/WqFD9VQe](https://discord.gg/WqFD9VQe)**
 
 ## 라이선스
 

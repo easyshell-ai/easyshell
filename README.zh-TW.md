@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/logo.png" alt="EasyShell Logo" width="200" />
+</p>
+
 # EasyShell
 
 **輕量級伺服器管理與智慧運維平台**
@@ -6,6 +10,7 @@ Server-Agent 架構 | 批次腳本執行 | 即時日誌 | AI 驅動運维 | 機�
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Docs](https://img.shields.io/badge/Docs-docs.easyshell.ai-green.svg)](https://docs.easyshell.ai)
+[![Discord](https://img.shields.io/badge/Discord-Join%20Us-7289da?logo=discord&logoColor=white)](https://discord.gg/WqFD9VQe)
 
 **語言**: [English](./README.md) | [简体中文](./README.zh-CN.md) | 繁體中文 | [한국어](./README.ko.md) | [Русский](./README.ru.md) | [日本語](./README.ja.md)
 
@@ -142,6 +147,13 @@ easyshell/
 - 快速入門導覽
 - 設定參考手冊
 - 開發指南
+
+## 社群
+
+[![Discord](https://img.shields.io/badge/Discord-Join%20Us-7289da?logo=discord&logoColor=white)](https://discord.gg/WqFD9VQe)
+
+加入我們的 Discord 社群，獲取支援、參與討論和瞭解最新動態：
+**[https://discord.gg/WqFD9VQe](https://discord.gg/WqFD9VQe)**
 
 ## 授權條款
 

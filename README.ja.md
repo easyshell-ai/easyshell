@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/logo.png" alt="EasyShell Logo" width="200" />
+</p>
+
 # EasyShell
 
 **軽量サーバー管理＆インテリジェント運用プラットフォーム**
@@ -6,6 +10,7 @@ Server-Agent アーキテクチャ | バッチスクリプト実行 | リアル�
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Docs](https://img.shields.io/badge/Docs-docs.easyshell.ai-green.svg)](https://docs.easyshell.ai)
+[![Discord](https://img.shields.io/badge/Discord-Join%20Us-7289da?logo=discord&logoColor=white)](https://discord.gg/WqFD9VQe)
 
 **言語**: [English](./README.md) | [简体中文](./README.zh-CN.md) | [繁體中文](./README.zh-TW.md) | [한국어](./README.ko.md) | [Русский](./README.ru.md) | 日本語
 
@@ -142,6 +147,13 @@ easyshell/
 - はじめに
 - 設定リファレンス
 - 開発ガイド
+
+## コミュニティ
+
+[![Discord](https://img.shields.io/badge/Discord-Join%20Us-7289da?logo=discord&logoColor=white)](https://discord.gg/WqFD9VQe)
+
+Discord コミュニティに参加して、サポート、ディスカッション、最新情報をご確認ください：
+**[https://discord.gg/WqFD9VQe](https://discord.gg/WqFD9VQe)**
 
 ## ライセンス
 
