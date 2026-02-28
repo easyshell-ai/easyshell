@@ -65,6 +65,23 @@ public class PlanExecutor {
             executeSimplePlan(plan, request, sink, cancelled);
         }
 
+        // Aggregate all step results into responseContent for persistence
+        StringBuilder aggregatedResponse = new StringBuilder();
+        for (ExecutionPlan.PlanStep step : plan.getSteps()) {
+            if (step.getResult() != null && !step.getResult().isEmpty()) {
+                if (aggregatedResponse.length() > 0) {
+                    aggregatedResponse.append("\n\n");
+                }
+                aggregatedResponse.append("### Step ").append(step.getIndex())
+                        .append(": ").append(step.getDescription()).append("\n");
+                aggregatedResponse.append(step.getResult());
+            }
+        }
+        if (aggregatedResponse.length() > 0) {
+            request.setResponseContent(aggregatedResponse.toString());
+            log.debug("Aggregated {} chars of response content from plan steps", aggregatedResponse.length());
+        }
+
         if (agenticConfigService.getBoolean("ai.plan.summary-enabled", true)) {
             String summary = buildSummary(plan);
             sink.next(AgentEvent.planSummary(summary, plan));
@@ -215,7 +232,9 @@ public class PlanExecutor {
 
         AgentDefinition agentDef = agentOpt.get();
         try {
-            String result = orchestratorEngine.executeAsSubAgent(agentDef, step.getDescription(), chatModelFactory);
+            // Build enriched prompt with host context and step tools
+            String enrichedPrompt = SubAgentPromptBuilder.buildSubAgentPrompt(step, request);
+            String result = orchestratorEngine.executeAsSubAgent(agentDef, enrichedPrompt, chatModelFactory);
             step.setResult(result);
             step.setStatus("completed");
             sink.next(AgentEvent.stepComplete(step.getIndex(), agentDef.getName()));
@@ -229,6 +248,7 @@ public class PlanExecutor {
             return false;
         }
     }
+
 
     private String buildSummary(ExecutionPlan plan) {
         long completed = plan.getSteps().stream().filter(s -> "completed".equals(s.getStatus())).count();

@@ -21,29 +21,40 @@ public class ToolSetSelector {
 
     private final AgenticConfigService configService;
 
+    // Universal tools available to all task types (always included)
+    private static final Set<String> UNIVERSAL_TOOLS = Set.of(
+            "getCurrentTime", "parseTime", "timeDiff",
+            "calculate", "convertStorageUnit",
+            "extractByRegex", "diffText", "textStats",
+            "convertFormat", "prettyPrintJson", "extractJsonPath",
+            "base64", "urlEncode", "hash"
+    );
+
     // Read-only tool whitelists by task type.
     // Names MUST match the actual @Tool annotated method names in tool classes.
     // EXECUTE, TROUBLESHOOT, DEPLOY → null → all tools allowed.
-    private static final Map<TaskType, Set<String>> TOOL_WHITELIST = Map.of(
-            TaskType.QUERY, Set.of(
+    private static final Map<TaskType, Set<String>> TOOL_WHITELIST = Map.ofEntries(
+            Map.entry(TaskType.QUERY, Set.of(
                     "listHosts", "listHostsByStatus", "getHostTags",
                     "listRecentTasks", "getTaskDetail",
                     "listScripts", "getScriptDetail",
                     "listClusters", "getClusterDetail",
                     "getDashboardStats", "getHostMetrics",
-                    "queryAuditLogs", "listScheduledTasks", "getInspectReports"
-            ),
-            TaskType.MONITOR, Set.of(
+                    "queryAuditLogs", "listScheduledTasks", "getInspectReports",
+                    "fetchUrl", "webSearch", "searchKnowledge"
+            )),
+            Map.entry(TaskType.MONITOR, Set.of(
                     "listHosts", "listHostsByStatus",
                     "getDashboardStats", "getHostMetrics",
                     "queryAuditLogs", "listScheduledTasks", "getInspectReports",
                     "triggerScheduledTask"
-            ),
-            TaskType.GENERAL, Set.of(
+            )),
+            Map.entry(TaskType.GENERAL, Set.of(
                     "listHosts", "listHostsByStatus",
                     "listRecentTasks", "listScripts", "listClusters",
-                    "getDashboardStats"
-            )
+                    "getDashboardStats",
+                    "fetchUrl", "webSearch", "searchKnowledge"
+            ))
     );
 
     /**
@@ -62,7 +73,10 @@ public class ToolSetSelector {
         }
 
         ToolCallback[] filtered = Arrays.stream(allTools)
-                .filter(t -> whitelist.contains(t.getToolDefinition().name()))
+                .filter(t -> {
+                    String name = t.getToolDefinition().name();
+                    return whitelist.contains(name) || UNIVERSAL_TOOLS.contains(name);
+                })
                 .toArray(ToolCallback[]::new);
 
         // Safety fallback: if filtering removes ALL tools, return full set instead of empty

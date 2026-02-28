@@ -38,7 +38,8 @@
     "operationFailed": "Operation failed",
     "exportSuccess": "Export successful",
     "updateTime": "Update Time",
-    "minutes": "minutes"
+    "minutes": "minutes",
+    "close": "Close"
   },
   "nav": {
     "group": {

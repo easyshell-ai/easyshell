@@ -753,7 +753,11 @@ export function useAiChat() {
                   }
                 }
                 if (currentSessionIdRef.current === streamSessionId) {
-                  setMessages(msgs);
+                  // Only update messages if server returned data, otherwise preserve local state
+                  // This prevents conversation from disappearing when server returns empty array
+                  if (msgs.length > 0) {
+                    setMessages(msgs);
+                  }
                   if (Object.keys(newProcessDataMap).length > 0) {
                     setProcessDataMap(prev => ({ ...prev, ...newProcessDataMap }));
                   }

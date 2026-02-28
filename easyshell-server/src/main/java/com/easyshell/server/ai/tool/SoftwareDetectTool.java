@@ -28,7 +28,7 @@ public class SoftwareDetectTool {
     }
 
     @Tool(description = "探测指定主机上运行的软件和服务，包括 Nginx、MySQL、PostgreSQL、Java、PHP、Node.js、Python、Docker 等")
-    public String detectSoftware(@ToolParam(description = "主机 ID") String agentId) {
+    public String detectSoftware(@ToolParam(description = "目标主机的 Agent ID。必须是真实存在的主机 ID，如果上下文中用户已指定目标主机则直接使用其 ID，否则请先调用 listHosts 工具获取") String agentId) {
         Agent agent = agentRepository.findById(agentId).orElse(null);
         if (agent == null) {
             return "主机不存在: " + agentId;

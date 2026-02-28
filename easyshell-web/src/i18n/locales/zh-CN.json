@@ -38,7 +38,8 @@
     "operationFailed": "操作失败",
     "exportSuccess": "导出成功",
     "updateTime": "更新时间",
-    "minutes": "分钟"
+    "minutes": "分钟",
+    "close": "关闭"
   },
   "nav": {
     "group": {

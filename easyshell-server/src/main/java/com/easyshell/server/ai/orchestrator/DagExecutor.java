@@ -150,7 +150,10 @@ public class DagExecutor {
             }
         }
 
-        String taskDescription = substituteVariables(step.getDescription(), step.getInputVars(), variables);
+        String substitutedDescription = substituteVariables(step.getDescription(), step.getInputVars(), variables);
+        // Enrich with host context and tool hints via shared utility
+        step.setDescription(substitutedDescription);
+        String taskDescription = SubAgentPromptBuilder.buildSubAgentPrompt(step, request);
 
         sink.next(AgentEvent.stepStart(step.getIndex(), taskDescription,
                 step.getAgent() != null ? step.getAgent() : "execute"));

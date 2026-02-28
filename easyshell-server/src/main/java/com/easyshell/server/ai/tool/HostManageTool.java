@@ -44,7 +44,7 @@ public class HostManageTool {
 
     @Tool(description = "卸载并移除主机。会通过SSH远程停止Agent服务、删除Agent文件，并从数据库中移除主机记录。需要主机的agentId。")
     public String removeHost(
-            @ToolParam(description = "主机的Agent ID") String agentId) {
+            @ToolParam(description = "目标主机的 Agent ID。必须是真实存在的主机 ID，如果上下文中用户已指定目标主机则直接使用其 ID，否则请先调用 listHosts 工具获取") String agentId) {
         try {
             HostCredentialVO vo = hostProvisionService.uninstall(agentId);
             hostProvisionService.startUninstallAsync(vo.getId());

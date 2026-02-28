@@ -209,11 +209,11 @@ public class DataInitializer implements CommandLineRunner {
     }
 
     private void initAgenticDefaults() {
-        createConfigIfAbsent("ai.orchestrator.max-iterations", "10",
+        createConfigIfAbsent("ai.orchestrator.max-iterations", "25",
                 "Agentic Loop 最大迭代次数", "ai_orchestrator");
         createConfigIfAbsent("ai.orchestrator.max-consecutive-errors", "3",
                 "连续工具失败最大次数", "ai_orchestrator");
-        createConfigIfAbsent("ai.orchestrator.max-tool-calls", "15",
+        createConfigIfAbsent("ai.orchestrator.max-tool-calls", "30",
                 "单次迭代最大工具调用数", "ai_orchestrator");
 
         createConfigIfAbsent("ai.context.chars-per-token", "3.0",
@@ -236,6 +236,9 @@ public class DataInitializer implements CommandLineRunner {
                 "Gemini context window size (tokens)", "ai_context");
         createConfigIfAbsent("ai.github-copilot.context-window", "128000",
                 "GitHub Copilot context window size (tokens)", "ai_context");
+
+        createConfigIfAbsent("ai.tool.output-max-lines", "50",
+                "AI 工具返回日志输出的最大行数（取末尾 N 行）", "ai_tool");
 
         log.info("Agentic defaults initialized");
 
@@ -286,37 +289,37 @@ public class DataInitializer implements CommandLineRunner {
                 "[{\"tool\":\"*\",\"action\":\"allow\"}]",
                 null, null,
                 SystemPrompts.OPS_ASSISTANT,
-                10, "主编排Agent，负责理解用户意图、分解任务、调用工具和委派子Agent");
+                25, "主编排Agent，负责理解用户意图、分解任务、调用工具和委派子Agent");
 
         createAgentIfAbsent("explore", "探索Agent", "subagent",
                 "[{\"tool\":\"listHosts\",\"action\":\"allow\"},{\"tool\":\"listHostsByStatus\",\"action\":\"allow\"},{\"tool\":\"getMonitoringOverview\",\"action\":\"allow\"},{\"tool\":\"getHostMetrics\",\"action\":\"allow\"},{\"tool\":\"listScripts\",\"action\":\"allow\"},{\"tool\":\"getScriptDetail\",\"action\":\"allow\"},{\"tool\":\"listClusters\",\"action\":\"allow\"},{\"tool\":\"getClusterDetail\",\"action\":\"allow\"},{\"tool\":\"queryAuditLogs\",\"action\":\"allow\"},{\"tool\":\"listTasks\",\"action\":\"allow\"},{\"tool\":\"getTaskDetail\",\"action\":\"allow\"},{\"tool\":\"searchByTag\",\"action\":\"allow\"},{\"tool\":\"listScheduledTasks\",\"action\":\"allow\"},{\"tool\":\"getInspectionReport\",\"action\":\"allow\"}]",
                 null, null,
                 "你是EasyShell探索Agent，专注于信息收集和只读查询。你只能查询数据，不能执行任何修改操作。请尽可能全面地收集所需信息并给出清晰的分析报告。",
-                5, "只读探索Agent：查询主机、监控、脚本、任务等信息");
+                15, "只读探索Agent：查询主机、监控、脚本、任务等信息");
 
         createAgentIfAbsent("execute", "执行Agent", "subagent",
                 "[{\"tool\":\"executeScript\",\"action\":\"allow\"},{\"tool\":\"listHosts\",\"action\":\"allow\"},{\"tool\":\"listHostsByStatus\",\"action\":\"allow\"},{\"tool\":\"detectSoftware\",\"action\":\"allow\"},{\"tool\":\"createScript\",\"action\":\"allow\"}]",
                 null, null,
                 "你是EasyShell执行Agent，负责在指定主机上执行脚本和操作。执行前务必确认目标正确，操作安全。执行后清晰报告结果。",
-                5, "执行Agent：在主机上运行脚本和命令");
+                15, "执行Agent：在主机上运行脚本和命令");
 
         createAgentIfAbsent("analyze", "分析Agent", "subagent",
                 "[{\"tool\":\"listHosts\",\"action\":\"allow\"},{\"tool\":\"listHostsByStatus\",\"action\":\"allow\"},{\"tool\":\"getMonitoringOverview\",\"action\":\"allow\"},{\"tool\":\"getHostMetrics\",\"action\":\"allow\"},{\"tool\":\"queryAuditLogs\",\"action\":\"allow\"},{\"tool\":\"getInspectionReport\",\"action\":\"allow\"}]",
                 null, null,
                 "你是EasyShell分析Agent，专注于数据分析和问题诊断。基于监控数据、日志和系统状态进行深度分析，找出根因并给出建议。",
-                3, "分析Agent：数据分析和问题诊断");
+                10, "分析Agent：数据分析和问题诊断");
 
         createAgentIfAbsent("planner", "规划Agent", "subagent",
                 "[{\"tool\":\"listHosts\",\"action\":\"allow\"},{\"tool\":\"listHostsByStatus\",\"action\":\"allow\"},{\"tool\":\"listClusters\",\"action\":\"allow\"},{\"tool\":\"getClusterDetail\",\"action\":\"allow\"},{\"tool\":\"listScripts\",\"action\":\"allow\"},{\"tool\":\"listTasks\",\"action\":\"allow\"},{\"tool\":\"getMonitoringOverview\",\"action\":\"allow\"}]",
                 null, null,
                 SystemPrompts.PLANNER_AGENT,
-                3, "规划Agent：分析用户请求，生成结构化执行计划");
+                10, "规划Agent：分析用户请求，生成结构化执行计划");
 
         createAgentIfAbsent("reviewer", "审查Agent", "subagent",
                 "[{\"tool\":\"listHosts\",\"action\":\"allow\"},{\"tool\":\"listHostsByStatus\",\"action\":\"allow\"},{\"tool\":\"getMonitoringOverview\",\"action\":\"allow\"},{\"tool\":\"getHostMetrics\",\"action\":\"allow\"},{\"tool\":\"listTasks\",\"action\":\"allow\"},{\"tool\":\"getTaskDetail\",\"action\":\"allow\"},{\"tool\":\"detectSoftware\",\"action\":\"allow\"}]",
                 null, null,
                 SystemPrompts.REVIEWER_AGENT,
-                3, "审查Agent：验证执行结果正确性和完整性");
+                10, "审查Agent：验证执行结果正确性和完整性");
 
         log.info("Agent definitions initialized");
     }

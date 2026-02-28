@@ -5,6 +5,9 @@ import com.easyshell.server.model.entity.Job;
 import com.easyshell.server.model.entity.Task;
 import com.easyshell.server.model.vo.TaskDetailVO;
 import com.easyshell.server.service.TaskService;
+import com.easyshell.server.repository.SystemConfigRepository;
+import com.easyshell.server.model.entity.SystemConfig;
+import com.easyshell.server.repository.AgentRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
@@ -17,6 +20,8 @@ import java.util.List;
 public class TaskManageTool {
 
     private final TaskService taskService;
+    private final AgentRepository agentRepository;
+    private final SystemConfigRepository systemConfigRepository;
 
     @Tool(description = "查询最近的任务列表，包括任务名称、状态、创建时间等信息")
     public String listRecentTasks() {
@@ -61,10 +66,9 @@ public class TaskManageTool {
                             formatJobStatus(job.getStatus()),
                             job.getExitCode()));
                     if (job.getOutput() != null && !job.getOutput().isBlank()) {
-                        String output = job.getOutput().length() > 500
-                                ? job.getOutput().substring(0, 500) + "...(已截断)"
-                                : job.getOutput();
-                        sb.append("    输出: ").append(output).append("\n");
+                        int maxLines = getConfigMaxOutputLines();
+                        String output = tailLines(job.getOutput(), maxLines);
+                        sb.append("    输出:\n").append(output).append("\n");
                     }
                 }
             } else {
@@ -79,14 +83,26 @@ public class TaskManageTool {
     @Tool(description = "创建并下发一个新的脚本执行任务到指定主机")
     public String createTask(
             @ToolParam(description = "脚本内容") String scriptContent,
-            @ToolParam(description = "目标主机 ID 列表，用逗号分隔") String agentIds,
+            @ToolParam(description = "目标主机 ID 列表，用逗号分隔。必须是真实存在的主机 Agent ID，如果上下文中用户已指定目标主机则直接使用其 ID，否则请先调用 listHosts 工具获取可用主机列表及其 ID，不要猜测或编造 ID") String agentIds,
             @ToolParam(description = "任务名称") String name,
             @ToolParam(description = "超时秒数，默认 3600") int timeoutSeconds) {
         try {
+            List<String> agentIdList = List.of(agentIds.split(",")).stream()
+                    .map(String::trim).filter(s -> !s.isEmpty()).toList();
+            if (agentIdList.isEmpty()) {
+                return "错误：未指定目标主机。请先调用 listHosts 工具获取可用主机列表。";
+            }
+            List<String> invalidIds = agentIdList.stream()
+                    .filter(id -> !agentRepository.existsById(id))
+                    .toList();
+            if (!invalidIds.isEmpty()) {
+                return "错误：以下主机 ID 不存在: " + String.join(", ", invalidIds) + "。请调用 listHosts 工具获取正确的主机 ID。";
+            }
+
             TaskCreateRequest request = new TaskCreateRequest();
             request.setName(name);
             request.setScriptContent(scriptContent);
-            request.setAgentIds(List.of(agentIds.split(",")));
+            request.setAgentIds(agentIdList);
             request.setTimeoutSeconds(timeoutSeconds > 0 ? timeoutSeconds : 3600);
 
             Task task = taskService.createAndDispatch(request, 1L);
@@ -118,5 +134,31 @@ public class TaskManageTool {
             case 4 -> "超时";
             default -> "未知(" + status + ")";
         };
+    }
+
+    private int getConfigMaxOutputLines() {
+        try {
+            SystemConfig config = systemConfigRepository.findByConfigKey("ai.tool.output-max-lines").orElse(null);
+            if (config != null && config.getConfigValue() != null && !config.getConfigValue().isBlank()) {
+                return Integer.parseInt(config.getConfigValue());
+            }
+        } catch (Exception ignored) {}
+        return 50;
+    }
+
+    private String tailLines(String text, int maxLines) {
+        String[] lines = text.split("\n");
+        if (lines.length <= maxLines) {
+            return text;
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("...(省略前 ").append(lines.length - maxLines).append(" 行)\n");
+        for (int i = lines.length - maxLines; i < lines.length; i++) {
+            sb.append(lines[i]);
+            if (i < lines.length - 1) {
+                sb.append("\n");
+            }
+        }
+        return sb.toString();
     }
 }

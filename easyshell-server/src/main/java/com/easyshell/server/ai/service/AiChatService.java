@@ -133,16 +133,30 @@ public class AiChatService {
         if (Boolean.TRUE.equals(request.getPlanConfirmed())) orchRequest.setPlanConfirmed(true);
 
         return orchestratorEngine.process(orchRequest)
-                .doOnComplete(() -> {
+                .doFinally(signalType -> {
+                    // Use doFinally to save message regardless of how stream terminates
+                    // (completion, error, or client cancel)
                     String responseContent = orchRequest.getResponseContent();
                     if (responseContent != null && !responseContent.isEmpty()) {
+                        log.debug("Saving assistant message for session {} (signal: {})", sid, signalType);
                         saveMessage(sid, "assistant", responseContent, null, null);
                         updateSessionMessageCount(sid);
+                    } else {
+                        log.debug("No response content to save for session {} (signal: {})", sid, signalType);
                     }
+                    String auditStatus = signalType == reactor.core.publisher.SignalType.ON_COMPLETE ? "success" : "cancelled";
                     auditLogService.log(userId, "USER",
                             "AI_CHAT", "ai_chat_session", sid,
                             "AI 对话: " + (filteredMessage.length() > 50 ? filteredMessage.substring(0, 50) + "..." : filteredMessage),
-                            sourceIp, "success");
+                            sourceIp, auditStatus);
+                })
+                .doOnError(error -> {
+                    log.error("Stream error for session {}: {}", sid, error.getMessage());
+                })
+                .onErrorResume(error -> {
+                    // Emit a final error event and complete gracefully to prevent Servlet error dispatch
+                    AgentEvent errorEvent = AgentEvent.error(error.getMessage());
+                    return Flux.just(errorEvent);
                 });
     }
 

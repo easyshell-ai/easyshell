@@ -4,7 +4,7 @@ import {
   Card, Table, Button, Modal, Form, Input, Select, Switch, Popconfirm, Tag, Space, message, Tabs, Typography, theme,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { PlusOutlined, EditOutlined, DeleteOutlined, FileTextOutlined, BookOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, DeleteOutlined, FileTextOutlined, BookOutlined, EyeOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { getScriptList, getScriptTemplates, getUserScripts, createScript, updateScript, deleteScript } from '../../api/script';
 import type { Script, ScriptRequest } from '../../types';
@@ -28,6 +28,7 @@ const ScriptPage: React.FC = () => {
   const [submitting, setSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState('user');
   const [form] = Form.useForm<ScriptRequest>();
+  const [viewScript, setViewScript] = useState<Script | null>(null);
 
   const fetchData = useCallback(() => {
     setLoading(true);
@@ -138,7 +139,12 @@ const ScriptPage: React.FC = () => {
           </Popconfirm>
         </Space>
       ),
-    }] : []),
+    }] : [{
+      title: t('common.actions'), key: 'action', width: 100, fixed: 'right' as const,
+      render: (_: unknown, record: Script) => (
+        <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => setViewScript(record)}>{t('common.view')}</Button>
+      ),
+    }]),
   ];
 
   return (
@@ -223,6 +229,40 @@ const ScriptPage: React.FC = () => {
             <Switch />
           </Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        title={viewScript?.name || t('script.template')}
+        open={!!viewScript}
+        onCancel={() => setViewScript(null)}
+        footer={<Button onClick={() => setViewScript(null)}>{t('common.close')}</Button>}
+        width={700}
+      >
+        {viewScript && (
+          <>
+            <p style={{ color: token.colorTextSecondary, marginBottom: 12 }}>{viewScript.description}</p>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+              <Tag color={scriptTypeColors[viewScript.scriptType] || 'default'}>{viewScript.scriptType}</Tag>
+              <Tag>v{viewScript.version}</Tag>
+            </div>
+            <pre style={{
+              background: token.colorFillAlter,
+              color: token.colorText,
+              border: `1px solid ${token.colorBorderSecondary}`,
+              borderRadius: 8,
+              padding: 16,
+              fontSize: 13,
+              fontFamily: "'Cascadia Code', 'Fira Code', 'Consolas', monospace",
+              maxHeight: 400,
+              overflow: 'auto',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-all',
+              margin: 0,
+            }}>
+              {viewScript.content}
+            </pre>
+          </>
+        )}
       </Modal>
     </>
   );

@@ -110,10 +110,19 @@ public class TaskServiceImpl implements TaskService {
         task.setStartedAt(LocalDateTime.now());
         taskRepository.save(task);
 
+        int dispatchedCount = 0;
         for (String agentId : resolvedAgentIds) {
             Agent agent = agentRepository.findById(agentId).orElse(null);
             if (agent == null || agent.getStatus() == 0) {
                 log.warn("Skipping offline/unknown agent: {}", agentId);
+                Job failedJob = new Job();
+                failedJob.setId("job_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16));
+                failedJob.setTaskId(task.getId());
+                failedJob.setAgentId(agentId);
+                failedJob.setStatus(3); // failed
+                failedJob.setOutput("Agent is offline or not found");
+                failedJob.setFinishedAt(LocalDateTime.now());
+                jobRepository.save(failedJob);
                 continue;
             }
 
@@ -127,9 +136,18 @@ public class TaskServiceImpl implements TaskService {
             boolean dispatched = agentWebSocketHandler.dispatchJob(
                     agentId, job, scriptContent, task.getTimeoutSeconds());
             if (!dispatched) {
-                log.warn("Agent {} not connected via WebSocket, job {} left as pending", agentId, job.getId());
+                log.warn("Agent {} not connected via WebSocket, marking job {} as failed", agentId, job.getId());
+                job.setStatus(3); // failed
+                job.setOutput("Agent not connected via WebSocket, unable to dispatch");
+                job.setFinishedAt(LocalDateTime.now());
+                jobRepository.save(job);
+            } else {
+                dispatchedCount++;
             }
         }
+
+        // Update task status if no jobs were dispatched
+        updateTaskStatus(task.getId());
 
         return task;
     }

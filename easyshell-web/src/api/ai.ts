@@ -162,7 +162,8 @@ export function sendChatStream(
           }
 
           if (receivedTerminalEvent) {
-            // Drain any remaining data in the buffer before closing
+            // After receiving DONE/ERROR, drain remaining buffer then let stream close naturally
+            // DO NOT call reader.cancel() - it triggers server-side cancellation before doFinally runs
             if (buffer.startsWith('data:')) {
               const jsonStr = buffer.slice(5).trim();
               if (jsonStr) {
@@ -173,7 +174,7 @@ export function sendChatStream(
               }
               buffer = '';
             }
-            reader.cancel().catch(() => {});
+            // Simply break the loop - the server will close the stream naturally
             break;
           }
         }

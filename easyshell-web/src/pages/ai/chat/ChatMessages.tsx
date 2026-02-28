@@ -171,7 +171,7 @@ const ChatMessages: React.FC<ChatMessagesProps> = ({
                   wordBreak: 'break-word',
                 }}>
                   {msg.role === 'user' ? (
-                    <span style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</span>
+                    <span style={{ whiteSpace: 'pre-wrap', userSelect: 'text', cursor: 'text' }}>{msg.content}</span>
                   ) : (
                     <MarkdownContent content={msg.content} />
                   )}

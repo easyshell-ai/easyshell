@@ -85,6 +85,15 @@ public class OrchestratorEngine {
     private final TaskClassifier taskClassifier;
     private final AdaptivePromptBuilder adaptivePromptBuilder;
     private final ToolSetSelector toolSetSelector;
+    private final DateTimeTool dateTimeTool;
+    private final WebFetchTool webFetchTool;
+    private final WebSearchTool webSearchTool;
+    private final CalculatorTool calculatorTool;
+    private final TextProcessTool textProcessTool;
+    private final NotificationTool notificationTool;
+    private final DataFormatTool dataFormatTool;
+    private final EncodingTool encodingTool;
+    private final KnowledgeBaseTool knowledgeBaseTool;
 
     public OrchestratorEngine(
             ChatModelFactory chatModelFactory,
@@ -113,7 +122,16 @@ public class OrchestratorEngine {
             SopRetriever sopRetriever,
             TaskClassifier taskClassifier,
             AdaptivePromptBuilder adaptivePromptBuilder,
-            ToolSetSelector toolSetSelector) {
+            ToolSetSelector toolSetSelector,
+            DateTimeTool dateTimeTool,
+            WebFetchTool webFetchTool,
+            WebSearchTool webSearchTool,
+            CalculatorTool calculatorTool,
+            TextProcessTool textProcessTool,
+            NotificationTool notificationTool,
+            DataFormatTool dataFormatTool,
+            EncodingTool encodingTool,
+            KnowledgeBaseTool knowledgeBaseTool) {
         this.chatModelFactory = chatModelFactory;
         this.agentRepository = agentRepository;
         this.agentDefinitionRepository = agentDefinitionRepository;
@@ -141,6 +159,15 @@ public class OrchestratorEngine {
         this.taskClassifier = taskClassifier;
         this.adaptivePromptBuilder = adaptivePromptBuilder;
         this.toolSetSelector = toolSetSelector;
+        this.dateTimeTool = dateTimeTool;
+        this.webFetchTool = webFetchTool;
+        this.webSearchTool = webSearchTool;
+        this.calculatorTool = calculatorTool;
+        this.textProcessTool = textProcessTool;
+        this.notificationTool = notificationTool;
+        this.dataFormatTool = dataFormatTool;
+        this.encodingTool = encodingTool;
+        this.knowledgeBaseTool = knowledgeBaseTool;
     }
 
     private static final ScheduledExecutorService HEARTBEAT_EXECUTOR =
@@ -314,8 +341,26 @@ public class OrchestratorEngine {
             if (plan != null && plan.getSteps() != null && !plan.getSteps().isEmpty()) {
                 planExecutor.executePlan(plan, request, sink, cancelled);
                 emitApprovalIfNeeded(request.getResponseContent(), sink);
-                sink.next(AgentEvent.done(request.getSessionId()));
-                sink.complete();
+
+                // Post-plan synthesis: let the main agent analyze sub-agent results and iterate if needed
+                boolean synthesisEnabled = agenticConfigService.getBoolean("ai.plan.synthesis-enabled", true);
+                String aggregatedResults = request.getResponseContent();
+                if (synthesisEnabled && aggregatedResults != null && !aggregatedResults.isEmpty() && !cancelled.get()) {
+                    log.info("Starting post-plan synthesis for session {}", request.getSessionId());
+                    sink.next(AgentEvent.thinking(i18n("ai.plan.synthesizing"), "orchestrator"));
+
+                    // Inject sub-agent results as assistant context, then ask main agent to synthesize
+                    messages.add(new org.springframework.ai.chat.messages.AssistantMessage(
+                            "以下是各步骤的执行结果：\n\n" + aggregatedResults));
+                    messages.add(new org.springframework.ai.chat.messages.UserMessage(
+                            "请根据以上各步骤的执行结果进行综合分析和总结。如果有步骤未能成功完成或子Agent表示无法执行某项操作，" +
+                            "请分析原因并尝试采取替代方案完成任务。请直接给出最终的分析结论和建议。"));
+
+                    executeAgenticLoop(chatModel, filteredCallbacks, toolMap, messages, request, sink, cancelled);
+                } else {
+                    sink.next(AgentEvent.done(request.getSessionId()));
+                    sink.complete();
+                }
             } else {
                 executeAgenticLoop(chatModel, filteredCallbacks, toolMap, messages, request, sink, cancelled);
             }
@@ -346,9 +391,9 @@ public class OrchestratorEngine {
         int maxConsecutiveErrors = request.getMaxConsecutiveErrors();
         int maxToolCalls = request.getMaxToolCalls();
 
-        if (maxIterations <= 0) maxIterations = agenticConfigService.getInt("ai.orchestrator.max-iterations", 10);
+        if (maxIterations <= 0) maxIterations = agenticConfigService.getInt("ai.orchestrator.max-iterations", 25);
         if (maxConsecutiveErrors <= 0) maxConsecutiveErrors = agenticConfigService.getInt("ai.orchestrator.max-consecutive-errors", 3);
-        if (maxToolCalls <= 0) maxToolCalls = agenticConfigService.getInt("ai.orchestrator.max-tool-calls", 15);
+        if (maxToolCalls <= 0) maxToolCalls = agenticConfigService.getInt("ai.orchestrator.max-tool-calls", 30);
         
         log.info("Agentic loop started with maxIterations={}, maxConsecutiveErrors={}, maxToolCalls={} for session {}",
                 maxIterations, maxConsecutiveErrors, maxToolCalls, request.getSessionId());
@@ -562,12 +607,17 @@ public class OrchestratorEngine {
     }
 
     private Object[] getAllTools() {
-        return new Object[]{
+        List<Object> tools = new java.util.ArrayList<>(List.of(
                 hostListTool, hostTagTool, scriptExecuteTool, softwareDetectTool,
                 taskManageTool, scriptManageTool, clusterManageTool,
                 monitoringTool, auditQueryTool, scheduledTaskTool, approvalTool,
-                subAgentTool, delegateTaskTool, getTaskResultTool
-        };
+                subAgentTool, delegateTaskTool, getTaskResultTool,
+                dateTimeTool, webFetchTool, webSearchTool,
+                calculatorTool, textProcessTool, notificationTool,
+                dataFormatTool, encodingTool
+        ));
+        tools.add(knowledgeBaseTool);
+        return tools.toArray();
     }
 
     private String i18n(String key, Object... args) {
@@ -594,9 +644,9 @@ public class OrchestratorEngine {
         messages.add(new SystemMessage(agent.getSystemPrompt()));
         messages.add(new UserMessage(prompt));
 
-        int maxIter = agent.getMaxIterations() != null ? agent.getMaxIterations() : 5;
+        int maxIter = agent.getMaxIterations() != null ? agent.getMaxIterations() : 15;
         int maxErrors = agenticConfigService.getInt("ai.orchestrator.max-consecutive-errors", 3);
-        int maxTools = agenticConfigService.getInt("ai.orchestrator.max-tool-calls", 15);
+        int maxTools = agenticConfigService.getInt("ai.orchestrator.max-tool-calls", 30);
 
         ToolCallingChatOptions chatOptions = ToolCallingChatOptions.builder()
                 .toolCallbacks(filteredCallbacks)
@@ -719,7 +769,7 @@ public class OrchestratorEngine {
         int maxPlanIterations = planner.getMaxIterations() != null ? planner.getMaxIterations() :
                 agenticConfigService.getInt("ai.planning.max-iterations", 3);
         int maxErrors = agenticConfigService.getInt("ai.orchestrator.max-consecutive-errors", 3);
-        int maxTools = agenticConfigService.getInt("ai.orchestrator.max-tool-calls", 15);
+        int maxTools = agenticConfigService.getInt("ai.orchestrator.max-tool-calls", 30);
 
         ToolCallingChatOptions plannerOptions = ToolCallingChatOptions.builder()
                 .toolCallbacks(plannerCallbacks)

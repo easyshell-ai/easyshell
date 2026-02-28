@@ -15,6 +15,9 @@ import com.easyshell.server.model.entity.Task;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseEntity;
+import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
@@ -40,11 +43,19 @@ public class AiChatController {
     }
 
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<AgentEvent> chatStream(@RequestBody AiChatRequest request,
+    public ResponseEntity<Flux<ServerSentEvent<AgentEvent>>> chatStream(@RequestBody AiChatRequest request,
                                         Authentication auth,
                                         HttpServletRequest httpRequest) {
         Long userId = (Long) auth.getPrincipal();
-        return aiChatService.chatStream(request, userId, httpRequest.getRemoteAddr());
+        Flux<ServerSentEvent<AgentEvent>> flux = aiChatService.chatStream(request, userId, httpRequest.getRemoteAddr())
+                .map(event -> ServerSentEvent.<AgentEvent>builder()
+                        .data(event)
+                        .build());
+        return ResponseEntity.ok()
+                .header("X-Accel-Buffering", "no")
+                .header(HttpHeaders.CACHE_CONTROL, "no-cache")
+                .header(HttpHeaders.CONNECTION, "keep-alive")
+                .body(flux);
     }
 
     @GetMapping("/sessions")

@@ -76,6 +76,10 @@ dependencies {
     compileOnly("org.projectlombok:lombok")
     annotationProcessor("org.projectlombok:lombok")
     implementation("cn.hutool:hutool-all:5.8.34")
+    implementation("org.jsoup:jsoup:1.18.3")
+    implementation("net.objecthunter:exp4j:0.4.8")
+    implementation("io.github.java-diff-utils:java-diff-utils:4.12")
+    implementation("com.jayway.jsonpath:json-path:2.9.0")
 
     // Dev Tools
     developmentOnly("org.springframework.boot:spring-boot-devtools")

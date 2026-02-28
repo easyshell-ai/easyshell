@@ -24,7 +24,7 @@ public class HostTagTool {
     private final AgentTagRepository agentTagRepository;
 
     @Tool(description = "查看指定主机的标签")
-    public String getHostTags(@ToolParam(description = "主机 ID") String agentId) {
+    public String getHostTags(@ToolParam(description = "目标主机的 Agent ID。如果上下文中用户已指定目标主机则直接使用其 ID，否则请先调用 listHosts 工具获取可用主机列表及其 ID") String agentId) {
         Agent agent = agentRepository.findById(agentId).orElse(null);
         if (agent == null) {
             return "主机不存在: " + agentId;
@@ -45,7 +45,7 @@ public class HostTagTool {
     @Tool(description = "给主机添加标签，如果标签不存在会自动创建")
     @Transactional
     public String addTagToHost(
-            @ToolParam(description = "主机 ID") String agentId,
+            @ToolParam(description = "目标主机的 Agent ID。如果上下文中用户已指定目标主机则直接使用其 ID，否则请先调用 listHosts 工具获取可用主机列表及其 ID") String agentId,
             @ToolParam(description = "标签名称") String tagName) {
 
         Agent agent = agentRepository.findById(agentId).orElse(null);
@@ -75,7 +75,7 @@ public class HostTagTool {
     @Tool(description = "移除主机的指定标签")
     @Transactional
     public String removeTagFromHost(
-            @ToolParam(description = "主机 ID") String agentId,
+            @ToolParam(description = "目标主机的 Agent ID。如果上下文中用户已指定目标主机则直接使用其 ID，否则请先调用 listHosts 工具获取可用主机列表及其 ID") String agentId,
             @ToolParam(description = "标签名称") String tagName) {
 
         Agent agent = agentRepository.findById(agentId).orElse(null);

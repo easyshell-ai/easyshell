@@ -441,6 +441,27 @@ const TaskPage: React.FC = () => {
               </Descriptions.Item>
             </Descriptions>
 
+            {taskDetail.task.scriptContent && (
+              <>
+                <Divider style={{ marginTop: 24 }}>{t('task.scriptContent')}</Divider>
+                <pre style={{
+                  background: token.colorFillAlter,
+                  padding: 12,
+                  borderRadius: 6,
+                  maxHeight: 300,
+                  overflow: 'auto',
+                  fontSize: 12,
+                  margin: 0,
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-all',
+                  color: token.colorText,
+                  fontFamily: "'Cascadia Code', 'Fira Code', 'Consolas', monospace",
+                }}>
+                  {taskDetail.task.scriptContent}
+                </pre>
+              </>
+            )}
+
             <Divider style={{ marginTop: 24 }}>{t('task.executionNodes')}</Divider>
             <Table<Job>
               columns={jobColumns}

@@ -312,7 +312,14 @@ public class AiSchedulerService {
     private String truncateOutput(String output, int maxLength) {
         if (output == null) return "";
         if (output.length() <= maxLength) return output;
-        return output.substring(0, maxLength) + "\n...(输出已截断)";
+        // 保留末尾内容（日志末尾通常更有价值）
+        String tail = output.substring(output.length() - maxLength);
+        // 从第一个完整行开始
+        int firstNewline = tail.indexOf('\n');
+        if (firstNewline >= 0 && firstNewline < tail.length() - 1) {
+            tail = tail.substring(firstNewline + 1);
+        }
+        return "...(前部输出已省略)\n" + tail;
     }
 
     private void checkAndAlertCriticalFindings(AiScheduledTask task, String aiAnalysis) {

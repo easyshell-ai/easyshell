@@ -89,7 +89,7 @@ public class MonitoringTool {
 
     @Tool(description = "获取指定主机的历史监控指标，包括 CPU、内存、磁盘使用率的时间序列数据")
     public String getHostMetrics(
-            @ToolParam(description = "主机 Agent ID") String agentId,
+            @ToolParam(description = "目标主机的 Agent ID。必须是真实存在的主机 ID，如果上下文中用户已指定目标主机则直接使用其 ID，否则请先调用 listHosts 工具获取") String agentId,
             @ToolParam(description = "查询最近多少小时的数据，默认 1 小时") int hours) {
         final int h = (hours <= 0) ? 1 : Math.min(hours, 168);
 

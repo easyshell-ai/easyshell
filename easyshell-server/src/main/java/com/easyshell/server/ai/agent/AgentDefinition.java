@@ -36,7 +36,7 @@ public class AgentDefinition {
     private String systemPrompt;
 
     @Column(nullable = false)
-    private Integer maxIterations = 5;
+    private Integer maxIterations = 15;
 
     @Column(nullable = false)
     private Boolean enabled = true;
