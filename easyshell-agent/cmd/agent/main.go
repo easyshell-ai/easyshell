@@ -18,9 +18,10 @@ import (
 	"github.com/easyshell-org/easyshell/easyshell-agent/internal/executor"
 	"github.com/easyshell-org/easyshell/easyshell-agent/internal/heartbeat"
 	"github.com/easyshell-org/easyshell/easyshell-agent/internal/ws"
+	"github.com/easyshell-org/easyshell/easyshell-agent/internal/fileserver"
 )
 
-var version = "0.1.0-dev"
+var version = "0.2.2-dev"
 
 func main() {
 	configPath := flag.String("config", "configs/agent.yaml", "path to config file")
@@ -86,7 +87,14 @@ func main() {
 	go hbService.Start(ctx)
 
 	exec := executor.New()
-	wsClient := ws.NewClient(cfg.Server.URL, agentID, httpClient, exec)
+
+	// Initialize file server handler
+	fileCfg := cfg.Agent.File
+	secCfg := fileserver.NewSecurityConfig(&fileCfg)
+	fileHandler := fileserver.NewHandler(secCfg)
+	fileHandler.CleanupStaleTempFiles()
+
+	wsClient := ws.NewClient(cfg.Server.URL, agentID, httpClient, exec, fileHandler)
 	go wsClient.Start(ctx)
 
 	go pollConfig(ctx, httpClient, agentID, hbService)
