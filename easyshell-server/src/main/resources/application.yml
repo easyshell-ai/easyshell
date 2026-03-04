@@ -4,9 +4,13 @@ server:
     context-path: /
 
 spring:
+  servlet:
+    multipart:
+      max-file-size: 500MB
+      max-request-size: 510MB
   mvc:
     async:
-      request-timeout: 300000
+      request-timeout: -1
   application:
     name: easyshell-server
 

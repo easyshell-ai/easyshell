@@ -14,6 +14,7 @@ import (
 	"github.com/easyshell-org/easyshell/easyshell-agent/internal/client"
 	"github.com/easyshell-org/easyshell/easyshell-agent/internal/executor"
 	"github.com/easyshell-org/easyshell/easyshell-agent/internal/terminal"
+	"github.com/easyshell-org/easyshell/easyshell-agent/internal/fileserver"
 )
 
 type Client struct {
@@ -22,6 +23,7 @@ type Client struct {
 	httpClient  *client.HTTPClient
 	executor    *executor.Executor
 	termManager *terminal.Manager
+	fileHandler *fileserver.Handler
 	conn        *websocket.Conn
 	mu          sync.Mutex
 }
@@ -48,13 +50,14 @@ type ResultMessage struct {
 	Output   string `json:"output"`
 }
 
-func NewClient(serverURL string, agentID string, httpClient *client.HTTPClient, exec *executor.Executor) *Client {
+func NewClient(serverURL string, agentID string, httpClient *client.HTTPClient, exec *executor.Executor, fileHandler *fileserver.Handler) *Client {
 	return &Client{
 		ServerURL:   serverURL,
 		AgentID:     agentID,
 		httpClient:  httpClient,
 		executor:    exec,
 		termManager: terminal.NewManager(),
+		fileHandler: fileHandler,
 	}
 }
 
@@ -155,6 +158,8 @@ func (c *Client) handleMessage(ctx context.Context, data []byte) {
 		go c.executeJob(ctx, execMsg)
 	case "terminal_open", "terminal_input", "terminal_resize", "terminal_close":
 		c.handleTerminalMessage(data, msg)
+	case "file_list", "file_download", "file_upload_start", "file_upload_chunk", "file_mkdir", "file_delete", "file_rename":
+		c.handleFileMessage(data)
 	default:
 		slog.Warn("unknown message type", "type", msgType)
 	}
@@ -285,6 +290,14 @@ func (c *Client) handleTerminalMessage(data []byte, msg map[string]interface{}) 
 			slog.Error("failed to send terminal_ready", "error", sendErr)
 		}
 	}
+}
+
+func (c *Client) handleFileMessage(data []byte) {
+	c.fileHandler.HandleMessage(data, func(resp interface{}) {
+		if err := c.sendJSON(resp); err != nil {
+			slog.Error("failed to send file response", "error", err)
+		}
+	})
 }
 
 func (c *Client) close() {

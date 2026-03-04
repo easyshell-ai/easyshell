@@ -10,7 +10,7 @@ import type { UploadFile } from 'antd';
 import {
   DesktopOutlined, EyeOutlined, CodeOutlined, DownloadOutlined,
   PlusOutlined, HistoryOutlined, ReloadOutlined, DeleteOutlined, DisconnectOutlined, SettingOutlined,
-  ImportOutlined, RocketOutlined, CloudUploadOutlined,
+  ImportOutlined, RocketOutlined, CloudUploadOutlined, WarningOutlined,
 } from '@ant-design/icons';
 import { ProTable } from '@ant-design/pro-components';
 import type { ProColumns, ActionType } from '@ant-design/pro-components';
@@ -27,6 +27,26 @@ import { formatBytes } from '../../utils/format';
 import type { TagVO, HostCredentialVO } from '../../types';
 
 const { Text } = Typography;
+
+/* ── Agent version checking ── */
+const LATEST_AGENT_VERSION = '0.2.2';
+
+function compareVersions(v1: string, v2: string): number {
+  const parts1 = v1.split('.').map(Number);
+  const parts2 = v2.split('.').map(Number);
+  for (let i = 0; i < Math.max(parts1.length, parts2.length); i++) {
+    const p1 = parts1[i] || 0;
+    const p2 = parts2[i] || 0;
+    if (p1 < p2) return -1;
+    if (p1 > p2) return 1;
+  }
+  return 0;
+}
+
+function isAgentOutdated(version: string | undefined): boolean {
+  if (!version) return false;
+  return compareVersions(version, LATEST_AGENT_VERSION) < 0;
+}
 
 /* ── CSV Export Utility ── */
 function exportCSV(hosts: HostCredentialVO[], agentTags: Record<string, TagVO[]>, t: (key: string) => string) {
@@ -583,8 +603,22 @@ const Host: React.FC = () => {
       title: t('host.agentVersion'),
       dataIndex: 'agentVersion',
       key: 'agentVersion',
-      width: 110,
-      render: (_, record) => record.agentVersion || '-',
+      width: 130,
+      render: (_, record) => {
+        if (!record.agentVersion) return '-';
+        const outdated = isAgentOutdated(record.agentVersion);
+        if (outdated) {
+          return (
+            <Tooltip title={t('host.agentOutdated', { current: record.agentVersion, latest: LATEST_AGENT_VERSION })}>
+              <Space size={4}>
+                <Text type="warning">{record.agentVersion}</Text>
+                <WarningOutlined style={{ color: '#faad14' }} />
+              </Space>
+            </Tooltip>
+          );
+        }
+        return <Text type="success">{record.agentVersion}</Text>;
+      },
     },
     {
       title: t('host.lastHeartbeat'),

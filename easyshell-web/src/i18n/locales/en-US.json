@@ -853,6 +853,7 @@
     "disk": "Disk",
     "totalMemory": "Total Memory",
     "agentVersion": "Agent Version",
+    "agentOutdated": "Agent outdated ({{current}}). Please reinstall to update to {{latest}}",
     "lastHeartbeat": "Last Heartbeat",
     "addServer": "Add Server",
     "deployHistory": "Deploy History",
@@ -1041,7 +1042,48 @@
     "disconnectedRefresh": "Disconnected, please refresh to retry",
     "error": "Error",
     "system": "[System]",
-    "unknownError": "Unknown error"
+    "unknownError": "Unknown error",
+    "toolbar": {
+      "files": "Files",
+      "search": "Search",
+      "newTab": "New Tab",
+      "fullscreen": "Fullscreen",
+      "exitFullscreen": "Exit Fullscreen",
+      "settings": "Settings",
+      "copy": "Copy",
+      "paste": "Paste"
+    },
+    "tabs": {
+      "maxReached": "Maximum {{max}} tabs allowed",
+      "defaultName": "Terminal {{index}}"
+    },
+    "search": {
+      "placeholder": "Search...",
+      "caseSensitive": "Case Sensitive",
+      "regex": "Regex",
+      "noResults": "No results found"
+    },
+    "files": {
+      "title": "File Manager",
+      "upload": "Upload",
+      "download": "Download",
+      "newFolder": "New Folder",
+      "delete": "Delete",
+      "rename": "Rename",
+      "refresh": "Refresh",
+      "deleteConfirm": "Are you sure you want to delete \"{{name}}\"?",
+      "uploadSuccess": "File uploaded successfully",
+      "downloadStarted": "Download started",
+      "downloadSuccess": "Download completed",
+      "uploading": "Uploading...",
+      "transferring": "Transferring to target server...",
+      "operationFailed": "Operation failed: {{error}}",
+      "pathPlaceholder": "Enter path...",
+      "newFolderName": "New Folder Name",
+      "emptyDirectory": "Empty directory",
+      "fileTooLarge": "File size exceeds the maximum limit ({{max}}MB)",
+      "goUp": "Go Up"
+    }
   },
   "status": {
     "task": {
