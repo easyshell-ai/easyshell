@@ -19,7 +19,18 @@ type ServerConfig struct {
 }
 
 type AgentConfig struct {
-	ID string `yaml:"id"`
+	ID   string     `yaml:"id"`
+	File FileConfig `yaml:"file"`
+}
+
+type FileConfig struct {
+	Enabled        bool     `yaml:"enabled"`
+	Root           string   `yaml:"root"`
+	ReadOnly       bool     `yaml:"readonly"`
+	MaxSizeMB      int      `yaml:"max-size-mb"`
+	MaxListEntries int      `yaml:"max-list-entries"`
+	Blacklist      []string `yaml:"blacklist"`
+	Whitelist      []string `yaml:"whitelist"`
 }
 
 type HeartbeatConfig struct {
@@ -36,7 +47,16 @@ type LogConfig struct {
 
 func Load(path string) (*Config, error) {
 	cfg := &Config{
-		Server:    ServerConfig{URL: "http://localhost:8080"},
+		Server: ServerConfig{URL: "http://localhost:8080"},
+		Agent: AgentConfig{
+			File: FileConfig{
+				Enabled:        true,
+				Root:           "/",
+				ReadOnly:       false,
+				MaxSizeMB:      500,
+				MaxListEntries: 1000,
+			},
+		},
 		Heartbeat: HeartbeatConfig{Interval: 30},
 		Metrics:   MetricsConfig{Interval: 60},
 		Log:       LogConfig{Level: "info"},

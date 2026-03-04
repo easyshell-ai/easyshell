@@ -853,6 +853,7 @@
     "disk": "磁盘",
     "totalMemory": "总内存",
     "agentVersion": "Agent 版本",
+    "agentOutdated": "Agent 版本过旧 ({{current}})，请重装以更新到 {{latest}}",
     "lastHeartbeat": "最后心跳",
     "addServer": "添加服务器",
     "deployHistory": "部署历史",
@@ -1041,7 +1042,48 @@
     "disconnectedRefresh": "连接已断开，请刷新重试",
     "error": "错误",
     "system": "[系统]",
-    "unknownError": "未知错误"
+    "unknownError": "未知错误",
+    "toolbar": {
+      "files": "文件",
+      "search": "搜索",
+      "newTab": "新标签",
+      "fullscreen": "全屏",
+      "exitFullscreen": "退出全屏",
+      "settings": "设置",
+      "copy": "复制",
+      "paste": "粘贴"
+    },
+    "tabs": {
+      "maxReached": "最多允许 {{max}} 个标签",
+      "defaultName": "终端 {{index}}"
+    },
+    "search": {
+      "placeholder": "搜索...",
+      "caseSensitive": "区分大小写",
+      "regex": "正则表达式",
+      "noResults": "未找到结果"
+    },
+    "files": {
+      "title": "文件管理",
+      "upload": "上传",
+      "download": "下载",
+      "newFolder": "新建文件夹",
+      "delete": "删除",
+      "rename": "重命名",
+      "refresh": "刷新",
+      "deleteConfirm": "确定要删除 \"{{name}}\" 吗？",
+      "uploadSuccess": "文件上传成功",
+      "downloadStarted": "下载已开始",
+      "downloadSuccess": "下载完成",
+      "uploading": "上传中...",
+      "transferring": "正在转存到目标服务器...",
+      "operationFailed": "操作失败：{{error}}",
+      "pathPlaceholder": "输入路径...",
+      "newFolderName": "新建文件夹名称",
+      "emptyDirectory": "空目录",
+      "fileTooLarge": "文件大小超过最大限制（{{max}}MB）",
+      "goUp": "返回上级"
+    }
   },
   "status": {
     "task": {

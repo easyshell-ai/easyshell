@@ -13,6 +13,9 @@ import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
+import com.easyshell.server.service.FileProxyService;
+
+import java.time.LocalDateTime;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -28,8 +31,9 @@ public class AgentWebSocketHandler extends TextWebSocketHandler {
     private final JobRepository jobRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    private final Map<String, WebSocketSession> agentSessions = new ConcurrentHashMap<>();
+private final Map<String, WebSocketSession> agentSessions = new ConcurrentHashMap<>();
     private TerminalWebSocketHandler terminalHandler;
+    private FileProxyService fileProxyService;
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
@@ -83,14 +87,20 @@ public class AgentWebSocketHandler extends TextWebSocketHandler {
                         terminalHandler.handleAgentReady(sessionId);
                     }
                 }
-                case "terminal_error" -> {
-                    String sessionId = node.has("sessionId") ? node.get("sessionId").asText() : "";
-                    String data = node.has("data") ? node.get("data").asText() : "";
-                    if (terminalHandler != null) {
-                        terminalHandler.handleAgentError(sessionId, data);
+case "terminal_error" -> {
+String sessionId = node.has("sessionId") ? node.get("sessionId").asText() : "";
+String data = node.has("data") ? node.get("data").asText() : "";
+if (terminalHandler != null) {
+terminalHandler.handleAgentError(sessionId, data);
+}
+                }
+                case "file_list_result", "file_download_chunk", "file_result" -> {
+                    String requestId = node.has("requestId") ? node.get("requestId").asText() : "";
+                    if (fileProxyService != null && !requestId.isEmpty()) {
+                        fileProxyService.handleFileResponse(requestId, message.getPayload());
                     }
                 }
-                default -> log.warn("Unknown message type from agent: {}", type);
+default -> log.warn("Unknown message type from agent: {}", type);
             }
         } catch (Exception e) {
             log.error("Error processing agent message", e);
@@ -150,6 +160,10 @@ public class AgentWebSocketHandler extends TextWebSocketHandler {
 
     public void setTerminalHandler(TerminalWebSocketHandler handler) {
         this.terminalHandler = handler;
+    }
+
+    public void setFileProxyService(FileProxyService service) {
+        this.fileProxyService = service;
     }
 
     private String extractAgentId(WebSocketSession session) {

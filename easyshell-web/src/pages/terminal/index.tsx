@@ -1,44 +1,25 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Button, Space, Typography, theme, Tooltip } from 'antd';
 import { ArrowLeftOutlined, CodeOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useResponsive } from '../../hooks/useResponsive';
-import { Terminal } from '@xterm/xterm';
-import { FitAddon } from '@xterm/addon-fit';
-import { WebLinksAddon } from '@xterm/addon-web-links';
-import '@xterm/xterm/css/xterm.css';
+import TerminalInstance from './components/TerminalInstance';
+import type { TerminalInstanceRef } from './components/TerminalInstance';
+import TerminalTabs from './components/TerminalTabs';
+import TerminalToolbar from './components/TerminalToolbar';
+import SearchBar from './components/SearchBar';
+import type { TerminalTab, ConnectionStatus } from './types';
+import { statusConfig, terminalTheme } from './types';
+import FileManager from './components/FileManager';
 
-type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
+let tabCounter = 1;
 
-const statusConfig: Record<ConnectionStatus, { color: string; textKey: string }> = {
-  connecting: { color: '#faad14', textKey: 'terminal.connecting' },
-  connected: { color: '#52c41a', textKey: 'terminal.connected' },
-  disconnected: { color: '#ff4d4f', textKey: 'terminal.disconnected' },
-};
-
-const terminalTheme = {
-  background: '#1a1b2e',
-  foreground: '#e4e4e8',
-  cursor: '#2563eb',
-  selectionBackground: 'rgba(37, 99, 235, 0.3)',
-  black: '#1a1b2e',
-  red: '#ff5555',
-  green: '#50fa7b',
-  yellow: '#f1fa8c',
-  blue: '#2563eb',
-  magenta: '#bd93f9',
-  cyan: '#8be9fd',
-  white: '#e4e4e8',
-  brightBlack: '#6272a4',
-  brightRed: '#ff6e6e',
-  brightGreen: '#69ff94',
-  brightYellow: '#ffffa5',
-  brightBlue: '#60a5fa',
-  brightMagenta: '#d6acff',
-  brightCyan: '#a4ffff',
-  brightWhite: '#ffffff',
-};
+function createTab(agentId: string): TerminalTab {
+  const id = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+  const label = `Terminal ${tabCounter++}`;
+  return { id, label, agentId, status: 'connecting' };
+}
 
 const TerminalPage: React.FC = () => {
   const { token } = theme.useToken();
@@ -46,145 +27,147 @@ const TerminalPage: React.FC = () => {
   const { isMobile } = useResponsive();
   const { agentId } = useParams<{ agentId: string }>();
   const navigate = useNavigate();
-  const terminalRef = useRef<HTMLDivElement>(null);
-  const termInstanceRef = useRef<Terminal | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
-  const fitAddonRef = useRef<FitAddon | null>(null);
-  const [status, setStatus] = useState<ConnectionStatus>('connecting');
+
+  const [tabs, setTabs] = useState<TerminalTab[]>(() =>
+    agentId ? [createTab(agentId)] : []
+  );
+  const [activeTabId, setActiveTabId] = useState<string>(() =>
+    tabs.length > 0 ? tabs[0].id : ''
+  );
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isFileManagerOpen, setIsFileManagerOpen] = useState(true);
+  const [searchVisible, setSearchVisible] = useState(false);
+
+  // Refs map for terminal instances
+  const instanceRefs = useRef<Map<string, TerminalInstanceRef>>(new Map());
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const setInstanceRef = useCallback((tabId: string) => (ref: TerminalInstanceRef | null) => {
+    if (ref) {
+      instanceRefs.current.set(tabId, ref);
+    } else {
+      instanceRefs.current.delete(tabId);
+    }
+  }, []);
+
+  const activeInstance = activeTabId ? instanceRefs.current.get(activeTabId) : null;
+
+  // Tab management
+  const handleAddTab = useCallback(() => {
+    if (!agentId || tabs.length >= 8) return;
+    const newTab = createTab(agentId);
+    setTabs(prev => [...prev, newTab]);
+    setActiveTabId(newTab.id);
+  }, [agentId, tabs.length]);
+
+  const handleCloseTab = useCallback((tabId: string) => {
+    setTabs(prev => {
+      const newTabs = prev.filter(t => t.id !== tabId);
+      if (newTabs.length === 0) {
+        navigate(-1);
+        return prev;
+      }
+      return newTabs;
+    });
+    if (activeTabId === tabId) {
+      setTabs(prev => {
+        const idx = prev.findIndex(t => t.id === tabId);
+        const newActive = prev[idx > 0 ? idx - 1 : idx + 1];
+        if (newActive) setActiveTabId(newActive.id);
+        return prev;
+      });
+    }
+    instanceRefs.current.delete(tabId);
+  }, [activeTabId, navigate]);
+
+  const handleRenameTab = useCallback((tabId: string, newLabel: string) => {
+    setTabs(prev => prev.map(t => t.id === tabId ? { ...t, label: newLabel } : t));
+  }, []);
+
+  const handleStatusChange = useCallback((tabId: string, status: ConnectionStatus) => {
+    setTabs(prev => prev.map(t => t.id === tabId ? { ...t, status } : t));
+  }, []);
+
+  // Fullscreen
+  const handleToggleFullscreen = useCallback(() => {
+    if (!document.fullscreenElement) {
+      containerRef.current?.requestFullscreen();
+      setIsFullscreen(true);
+    } else {
+      document.exitFullscreen();
+      setIsFullscreen(false);
+    }
+  }, []);
 
   useEffect(() => {
-    if (!terminalRef.current || !agentId) return;
+    const handler = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', handler);
+    return () => document.removeEventListener('fullscreenchange', handler);
+  }, []);
 
-    const term = new Terminal({
-      cursorBlink: true,
-      fontSize: 14,
-      fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, Monaco, monospace",
-      theme: terminalTheme,
-      allowProposedApi: true,
-      scrollback: 5000,
-      convertEol: true,
-    });
-
-    const fitAddon = new FitAddon();
-    const webLinksAddon = new WebLinksAddon();
-
-    term.loadAddon(fitAddon);
-    term.loadAddon(webLinksAddon);
-    term.open(terminalRef.current);
-
-    termInstanceRef.current = term;
-    fitAddonRef.current = fitAddon;
-
-    setTimeout(() => fitAddon.fit(), 100);
-
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws/terminal/${agentId}`;
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
-
-    term.writeln('\x1b[36m[' + t('terminal.system') + ']\x1b[0m ' + t('terminal.connectingHost'));
-
-    ws.onopen = () => {
-      term.writeln('\x1b[36m[' + t('terminal.system') + ']\x1b[0m ' + t('terminal.wsConnected'));
-    };
-
-    ws.onmessage = (event: MessageEvent) => {
-      try {
-        const msg = JSON.parse(event.data as string) as { type: string; data?: string };
-        switch (msg.type) {
-          case 'terminal_ready':
-            setStatus('connected');
-            setTimeout(() => {
-              fitAddon.fit();
-              ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-            }, 200);
-            break;
-          case 'output':
-            if (msg.data) {
-              term.write(msg.data);
-            }
-            break;
-          case 'error':
-          case 'terminal_error':
-            term.writeln(`\x1b[31m[${t('terminal.error')}]\x1b[0m ${msg.data || t('terminal.unknownError')}`);
-            break;
-        }
-      } catch {
-        term.write(event.data as string);
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && e.key === 'F') {
+        e.preventDefault();
+        setSearchVisible(v => !v);
       }
     };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
 
-    ws.onclose = () => {
-      setStatus('disconnected');
-      term.writeln('\r\n\x1b[33m[' + t('terminal.system') + ']\x1b[0m ' + t('terminal.disconnectedRefresh'));
-    };
+  // Toolbar handlers
+  const handleCopy = useCallback(() => {
+    activeInstance?.copySelection();
+  }, [activeInstance]);
 
-    ws.onerror = () => {
-      setStatus('disconnected');
-      term.writeln('\r\n\x1b[31m[' + t('terminal.system') + ']\x1b[0m ' + t('terminal.connectionError'));
-    };
+  const handlePaste = useCallback(() => {
+    activeInstance?.pasteFromClipboard();
+  }, [activeInstance]);
 
-    const inputDisposable = term.onData((data: string) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'input', data }));
-      }
-    });
+  const handleToggleSearch = useCallback(() => {
+    setSearchVisible(v => !v);
+  }, []);
 
-    const resizeDisposable = term.onResize(({ cols, rows }: { cols: number; rows: number }) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'resize', cols, rows }));
-      }
-    });
+  const handleToggleFiles = useCallback(() => {
+    setIsFileManagerOpen(v => !v);
+  }, []);
 
-    const handleResize = () => {
-      if (fitAddonRef.current) {
-        fitAddonRef.current.fit();
-      }
-    };
-    window.addEventListener('resize', handleResize);
-
-    return () => {
-      window.removeEventListener('resize', handleResize);
-      inputDisposable.dispose();
-      resizeDisposable.dispose();
-      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-        ws.close();
-      }
-      term.dispose();
-      termInstanceRef.current = null;
-      wsRef.current = null;
-      fitAddonRef.current = null;
-    };
-  }, [agentId]);
-
-  const statusInfo = statusConfig[status];
+  // Get active tab status for header display
+  const activeTab = tabs.find(t => t.id === activeTabId);
+  const statusInfo = statusConfig[activeTab?.status || 'disconnected'];
 
   return (
-    <div style={{ 
-      display: 'flex', 
-      flexDirection: 'column', 
-      height: 'var(--content-inner-height)',
-      minHeight: 0,
-    }}>
+    <div
+      ref={containerRef}
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: 'var(--content-inner-height)',
+        minHeight: 0,
+        background: isFullscreen ? terminalTheme.background : undefined,
+      }}
+    >
       {/* Header */}
       <div style={{
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        marginBottom: isMobile ? 8 : 12,
+        marginBottom: isMobile ? 4 : 8,
         flexWrap: isMobile ? 'wrap' : 'nowrap',
         gap: 8,
       }}>
         <Space size={isMobile ? 'small' : 'middle'}>
-          <Button 
-            icon={<ArrowLeftOutlined />} 
+          <Button
+            icon={<ArrowLeftOutlined />}
             onClick={() => navigate(-1)}
             size={isMobile ? 'small' : 'middle'}
           >
             {!isMobile && t('common.back')}
           </Button>
-          <Typography.Title 
-            level={isMobile ? 5 : 4} 
+          <Typography.Title
+            level={isMobile ? 5 : 4}
             style={{ margin: 0, color: token.colorText }}
           >
             <CodeOutlined style={{ marginRight: 8, color: token.colorPrimary }} />
@@ -221,24 +204,67 @@ const TerminalPage: React.FC = () => {
         </Space>
       </div>
 
-      {/* Terminal Container */}
-      <div style={{
-        flex: 1,
-        borderRadius: isMobile ? 8 : 12,
-        background: terminalTheme.background,
-        border: `1px solid ${token.colorBorderSecondary}`,
-        overflow: 'hidden',
-        boxShadow: '0 4px 24px rgba(0, 0, 0, 0.2)',
-        minHeight: 0,
-      }}>
-        <div
-          ref={terminalRef}
-          style={{
-            width: '100%',
-            height: '100%',
-            padding: isMobile ? 4 : 8,
-          }}
-        />
+      {/* Toolbar */}
+      <TerminalToolbar
+        onToggleFiles={handleToggleFiles}
+        onSearch={handleToggleSearch}
+        onAddTab={handleAddTab}
+        onToggleFullscreen={handleToggleFullscreen}
+        onCopy={handleCopy}
+        onPaste={handlePaste}
+        isFullscreen={isFullscreen}
+        isFileManagerOpen={isFileManagerOpen}
+        tabCount={tabs.length}
+      />
+
+      {/* Tabs */}
+      <TerminalTabs
+        tabs={tabs}
+        activeTabId={activeTabId}
+        onTabChange={setActiveTabId}
+        onTabClose={handleCloseTab}
+        onTabAdd={handleAddTab}
+        onTabRename={handleRenameTab}
+      />
+
+      {/* Terminal area + File manager */}
+      <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+        <div style={{
+          flex: 1,
+          position: 'relative',
+          borderRadius: isMobile ? 8 : 12,
+          background: terminalTheme.background,
+          border: `1px solid ${token.colorBorderSecondary}`,
+          overflow: 'hidden',
+          boxShadow: '0 4px 24px rgba(0, 0, 0, 0.2)',
+          minHeight: 0,
+        }}>
+          {tabs.map(tab => (
+            <TerminalInstance
+              key={tab.id}
+              ref={setInstanceRef(tab.id)}
+              tabId={tab.id}
+              agentId={tab.agentId}
+              isActive={tab.id === activeTabId}
+              onStatusChange={handleStatusChange}
+            />
+          ))}
+          {/* Search overlay */}
+          <SearchBar
+            searchAddon={activeInstance?.searchAddon || null}
+            visible={searchVisible}
+            onClose={() => setSearchVisible(false)}
+          />
+        </div>
+
+        {/* Phase 2: FileManager sidebar */}
+        {isFileManagerOpen && agentId && (
+          <FileManager 
+            agentId={agentId} 
+            visible={isFileManagerOpen} 
+            onClose={() => setIsFileManagerOpen(false)} 
+          />
+        )}
       </div>
     </div>
   );
