@@ -340,11 +340,37 @@ export function useAiChat() {
   }, []);
 
   const handleCopyMessage = useCallback((content: string) => {
-    navigator.clipboard.writeText(content).then(() => {
-      message.success(t('common.copied'));
-    }).catch(() => {
-      message.error(t('common.copyFailed'));
-    });
+    const fallbackCopy = (text: string) => {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.style.position = 'fixed';
+      textarea.style.left = '-9999px';
+      textarea.style.top = '-9999px';
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      try {
+        const ok = document.execCommand('copy');
+        if (ok) {
+          message.success(t('common.copied'));
+        } else {
+          message.error(t('common.copyFailed'));
+        }
+      } catch {
+        message.error(t('common.copyFailed'));
+      } finally {
+        document.body.removeChild(textarea);
+      }
+    };
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      navigator.clipboard.writeText(content).then(() => {
+        message.success(t('common.copied'));
+      }).catch(() => {
+        fallbackCopy(content);
+      });
+    } else {
+      fallbackCopy(content);
+    }
   }, []);
 
   const handleApprove = useCallback(async (taskId: string) => {

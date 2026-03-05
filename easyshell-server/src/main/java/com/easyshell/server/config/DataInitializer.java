@@ -102,16 +102,17 @@ public class DataInitializer implements CommandLineRunner {
     }
 
     private void initSystemConfigs() {
-        createConfigIfAbsent("server.external-url", "", "Server 公网访问地址，Agent 通过此地址连接 Server（例如 http://your-ip:18080）", "system");
-        createConfigIfAbsent("agent.heartbeat.interval", "30", "Agent心跳上报间隔（秒）", "agent");
-        createConfigIfAbsent("agent.metrics.interval", "60", "Agent指标上报间隔（秒）", "agent");
-        createConfigIfAbsent("task.default.timeout", "600", "任务默认超时时间（秒）", "task");
-        createConfigIfAbsent("system.session.timeout", "3600", "用户会话超时时间（秒）", "system");
+        createConfigIfAbsent("server.external-url", "", "config.desc.server_external_url", "system");
+        createConfigIfAbsent("agent.heartbeat.interval", "30", "config.desc.agent_heartbeat_interval", "agent");
+        createConfigIfAbsent("agent.metrics.interval", "60", "config.desc.agent_metrics_interval", "agent");
+        createConfigIfAbsent("task.default.timeout", "600", "config.desc.task_default_timeout", "task");
+        createConfigIfAbsent("system.session.timeout", "3600", "config.desc.system_session_timeout", "system");
         log.info("System configs initialized");
     }
 
     private void createConfigIfAbsent(String key, String value, String description, String group) {
-        if (!systemConfigRepository.existsByConfigKey(key)) {
+        var existing = systemConfigRepository.findByConfigKey(key);
+        if (existing.isEmpty()) {
             SystemConfig config = new SystemConfig();
             config.setConfigKey(key);
             config.setConfigValue(value);
@@ -119,167 +120,175 @@ public class DataInitializer implements CommandLineRunner {
             config.setConfigGroup(group);
             systemConfigRepository.save(config);
             log.info("Created system config: {} = {}", key, value);
+        } else {
+            // Always sync description to latest i18n key
+            SystemConfig config = existing.get();
+            if (!description.equals(config.getDescription())) {
+                config.setDescription(description);
+                systemConfigRepository.save(config);
+                log.debug("Updated description for config: {}", key);
+            }
         }
     }
 
     private void initAiConfigs() {
-        createConfigIfAbsent("ai.enabled", "false", "AI 功能总开关", "ai");
-        createConfigIfAbsent("ai.default.provider", "openai", "默认 AI 供应商", "ai");
-        createConfigIfAbsent("ai.openai.api-key", "", "OpenAI API Key（加密存储）", "ai");
-        createConfigIfAbsent("ai.openai.model", "gpt-4o", "OpenAI 默认模型", "ai");
-        createConfigIfAbsent("ai.openai.base-url", "https://api.openai.com", "OpenAI API 端点", "ai");
-        createConfigIfAbsent("ai.anthropic.api-key", "", "Claude API Key（加密存储）", "ai");
-        createConfigIfAbsent("ai.anthropic.model", "claude-sonnet-4-20250514", "Claude 默认模型", "ai");
-        createConfigIfAbsent("ai.ollama.base-url", "http://localhost:11434", "Ollama 本地服务地址", "ai");
-        createConfigIfAbsent("ai.ollama.model", "llama3", "Ollama 默认模型", "ai");
-        createConfigIfAbsent("ai.gemini.api-key", "", "Gemini API Key（加密存储）", "ai");
-        createConfigIfAbsent("ai.gemini.model", "gemini-2.0-flash", "Gemini 默认模型", "ai");
+        createConfigIfAbsent("ai.enabled", "false", "config.desc.ai_enabled", "ai");
+        createConfigIfAbsent("ai.default.provider", "openai", "config.desc.ai_default_provider", "ai");
+        createConfigIfAbsent("ai.openai.api-key", "", "config.desc.ai_openai_api_key", "ai");
+        createConfigIfAbsent("ai.openai.model", "gpt-4o", "config.desc.ai_openai_model", "ai");
+        createConfigIfAbsent("ai.openai.base-url", "https://api.openai.com", "config.desc.ai_openai_base_url", "ai");
+        createConfigIfAbsent("ai.anthropic.api-key", "", "config.desc.ai_anthropic_api_key", "ai");
+        createConfigIfAbsent("ai.anthropic.model", "claude-sonnet-4-20250514", "config.desc.ai_anthropic_model", "ai");
+        createConfigIfAbsent("ai.ollama.base-url", "http://localhost:11434", "config.desc.ai_ollama_base_url", "ai");
+        createConfigIfAbsent("ai.ollama.model", "llama3", "config.desc.ai_ollama_model", "ai");
+        createConfigIfAbsent("ai.gemini.api-key", "", "config.desc.ai_gemini_api_key", "ai");
+        createConfigIfAbsent("ai.gemini.model", "gemini-2.0-flash", "config.desc.ai_gemini_model", "ai");
         createConfigIfAbsent("ai.gemini.base-url",
                 "https://generativelanguage.googleapis.com/v1beta/openai/",
-                "Gemini OpenAI 兼容端点", "ai");
+                "config.desc.ai_gemini_base_url", "ai");
         // GitHub Copilot (OpenAI 兼容协议)
-        createConfigIfAbsent("ai.github-copilot.oauth-token", "", "GitHub Copilot OAuth Token（加密存储）", "ai");
-        createConfigIfAbsent("ai.github-copilot.model", "gpt-4o", "GitHub Copilot 默认模型", "ai");
+        createConfigIfAbsent("ai.github-copilot.oauth-token", "", "config.desc.ai_github_copilot_oauth_token", "ai");
+        createConfigIfAbsent("ai.github-copilot.model", "gpt-4o", "config.desc.ai_github_copilot_model", "ai");
         createConfigIfAbsent("ai.github-copilot.base-url",
                 "https://api.githubcopilot.com",
-                "GitHub Copilot OpenAI 兼容端点", "ai");
-        createConfigIfAbsent("ai.quota.daily-limit", "100", "每用户每日 AI 调用上限", "ai");
-        createConfigIfAbsent("ai.quota.max-tokens", "4096", "单次最大输出 Token", "ai");
+                "config.desc.ai_github_copilot_base_url", "ai");
+        createConfigIfAbsent("ai.quota.daily-limit", "100", "config.desc.ai_quota_daily_limit", "ai");
+        createConfigIfAbsent("ai.quota.max-tokens", "4096", "config.desc.ai_quota_max_tokens", "ai");
         log.info("AI configs initialized");
     }
 
     private void initAiChannelConfigs() {
         // Telegram Bot
-        createConfigIfAbsent("ai.channel.telegram.enabled", "false", "Telegram Bot 开关", "ai-channel");
-        createConfigIfAbsent("ai.channel.telegram.bot-token", "", "Telegram Bot Token（加密存储）", "ai-channel");
-        createConfigIfAbsent("ai.channel.telegram.allowed-chat-ids", "", "允许的 Telegram Chat ID（逗号分隔）", "ai-channel");
+        createConfigIfAbsent("ai.channel.telegram.enabled", "false", "config.desc.ai_channel_telegram_enabled", "ai-channel");
+        createConfigIfAbsent("ai.channel.telegram.bot-token", "", "config.desc.ai_channel_telegram_bot_token", "ai-channel");
+        createConfigIfAbsent("ai.channel.telegram.allowed-chat-ids", "", "config.desc.ai_channel_telegram_allowed_chat_ids", "ai-channel");
 
         // Discord Bot
-        createConfigIfAbsent("ai.channel.discord.enabled", "false", "Discord Bot 开关", "ai-channel");
-        createConfigIfAbsent("ai.channel.discord.bot-token", "", "Discord Bot Token（加密存储）", "ai-channel");
-        createConfigIfAbsent("ai.channel.discord.guild-id", "", "Discord Server (Guild) ID", "ai-channel");
-        createConfigIfAbsent("ai.channel.discord.allowed-channel-ids", "", "允许的 Discord Channel ID（逗号分隔）", "ai-channel");
+        createConfigIfAbsent("ai.channel.discord.enabled", "false", "config.desc.ai_channel_discord_enabled", "ai-channel");
+        createConfigIfAbsent("ai.channel.discord.bot-token", "", "config.desc.ai_channel_discord_bot_token", "ai-channel");
+        createConfigIfAbsent("ai.channel.discord.guild-id", "", "config.desc.ai_channel_discord_guild_id", "ai-channel");
+        createConfigIfAbsent("ai.channel.discord.allowed-channel-ids", "", "config.desc.ai_channel_discord_allowed_channel_ids", "ai-channel");
 
         // 钉钉 Webhook
-        createConfigIfAbsent("ai.channel.dingtalk.enabled", "false", "钉钉机器人开关", "ai-channel");
-        createConfigIfAbsent("ai.channel.dingtalk.webhook-url", "", "钉钉 Webhook 地址（加密存储）", "ai-channel");
-        createConfigIfAbsent("ai.channel.dingtalk.secret", "", "钉钉签名密钥（加密存储）", "ai-channel");
+        createConfigIfAbsent("ai.channel.dingtalk.enabled", "false", "config.desc.ai_channel_dingtalk_enabled", "ai-channel");
+        createConfigIfAbsent("ai.channel.dingtalk.webhook-url", "", "config.desc.ai_channel_dingtalk_webhook_url", "ai-channel");
+        createConfigIfAbsent("ai.channel.dingtalk.secret", "", "config.desc.ai_channel_dingtalk_secret", "ai-channel");
 
         // 飞书 Webhook
-        createConfigIfAbsent("ai.channel.feishu.enabled", "false", "飞书机器人开关", "ai-channel");
-        createConfigIfAbsent("ai.channel.feishu.webhook-url", "", "飞书 Webhook 地址（加密存储）", "ai-channel");
-        createConfigIfAbsent("ai.channel.feishu.secret", "", "飞书签名密钥（加密存储）", "ai-channel");
+        createConfigIfAbsent("ai.channel.feishu.enabled", "false", "config.desc.ai_channel_feishu_enabled", "ai-channel");
+        createConfigIfAbsent("ai.channel.feishu.webhook-url", "", "config.desc.ai_channel_feishu_webhook_url", "ai-channel");
+        createConfigIfAbsent("ai.channel.feishu.secret", "", "config.desc.ai_channel_feishu_secret", "ai-channel");
 
         // Slack Webhook
-        createConfigIfAbsent("ai.channel.slack.enabled", "false", "Slack Bot 开关", "ai-channel");
-        createConfigIfAbsent("ai.channel.slack.webhook-url", "", "Slack Webhook 地址（加密存储）", "ai-channel");
-        createConfigIfAbsent("ai.channel.slack.bot-token", "", "Slack Bot Token（加密存储）", "ai-channel");
+        createConfigIfAbsent("ai.channel.slack.enabled", "false", "config.desc.ai_channel_slack_enabled", "ai-channel");
+        createConfigIfAbsent("ai.channel.slack.webhook-url", "", "config.desc.ai_channel_slack_webhook_url", "ai-channel");
+        createConfigIfAbsent("ai.channel.slack.bot-token", "", "config.desc.ai_channel_slack_bot_token", "ai-channel");
 
         // 企业微信 Webhook
-        createConfigIfAbsent("ai.channel.wechat-work.enabled", "false", "企业微信机器人开关", "ai-channel");
-        createConfigIfAbsent("ai.channel.wechat-work.webhook-url", "", "企业微信 Webhook 地址（加密存储）", "ai-channel");
+        createConfigIfAbsent("ai.channel.wechat-work.enabled", "false", "config.desc.ai_channel_wechat_work_enabled", "ai-channel");
+        createConfigIfAbsent("ai.channel.wechat-work.webhook-url", "", "config.desc.ai_channel_wechat_work_webhook_url", "ai-channel");
 
 
-        createConfigIfAbsent("ai.channel.context-mode", "persistent", "渠道上下文模式 (persistent/stateless)", "ai-channel");
-        createConfigIfAbsent("ai.channel.session-timeout", "30", "渠道会话超时时间（分钟，0=永不过期）", "ai-channel");
-        createConfigIfAbsent("ai.channel.default-provider", "", "渠道默认 AI 供应商（空=跟随系统）", "ai-channel");
-        createConfigIfAbsent("ai.channel.default-model", "", "渠道默认模型（空=跟随供应商默认）", "ai-channel");
+        createConfigIfAbsent("ai.channel.context-mode", "persistent", "config.desc.ai_channel_context_mode", "ai-channel");
+        createConfigIfAbsent("ai.channel.session-timeout", "30", "config.desc.ai_channel_session_timeout", "ai-channel");
+        createConfigIfAbsent("ai.channel.default-provider", "", "config.desc.ai_channel_default_provider", "ai-channel");
+        createConfigIfAbsent("ai.channel.default-model", "", "config.desc.ai_channel_default_model", "ai-channel");
 
-        createConfigIfAbsent("ai.channel.telegram.provider", "", "Telegram 专用 AI 供应商（空=跟随渠道默认）", "ai-channel");
-        createConfigIfAbsent("ai.channel.telegram.model", "", "Telegram 专用模型（空=跟随供应商默认）", "ai-channel");
-        createConfigIfAbsent("ai.channel.discord.provider", "", "Discord 专用 AI 供应商（空=跟随渠道默认）", "ai-channel");
-        createConfigIfAbsent("ai.channel.discord.model", "", "Discord 专用模型（空=跟随供应商默认）", "ai-channel");
-        createConfigIfAbsent("ai.channel.dingtalk.provider", "", "钉钉专用 AI 供应商（空=跟随渠道默认）", "ai-channel");
-        createConfigIfAbsent("ai.channel.dingtalk.model", "", "钉钉专用模型（空=跟随供应商默认）", "ai-channel");
-        createConfigIfAbsent("ai.channel.feishu.provider", "", "飞书专用 AI 供应商（空=跟随渠道默认）", "ai-channel");
-        createConfigIfAbsent("ai.channel.feishu.model", "", "飞书专用模型（空=跟随供应商默认）", "ai-channel");
-        createConfigIfAbsent("ai.channel.slack.provider", "", "Slack 专用 AI 供应商（空=跟随渠道默认）", "ai-channel");
-        createConfigIfAbsent("ai.channel.slack.model", "", "Slack 专用模型（空=跟随供应商默认）", "ai-channel");
-        createConfigIfAbsent("ai.channel.wechat-work.provider", "", "企业微信专用 AI 供应商（空=跟随渠道默认）", "ai-channel");
-        createConfigIfAbsent("ai.channel.wechat-work.model", "", "企业微信专用模型（空=跟随供应商默认）", "ai-channel");
+        createConfigIfAbsent("ai.channel.telegram.provider", "", "config.desc.ai_channel_telegram_provider", "ai-channel");
+        createConfigIfAbsent("ai.channel.telegram.model", "", "config.desc.ai_channel_telegram_model", "ai-channel");
+        createConfigIfAbsent("ai.channel.discord.provider", "", "config.desc.ai_channel_discord_provider", "ai-channel");
+        createConfigIfAbsent("ai.channel.discord.model", "", "config.desc.ai_channel_discord_model", "ai-channel");
+        createConfigIfAbsent("ai.channel.dingtalk.provider", "", "config.desc.ai_channel_dingtalk_provider", "ai-channel");
+        createConfigIfAbsent("ai.channel.dingtalk.model", "", "config.desc.ai_channel_dingtalk_model", "ai-channel");
+        createConfigIfAbsent("ai.channel.feishu.provider", "", "config.desc.ai_channel_feishu_provider", "ai-channel");
+        createConfigIfAbsent("ai.channel.feishu.model", "", "config.desc.ai_channel_feishu_model", "ai-channel");
+        createConfigIfAbsent("ai.channel.slack.provider", "", "config.desc.ai_channel_slack_provider", "ai-channel");
+        createConfigIfAbsent("ai.channel.slack.model", "", "config.desc.ai_channel_slack_model", "ai-channel");
+        createConfigIfAbsent("ai.channel.wechat-work.provider", "", "config.desc.ai_channel_wechat_work_provider", "ai-channel");
+        createConfigIfAbsent("ai.channel.wechat-work.model", "", "config.desc.ai_channel_wechat_work_model", "ai-channel");
         log.info("AI channel configs initialized");
     }
 
     private void initAiRiskConfigs() {
-        createConfigIfAbsent("ai.risk.banned-commands", "[]", "封禁命令列表（JSON 数组，自定义追加）", "ai-risk");
-        createConfigIfAbsent("ai.risk.high-commands", "[]", "高危命令列表（JSON 数组，自定义追加）", "ai-risk");
-        createConfigIfAbsent("ai.risk.low-commands", "[]", "低风险命令列表（JSON 数组，自定义追加）", "ai-risk");
-        createConfigIfAbsent("ai.risk.low-compound-commands", "[]", "低风险复合命令列表（JSON 数组，自定义追加）", "ai-risk");
+        createConfigIfAbsent("ai.risk.banned-commands", "[]", "config.desc.ai_risk_banned_commands", "ai-risk");
+        createConfigIfAbsent("ai.risk.high-commands", "[]", "config.desc.ai_risk_high_commands", "ai-risk");
+        createConfigIfAbsent("ai.risk.low-commands", "[]", "config.desc.ai_risk_low_commands", "ai-risk");
+        createConfigIfAbsent("ai.risk.low-compound-commands", "[]", "config.desc.ai_risk_low_compound_commands", "ai-risk");
         log.info("AI risk configs initialized");
     }
 
     private void initAgenticDefaults() {
         createConfigIfAbsent("ai.orchestrator.max-iterations", "25",
-                "Agentic Loop 最大迭代次数", "ai_orchestrator");
+                "config.desc.ai_orchestrator_max_iterations", "ai_orchestrator");
         createConfigIfAbsent("ai.orchestrator.max-consecutive-errors", "3",
-                "连续工具失败最大次数", "ai_orchestrator");
+                "config.desc.ai_orchestrator_max_consecutive_errors", "ai_orchestrator");
         createConfigIfAbsent("ai.orchestrator.max-tool-calls", "30",
-                "单次迭代最大工具调用数", "ai_orchestrator");
+                "config.desc.ai_orchestrator_max_tool_calls", "ai_orchestrator");
 
         createConfigIfAbsent("ai.context.chars-per-token", "3.0",
-                "Token 估算比率（字符数/Token）", "ai_context");
+                "config.desc.ai_context_chars_per_token", "ai_context");
         createConfigIfAbsent("ai.context.response-reserve-ratio", "0.3",
-                "Context window 预留给响应的比例", "ai_context");
+                "config.desc.ai_context_response_reserve_ratio", "ai_context");
         createConfigIfAbsent("ai.context.tool-result-max-length", "3000",
-                "工具结果最大保留字符数", "ai_context");
+                "config.desc.ai_context_tool_result_max_length", "ai_context");
 
         createConfigIfAbsent("ai.agent.background-pool-size", "5",
-                "后台任务线程池大小", "ai_agent");
+                "config.desc.ai_agent_background_pool_size", "ai_agent");
 
         createConfigIfAbsent("ai.openai.context-window", "128000",
-                "OpenAI context window size (tokens)", "ai_context");
+                "config.desc.ai_openai_context_window", "ai_context");
         createConfigIfAbsent("ai.anthropic.context-window", "200000",
-                "Anthropic context window size (tokens)", "ai_context");
+                "config.desc.ai_anthropic_context_window", "ai_context");
         createConfigIfAbsent("ai.ollama.context-window", "8000",
-                "Ollama context window size (tokens)", "ai_context");
+                "config.desc.ai_ollama_context_window", "ai_context");
         createConfigIfAbsent("ai.gemini.context-window", "1000000",
-                "Gemini context window size (tokens)", "ai_context");
+                "config.desc.ai_gemini_context_window", "ai_context");
         createConfigIfAbsent("ai.github-copilot.context-window", "128000",
-                "GitHub Copilot context window size (tokens)", "ai_context");
+                "config.desc.ai_github_copilot_context_window", "ai_context");
 
         createConfigIfAbsent("ai.tool.output-max-lines", "50",
-                "AI 工具返回日志输出的最大行数（取末尾 N 行）", "ai_tool");
+                "config.desc.ai_tool_output_max_lines", "ai_tool");
 
         log.info("Agentic defaults initialized");
 
         createConfigIfAbsent("ai.planning.enabled", "true",
-                "是否启用计划阶段", "ai_planning");
+                "config.desc.ai_planning_enabled", "ai_planning");
         createConfigIfAbsent("ai.planning.min-message-length", "20",
-                "触发计划的最小消息长度", "ai_planning");
+                "config.desc.ai_planning_min_message_length", "ai_planning");
         createConfigIfAbsent("ai.planning.max-iterations", "3",
-                "计划阶段最大迭代次数", "ai_planning");
+                "config.desc.ai_planning_max_iterations", "ai_planning");
         createConfigIfAbsent("ai.planning.confirmation-required-risk", "MEDIUM",
-                "需要确认的最低风险等级 (LOW/MEDIUM/HIGH)", "ai_planning");
+                "config.desc.ai_planning_confirmation_required_risk", "ai_planning");
 
         createConfigIfAbsent("ai.plan.failure-strategy", "ask_user",
-                "步骤失败策略: ask_user/retry/skip/abort", "ai_planning");
+                "config.desc.ai_plan_failure_strategy", "ai_planning");
         createConfigIfAbsent("ai.plan.max-step-retries", "2",
-                "每步最大重试次数", "ai_planning");
+                "config.desc.ai_plan_max_step_retries", "ai_planning");
         createConfigIfAbsent("ai.plan.confirmation-timeout", "300",
-                "计划确认超时（秒）", "ai_planning");
+                "config.desc.ai_plan_confirmation_timeout", "ai_planning");
         createConfigIfAbsent("ai.plan.summary-enabled", "true",
-                "执行完毕是否生成总结", "ai_planning");
+                "config.desc.ai_plan_summary_enabled", "ai_planning");
 
         createConfigIfAbsent("ai.review.enabled", "true",
-                "是否启用自动验证", "ai_review");
+                "config.desc.ai_review_enabled", "ai_review");
         createConfigIfAbsent("ai.review.always", "false",
-                "是否对只读操作也验证", "ai_review");
+                "config.desc.ai_review_always", "ai_review");
         createConfigIfAbsent("ai.review.max-iterations", "3",
-                "reviewer agent 最大迭代次数", "ai_review");
+                "config.desc.ai_review_max_iterations", "ai_review");
 
         createConfigIfAbsent("ai.agent.task-timeout-sec", "120",
-                "单个后台任务超时（秒）", "ai_agent");
+                "config.desc.ai_agent_task_timeout_sec", "ai_agent");
         createConfigIfAbsent("ai.plan.parallel-timeout-sec", "300",
-                "并行任务组超时（秒）", "ai_planning");
+                "config.desc.ai_plan_parallel_timeout_sec", "ai_planning");
         createConfigIfAbsent("ai.plan.max-parallel-tasks", "5",
-                "最大并行任务数", "ai_planning");
+                "config.desc.ai_plan_max_parallel_tasks", "ai_planning");
 
         createConfigIfAbsent("ai.iteration.persistence.enabled", "true",
-                "是否持久化迭代消息", "ai_iteration");
+                "config.desc.ai_iteration_persistence_enabled", "ai_iteration");
         createConfigIfAbsent("ai.iteration.persistence.retention-days", "30",
-                "迭代消息保留天数", "ai_iteration");
+                "config.desc.ai_iteration_persistence_retention_days", "ai_iteration");
         createConfigIfAbsent("ai.iteration.persistence.max-per-session", "500",
-                "每个会话最大迭代消息数", "ai_iteration");
+                "config.desc.ai_iteration_persistence_max_per_session", "ai_iteration");
 
         log.info("Phase 2 planning/review configs initialized");
     }
@@ -326,29 +335,29 @@ public class DataInitializer implements CommandLineRunner {
 
     private void initPhase3Configs() {
         // Memory
-        createConfigIfAbsent("ai.memory.enabled", "true", "启用长期记忆 / Enable long-term memory", "memory");
-        createConfigIfAbsent("ai.memory.embedding-provider", "openai", "Embedding 模型 provider / Embedding model provider", "memory");
-        createConfigIfAbsent("ai.memory.embedding-model", "text-embedding-3-small", "Embedding 模型名称 / Embedding model name", "memory");
-        createConfigIfAbsent("ai.memory.max-results", "5", "记忆检索最大结果数 / Max memory retrieval results", "memory");
-        createConfigIfAbsent("ai.memory.similarity-threshold", "0.7", "相似度阈值 / Similarity threshold", "memory");
-        createConfigIfAbsent("ai.memory.token-budget-ratio", "0.15", "记忆占 context window 最大比例 / Memory token budget ratio", "memory");
-        createConfigIfAbsent("ai.memory.vector-store-path", "data/memory-vectors.json", "向量存储文件路径 / Vector store file path", "memory");
+        createConfigIfAbsent("ai.memory.enabled", "true", "config.desc.ai_memory_enabled", "memory");
+        createConfigIfAbsent("ai.memory.embedding-provider", "openai", "config.desc.ai_memory_embedding_provider", "memory");
+        createConfigIfAbsent("ai.memory.embedding-model", "text-embedding-3-small", "config.desc.ai_memory_embedding_model", "memory");
+        createConfigIfAbsent("ai.memory.max-results", "5", "config.desc.ai_memory_max_results", "memory");
+        createConfigIfAbsent("ai.memory.similarity-threshold", "0.7", "config.desc.ai_memory_similarity_threshold", "memory");
+        createConfigIfAbsent("ai.memory.token-budget-ratio", "0.15", "config.desc.ai_memory_token_budget_ratio", "memory");
+        createConfigIfAbsent("ai.memory.vector-store-path", "data/memory-vectors.json", "config.desc.ai_memory_vector_store_path", "memory");
 
         // SOP
-        createConfigIfAbsent("ai.sop.enabled", "true", "启用 SOP 学习 / Enable SOP learning", "sop");
-        createConfigIfAbsent("ai.sop.extraction-cron", "0 0 3 * * ?", "SOP 提取 cron 表达式 / SOP extraction cron", "sop");
-        createConfigIfAbsent("ai.sop.confidence-threshold", "0.7", "SOP 推荐置信度阈值 / SOP confidence threshold", "sop");
-        createConfigIfAbsent("ai.sop.min-success-count", "3", "推荐所需最少成功次数 / Min success count for recommendation", "sop");
+        createConfigIfAbsent("ai.sop.enabled", "true", "config.desc.ai_sop_enabled", "sop");
+        createConfigIfAbsent("ai.sop.extraction-cron", "0 0 3 * * ?", "config.desc.ai_sop_extraction_cron", "sop");
+        createConfigIfAbsent("ai.sop.confidence-threshold", "0.7", "config.desc.ai_sop_confidence_threshold", "sop");
+        createConfigIfAbsent("ai.sop.min-success-count", "3", "config.desc.ai_sop_min_success_count", "sop");
 
         // Adaptive
-        createConfigIfAbsent("ai.adaptive.enabled", "true", "启用自适应提示 / Enable adaptive prompts", "adaptive");
-        createConfigIfAbsent("ai.adaptive.classifier-use-llm", "false", "规则无法判断时是否用 LLM 分类 / Use LLM for classification fallback", "adaptive");
+        createConfigIfAbsent("ai.adaptive.enabled", "true", "config.desc.ai_adaptive_enabled", "adaptive");
+        createConfigIfAbsent("ai.adaptive.classifier-use-llm", "false", "config.desc.ai_adaptive_classifier_use_llm", "adaptive");
 
         // DAG
-        createConfigIfAbsent("ai.dag.enabled", "true", "启用 DAG 执行 / Enable DAG execution", "dag");
-        createConfigIfAbsent("ai.dag.max-concurrent-steps", "5", "DAG 最大并行步骤数 / Max concurrent DAG steps", "dag");
-        createConfigIfAbsent("ai.dag.step-timeout-sec", "300", "单步骤默认超时（秒）/ Default step timeout seconds", "dag");
-        createConfigIfAbsent("ai.dag.checkpoint-timeout-sec", "600", "检查点等待超时（秒）/ Checkpoint timeout seconds", "dag");
+        createConfigIfAbsent("ai.dag.enabled", "true", "config.desc.ai_dag_enabled", "dag");
+        createConfigIfAbsent("ai.dag.max-concurrent-steps", "5", "config.desc.ai_dag_max_concurrent_steps", "dag");
+        createConfigIfAbsent("ai.dag.step-timeout-sec", "300", "config.desc.ai_dag_step_timeout_sec", "dag");
+        createConfigIfAbsent("ai.dag.checkpoint-timeout-sec", "600", "config.desc.ai_dag_checkpoint_timeout_sec", "dag");
 
         log.info("Phase 3 configs initialized");
     }

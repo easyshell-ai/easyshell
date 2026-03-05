@@ -143,6 +143,7 @@ const SystemConfig: React.FC = () => {
       key: 'description',
       ellipsis: true,
       responsive: ['md'],
+      render: (text: string) => t(text, { defaultValue: text }),
     },
     {
       title: t('config.col.updatedAt'),
@@ -226,7 +227,7 @@ const SystemConfig: React.FC = () => {
                 key={c.id}
                 label={
                   <span style={{ color: token.colorTextSecondary }}>
-                    {c.description || c.configKey}
+                    {t(c.description || c.configKey, { defaultValue: c.description || c.configKey })}
                   </span>
                 }
               >

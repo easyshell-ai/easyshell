@@ -11,6 +11,7 @@ interface MarkdownContentProps {
  * Replaces all dangerouslySetInnerHTML + formatMarkdown() patterns.
  */
 const MarkdownContent: React.FC<MarkdownContentProps> = ({ content }) => (
+  <div style={{ userSelect: 'text', cursor: 'text' }}>
   <ReactMarkdown
     remarkPlugins={[remarkGfm]}
     components={{
@@ -95,6 +96,7 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({ content }) => (
   >
     {content}
   </ReactMarkdown>
+  </div>
 );
 
 export default MarkdownContent;
