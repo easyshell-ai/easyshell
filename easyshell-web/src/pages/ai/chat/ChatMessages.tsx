@@ -1,10 +1,11 @@
-import React from 'react';
+import React, { useState, useCallback } from 'react';
 import { Button, Tooltip, theme } from 'antd';
 import {
   RobotOutlined,
   UserOutlined,
   LoadingOutlined,
   CopyOutlined,
+  CheckOutlined,
   ReloadOutlined,
   EyeOutlined,
   ArrowDownOutlined,
@@ -23,8 +24,6 @@ import type { ApprovalRequest, ProcessData } from './types';
 interface ChatMessagesProps {
   messages: AiChatMessage[];
   loading: boolean;
-  hoveredMsgId: number | null;
-  setHoveredMsgId: (id: number | null) => void;
   processDataMap: Record<number, ProcessData>;
   streamingContent: string;
   streamingPlan: ExecutionPlan | null;
@@ -60,7 +59,7 @@ interface ChatMessagesProps {
 }
 
 const ChatMessages: React.FC<ChatMessagesProps> = ({
-  messages, loading, hoveredMsgId, setHoveredMsgId,
+  messages, loading,
   processDataMap, streamingContent, streamingPlan, streamingStepIndex,
   streamingThinkingLog, streamingAgent, streamingStepDescription,
   streamingToolCalls, isStreaming: _isStreaming, pendingApprovals, approvalLoading,
@@ -74,6 +73,13 @@ const ChatMessages: React.FC<ChatMessagesProps> = ({
   const { token } = theme.useToken();
   const { t } = useTranslation();
   const { isMobile } = useResponsive();
+  const [copiedMsgId, setCopiedMsgId] = useState<number | null>(null);
+
+  const handleCopy = useCallback((msgId: number, content: string) => {
+    onCopyMessage(content);
+    setCopiedMsgId(msgId);
+    setTimeout(() => setCopiedMsgId(null), 2000);
+  }, [onCopyMessage]);
 
   return (
     <div style={{ flex: 1, position: 'relative', overflow: 'hidden', minHeight: 0 }}>
@@ -135,8 +141,7 @@ const ChatMessages: React.FC<ChatMessagesProps> = ({
           {messages.map((msg) => (
             <div
               key={msg.id}
-              onMouseEnter={() => setHoveredMsgId(msg.id)}
-              onMouseLeave={() => setHoveredMsgId(null)}
+              className="msg-row"
               style={{
                 display: 'flex',
                 justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start',
@@ -177,14 +182,7 @@ const ChatMessages: React.FC<ChatMessagesProps> = ({
                   )}
                 </div>
                 {msg.role === 'assistant' && (
-                  <div style={{ 
-                    display: 'flex', 
-                    gap: 4, 
-                    marginTop: 4,
-                    opacity: hoveredMsgId === msg.id ? 1 : (processDataMap[msg.id] ? 0.6 : 0),
-                    transition: 'opacity 0.2s',
-                    visibility: hoveredMsgId === msg.id || processDataMap[msg.id] ? 'visible' : 'hidden',
-                  }}>
+                  <div className={`msg-actions${processDataMap[msg.id] ? ' has-process' : ''}`} style={{ display: 'flex', gap: 4, marginTop: 4 }}>
                     {processDataMap[msg.id] && (
                       <Tooltip title={t('chat.viewProcess')}>
                         <Button
@@ -196,28 +194,26 @@ const ChatMessages: React.FC<ChatMessagesProps> = ({
                         />
                       </Tooltip>
                     )}
-                    {hoveredMsgId === msg.id && (
-                      <>
-                        <Tooltip title={t('chat.copy')}>
-                          <Button
-                            type="text"
-                            size="small"
-                            icon={<CopyOutlined />}
-                            onClick={() => onCopyMessage(msg.content)}
-                            style={{ color: token.colorTextTertiary, fontSize: 12 }}
-                          />
-                        </Tooltip>
-                        <Tooltip title={t('chat.regenerate')}>
-                          <Button
-                            type="text"
-                            size="small"
-                            icon={<ReloadOutlined />}
-                            onClick={onRetry}
-                            style={{ color: token.colorTextTertiary, fontSize: 12 }}
-                          />
-                        </Tooltip>
-                      </>
-                    )}
+                    <span className="msg-hover-btns">
+                      <Tooltip title={copiedMsgId === msg.id ? t('common.copied') : t('chat.copy')}>
+                        <Button
+                          type="text"
+                          size="small"
+                          icon={copiedMsgId === msg.id ? <CheckOutlined style={{ color: '#52c41a' }} /> : <CopyOutlined />}
+                          onClick={() => handleCopy(msg.id, msg.content)}
+                          style={{ color: copiedMsgId === msg.id ? '#52c41a' : token.colorTextTertiary, fontSize: 12 }}
+                        />
+                      </Tooltip>
+                      <Tooltip title={t('chat.regenerate')}>
+                        <Button
+                          type="text"
+                          size="small"
+                          icon={<ReloadOutlined />}
+                          onClick={onRetry}
+                          style={{ color: token.colorTextTertiary, fontSize: 12 }}
+                        />
+                      </Tooltip>
+                    </span>
                   </div>
                 )}
               </div>

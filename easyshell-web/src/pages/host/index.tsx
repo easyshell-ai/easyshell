@@ -29,7 +29,7 @@ import type { TagVO, HostCredentialVO } from '../../types';
 const { Text } = Typography;
 
 /* ── Agent version checking ── */
-const LATEST_AGENT_VERSION = '0.2.2';
+const LATEST_AGENT_VERSION = '0.2.4';
 
 function compareVersions(v1: string, v2: string): number {
   const parts1 = v1.split('.').map(Number);

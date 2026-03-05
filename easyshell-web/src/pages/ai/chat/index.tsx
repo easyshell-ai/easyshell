@@ -79,8 +79,6 @@ const AiChat: React.FC = () => {
         <ChatMessages
           messages={chat.messages}
           loading={chat.loading}
-          hoveredMsgId={chat.hoveredMsgId}
-          setHoveredMsgId={chat.setHoveredMsgId}
           processDataMap={chat.processDataMap}
           streamingContent={chat.streamingContent}
           streamingPlan={chat.streamingPlan}

@@ -15,6 +15,7 @@ import com.easyshell.server.ai.memory.MemoryRetriever;
 import com.easyshell.server.ai.model.entity.AiIterationMessage;
 import com.easyshell.server.ai.repository.AiIterationMessageRepository;
 import com.easyshell.server.ai.service.ChatModelFactory;
+import com.easyshell.server.ai.service.CopilotAuthService;
 import com.easyshell.server.ai.tool.*;
 import com.easyshell.server.model.entity.Agent;
 import com.easyshell.server.repository.AgentRepository;
@@ -94,6 +95,7 @@ public class OrchestratorEngine {
     private final DataFormatTool dataFormatTool;
     private final EncodingTool encodingTool;
     private final KnowledgeBaseTool knowledgeBaseTool;
+    private final CopilotAuthService copilotAuthService;
 
     public OrchestratorEngine(
             ChatModelFactory chatModelFactory,
@@ -131,7 +133,8 @@ public class OrchestratorEngine {
             NotificationTool notificationTool,
             DataFormatTool dataFormatTool,
             EncodingTool encodingTool,
-            KnowledgeBaseTool knowledgeBaseTool) {
+            KnowledgeBaseTool knowledgeBaseTool,
+            CopilotAuthService copilotAuthService) {
         this.chatModelFactory = chatModelFactory;
         this.agentRepository = agentRepository;
         this.agentDefinitionRepository = agentDefinitionRepository;
@@ -168,6 +171,7 @@ public class OrchestratorEngine {
         this.dataFormatTool = dataFormatTool;
         this.encodingTool = encodingTool;
         this.knowledgeBaseTool = knowledgeBaseTool;
+        this.copilotAuthService = copilotAuthService;
     }
 
     private static final ScheduledExecutorService HEARTBEAT_EXECUTOR =
@@ -215,16 +219,16 @@ public class OrchestratorEngine {
             if (request.getTargetAgentIds() != null && !request.getTargetAgentIds().isEmpty()) {
                 List<Agent> targetAgents = agentRepository.findAllById(request.getTargetAgentIds());
                 if (!targetAgents.isEmpty()) {
-                    StringBuilder ctx = new StringBuilder("用户指定了以下目标主机进行操作：\n");
+                    StringBuilder ctx = new StringBuilder("Target hosts specified by user:\n");
                     for (Agent agent : targetAgents) {
-                        ctx.append(String.format("- 主机: %s, IP: %s, 状态: %s, CPU: %.1f%%, 内存: %.1f%%, 磁盘: %.1f%%\n",
+                        ctx.append(String.format("- Host: %s, IP: %s, Status: %s, CPU: %.1f%%, Memory: %.1f%%, Disk: %.1f%%\n",
                                 agent.getHostname(), agent.getIp(),
-                                agent.getStatus() != null && agent.getStatus() == 1 ? "在线" : "离线",
+                                agent.getStatus() != null && agent.getStatus() == 1 ? "online" : "offline",
                                 agent.getCpuUsage() != null ? agent.getCpuUsage() : 0.0,
                                 agent.getMemUsage() != null ? agent.getMemUsage() : 0.0,
                                 agent.getDiskUsage() != null ? agent.getDiskUsage() : 0.0));
                     }
-                    ctx.append("\n请优先在这些主机上执行操作。");
+                    ctx.append("\nPlease prioritize operations on these hosts.");
                     messages.add(0, new SystemMessage(ctx.toString()));
                 }
             }
@@ -351,10 +355,10 @@ public class OrchestratorEngine {
 
                     // Inject sub-agent results as assistant context, then ask main agent to synthesize
                     messages.add(new org.springframework.ai.chat.messages.AssistantMessage(
-                            "以下是各步骤的执行结果：\n\n" + aggregatedResults));
+                            "Execution results from each step:\n\n" + aggregatedResults));
                     messages.add(new org.springframework.ai.chat.messages.UserMessage(
-                            "请根据以上各步骤的执行结果进行综合分析和总结。如果有步骤未能成功完成或子Agent表示无法执行某项操作，" +
-                            "请分析原因并尝试采取替代方案完成任务。请直接给出最终的分析结论和建议。"));
+                            "Please analyze and summarize the execution results above. If any step failed or a sub-agent was unable to complete an operation, " +
+                            "analyze the root cause and try alternative approaches to complete the task. Provide your final analysis and recommendations."));
 
                     executeAgenticLoop(chatModel, filteredCallbacks, toolMap, messages, request, sink, cancelled);
                 } else {
@@ -420,6 +424,7 @@ public class OrchestratorEngine {
 
             boolean llmSuccess = false;
             int llmRetries = iteration > 1 ? 2 : 1; // Allow retry after tool calls
+            boolean retriedAuth = false;
             for (int attempt = 1; attempt <= llmRetries && !cancelled.get(); attempt++) {
                 accumulator = new ToolCallAccumulator();
                 iterationText.setLength(0);
@@ -446,6 +451,19 @@ public class OrchestratorEngine {
                 } catch (Exception e) {
                     log.error("LLM streaming failed at iteration {}, attempt {}/{} for session {}",
                             iteration, attempt, llmRetries, request.getSessionId(), e);
+                    // On 401 Unauthorized (expired Copilot token), invalidate caches and allow one extra retry
+                    if (!retriedAuth && e.getMessage() != null && e.getMessage().contains("401")) {
+                        log.info("Got 401, invalidating Copilot token cache and retrying for session {}", request.getSessionId());
+                        copilotAuthService.invalidateTokenCache();
+                        chatModelFactory.invalidateCache();
+                        chatModel = chatModelFactory.getChatModel(request.getProvider(), request.getModel());
+                        prompt = new Prompt(messages, chatOptions);
+                        retriedAuth = true;
+                        llmRetries = Math.max(llmRetries, attempt + 1); // ensure at least one more attempt
+                        sink.next(AgentEvent.thinking("Auth token expired, refreshing...", "system"));
+                        try { Thread.sleep(500); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+                        continue;
+                    }
                     if (attempt >= llmRetries) {
                         sink.next(AgentEvent.error(i18n("ai.error.llm_streaming", e.getMessage())));
                     } else {
@@ -602,7 +620,7 @@ public class OrchestratorEngine {
         while (matcher.find()) {
             String taskId = matcher.group(1);
             log.info("Detected pending approval task: {}", taskId);
-            sink.next(AgentEvent.approval(taskId, "脚本包含中风险命令，需要您确认后执行", content));
+            sink.next(AgentEvent.approval(taskId, "Script contains medium-risk commands and requires your confirmation before execution", content));
         }
     }
 

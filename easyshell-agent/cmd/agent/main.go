@@ -21,7 +21,7 @@ import (
 	"github.com/easyshell-org/easyshell/easyshell-agent/internal/fileserver"
 )
 
-var version = "0.2.2-dev"
+var version = "0.2.4"
 
 func main() {
 	configPath := flag.String("config", "configs/agent.yaml", "path to config file")

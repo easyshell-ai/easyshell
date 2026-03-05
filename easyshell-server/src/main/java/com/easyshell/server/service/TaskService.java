@@ -25,4 +25,8 @@ public interface TaskService {
     void appendJobLog(String jobId, String logLine);
 
     List<Job> getAgentJobs(String agentId);
+
+    void timeoutStaleJobs();
+
+    void failRunningJobsForAgent(String agentId, String reason);
 }

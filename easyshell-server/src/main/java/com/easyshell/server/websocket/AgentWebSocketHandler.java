@@ -49,26 +49,39 @@ private final Map<String, WebSocketSession> agentSessions = new ConcurrentHashMa
         String agentId = extractAgentId(session);
         if (agentId != null) {
             agentSessions.remove(agentId);
-            log.info("Agent WebSocket disconnected: {}", agentId);
+            log.info("Agent WebSocket disconnected: {} (status={})", agentId, status);
+            // Auto-fail any running/pending jobs for this agent
+            try {
+                taskService.failRunningJobsForAgent(agentId,
+                        "Agent disconnected (WebSocket closed: " + status + ")");
+            } catch (Exception e) {
+                log.error("Error failing jobs for disconnected agent {}", agentId, e);
+            }
         }
     }
 
     @Override
     protected void handleTextMessage(WebSocketSession session, TextMessage message) {
+        String agentId = extractAgentId(session);
         try {
             JsonNode node = objectMapper.readTree(message.getPayload());
             String type = node.has("type") ? node.get("type").asText() : "";
+            log.info("Agent message received: agent={}, type={}, payload_length={}", agentId, type, message.getPayloadLength());
 
             switch (type) {
                 case "log" -> {
                     String jobId = node.get("jobId").asText();
                     String logLine = node.get("log").asText();
+                    log.debug("Agent {} log for job {}: {}", agentId, jobId, logLine);
                     taskService.appendJobLog(jobId, logLine);
                 }
                 case "result" -> {
+                    String jobId = node.get("jobId").asText();
+                    int status = node.get("status").asInt();
+                    log.info("Agent {} result for job {}: status={}", agentId, jobId, status);
                     JobResultRequest result = JobResultRequest.builder()
-                            .jobId(node.get("jobId").asText())
-                            .status(node.get("status").asInt())
+                            .jobId(jobId)
+                            .status(status)
                             .exitCode(node.has("exitCode") ? node.get("exitCode").asInt() : null)
                             .output(node.has("output") ? node.get("output").asText() : null)
                             .build();
@@ -87,12 +100,12 @@ private final Map<String, WebSocketSession> agentSessions = new ConcurrentHashMa
                         terminalHandler.handleAgentReady(sessionId);
                     }
                 }
-case "terminal_error" -> {
-String sessionId = node.has("sessionId") ? node.get("sessionId").asText() : "";
-String data = node.has("data") ? node.get("data").asText() : "";
-if (terminalHandler != null) {
-terminalHandler.handleAgentError(sessionId, data);
-}
+                case "terminal_error" -> {
+                    String sessionId = node.has("sessionId") ? node.get("sessionId").asText() : "";
+                    String data = node.has("data") ? node.get("data").asText() : "";
+                    if (terminalHandler != null) {
+                        terminalHandler.handleAgentError(sessionId, data);
+                    }
                 }
                 case "file_list_result", "file_download_chunk", "file_result" -> {
                     String requestId = node.has("requestId") ? node.get("requestId").asText() : "";
@@ -100,10 +113,10 @@ terminalHandler.handleAgentError(sessionId, data);
                         fileProxyService.handleFileResponse(requestId, message.getPayload());
                     }
                 }
-default -> log.warn("Unknown message type from agent: {}", type);
+                default -> log.warn("Unknown message type from agent {}: {}", agentId, type);
             }
         } catch (Exception e) {
-            log.error("Error processing agent message", e);
+            log.error("Error processing agent {} message: {}", agentId, e.getMessage(), e);
         }
     }
 

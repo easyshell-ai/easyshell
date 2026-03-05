@@ -23,6 +23,8 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -110,11 +112,30 @@ public class TaskServiceImpl implements TaskService {
         task.setStartedAt(LocalDateTime.now());
         taskRepository.save(task);
 
+        // Collect dispatch actions to execute AFTER transaction commits
+        // This prevents the race condition where fast agents return results
+        // before the creating transaction is visible to other threads
+        List<Runnable> postCommitDispatches = new ArrayList<>();
+
         int dispatchedCount = 0;
         for (String agentId : resolvedAgentIds) {
             Agent agent = agentRepository.findById(agentId).orElse(null);
-            if (agent == null || agent.getStatus() == 0) {
-                log.warn("Skipping offline/unknown agent: {}", agentId);
+            if (agent == null) {
+                log.warn("Skipping unknown agent: {}", agentId);
+                Job failedJob = new Job();
+                failedJob.setId("job_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16));
+                failedJob.setTaskId(task.getId());
+                failedJob.setAgentId(agentId);
+                failedJob.setStatus(3); // failed
+                failedJob.setOutput("Agent not found");
+                failedJob.setFinishedAt(LocalDateTime.now());
+                jobRepository.save(failedJob);
+                continue;
+            }
+            // Check both DB status AND WebSocket connectivity.
+            // Agent may be marked offline by heartbeat monitor but still have active WebSocket.
+            if (agent.getStatus() == 0 && !agentWebSocketHandler.isAgentConnected(agentId)) {
+                log.warn("Skipping offline agent (no DB status, no WebSocket): {}", agentId);
                 Job failedJob = new Job();
                 failedJob.setId("job_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16));
                 failedJob.setTaskId(task.getId());
@@ -133,21 +154,49 @@ public class TaskServiceImpl implements TaskService {
             job.setStatus(0);
             jobRepository.save(job);
 
-            boolean dispatched = agentWebSocketHandler.dispatchJob(
-                    agentId, job, scriptContent, task.getTimeoutSeconds());
-            if (!dispatched) {
-                log.warn("Agent {} not connected via WebSocket, marking job {} as failed", agentId, job.getId());
-                job.setStatus(3); // failed
-                job.setOutput("Agent not connected via WebSocket, unable to dispatch");
-                job.setFinishedAt(LocalDateTime.now());
-                jobRepository.save(job);
-            } else {
-                dispatchedCount++;
-            }
+            // Capture variables for lambda
+            final String capturedAgentId = agentId;
+            final Job capturedJob = job;
+            final String capturedScript = scriptContent;
+            final Integer capturedTimeout = task.getTimeoutSeconds();
+
+            postCommitDispatches.add(() -> {
+                boolean dispatched = agentWebSocketHandler.dispatchJob(
+                        capturedAgentId, capturedJob, capturedScript, capturedTimeout);
+                if (!dispatched) {
+                    log.warn("Agent {} not connected via WebSocket, marking job {} as failed",
+                            capturedAgentId, capturedJob.getId());
+                    capturedJob.setStatus(3); // failed
+                    capturedJob.setOutput("Agent not connected via WebSocket, unable to dispatch");
+                    capturedJob.setFinishedAt(LocalDateTime.now());
+                    jobRepository.save(capturedJob);
+                    updateTaskStatus(capturedJob.getTaskId());
+                }
+            });
+            dispatchedCount++;
         }
 
         // Update task status if no jobs were dispatched
         updateTaskStatus(task.getId());
+
+        // Register post-commit hook: dispatch WebSocket messages only AFTER
+        // the transaction commits, so agent results can find the job rows in DB
+        if (!postCommitDispatches.isEmpty()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    log.info("Transaction committed for task {}, dispatching {} jobs to agents",
+                            task.getId(), postCommitDispatches.size());
+                    for (Runnable dispatch : postCommitDispatches) {
+                        try {
+                            dispatch.run();
+                        } catch (Exception e) {
+                            log.error("Failed to dispatch job after commit: {}", e.getMessage(), e);
+                        }
+                    }
+                }
+            });
+        }
 
         return task;
     }
@@ -176,8 +225,19 @@ public class TaskServiceImpl implements TaskService {
     @Override
     @Transactional
     public void reportJobResult(JobResultRequest request) {
-        Job job = jobRepository.findById(request.getJobId())
-                .orElseThrow(() -> new BusinessException(404, "Job not found"));
+        Job job = jobRepository.findById(request.getJobId()).orElse(null);
+        if (job == null) {
+            log.warn("Ignoring result for unknown job {}: status={}, this may be a stale result from a reconnected agent",
+                    request.getJobId(), request.getStatus());
+            return;
+        }
+
+        // Skip updating if job is already in a terminal state (timeout/failed/success)
+        if (job.getStatus() >= 2) {
+            log.info("Ignoring result for job {} which is already in terminal state {}",
+                    job.getId(), job.getStatus());
+            return;
+        }
 
         job.setStatus(request.getStatus());
         job.setExitCode(request.getExitCode());
@@ -234,5 +294,80 @@ public class TaskServiceImpl implements TaskService {
         }
 
         taskRepository.save(task);
+    }
+
+    @Override
+    @Transactional
+    public void timeoutStaleJobs() {
+        // Find all running jobs (status=1)
+        List<Job> runningJobs = jobRepository.findByStatus(1);
+        LocalDateTime now = LocalDateTime.now();
+        int timedOutCount = 0;
+
+        for (Job job : runningJobs) {
+            if (job.getStartedAt() == null) continue;
+
+            // Get the task's timeout setting
+            Task task = taskRepository.findById(job.getTaskId()).orElse(null);
+            if (task == null) continue;
+
+            int timeoutSeconds = task.getTimeoutSeconds() != null ? task.getTimeoutSeconds() : 3600;
+            LocalDateTime deadline = job.getStartedAt().plusSeconds(timeoutSeconds);
+
+            if (now.isAfter(deadline)) {
+                job.setStatus(4); // timeout
+                job.setOutput((job.getOutput() != null ? job.getOutput() + "\n" : "") +
+                        "[SYSTEM] Job timed out after " + timeoutSeconds + " seconds");
+                job.setFinishedAt(now);
+                jobRepository.save(job);
+                timedOutCount++;
+                log.warn("Job {} on agent {} timed out (started={}, timeout={}s)",
+                        job.getId(), job.getAgentId(), job.getStartedAt(), timeoutSeconds);
+
+                updateTaskStatus(job.getTaskId());
+            }
+        }
+
+        if (timedOutCount > 0) {
+            log.info("Timeout watchdog: marked {} stale jobs as timed out", timedOutCount);
+        }
+    }
+
+    @Override
+    @Transactional
+    public void failRunningJobsForAgent(String agentId, String reason) {
+        List<Job> runningJobs = jobRepository.findByAgentIdAndStatus(agentId, 1);
+        List<Job> pendingJobs = jobRepository.findByAgentIdAndStatus(agentId, 0);
+
+        LocalDateTime now = LocalDateTime.now();
+        Set<String> affectedTaskIds = new java.util.HashSet<>();
+
+        for (Job job : runningJobs) {
+            job.setStatus(3); // failed
+            job.setOutput((job.getOutput() != null ? job.getOutput() + "\n" : "") +
+                    "[SYSTEM] " + reason);
+            job.setFinishedAt(now);
+            jobRepository.save(job);
+            affectedTaskIds.add(job.getTaskId());
+            log.warn("Job {} failed due to agent {} disconnect", job.getId(), agentId);
+        }
+
+        for (Job job : pendingJobs) {
+            job.setStatus(3); // failed
+            job.setOutput("[SYSTEM] " + reason);
+            job.setFinishedAt(now);
+            jobRepository.save(job);
+            affectedTaskIds.add(job.getTaskId());
+            log.warn("Pending job {} failed due to agent {} disconnect", job.getId(), agentId);
+        }
+
+        for (String taskId : affectedTaskIds) {
+            updateTaskStatus(taskId);
+        }
+
+        if (!affectedTaskIds.isEmpty()) {
+            log.info("Agent {} disconnected: failed {} running + {} pending jobs across {} tasks",
+                    agentId, runningJobs.size(), pendingJobs.size(), affectedTaskIds.size());
+        }
     }
 }

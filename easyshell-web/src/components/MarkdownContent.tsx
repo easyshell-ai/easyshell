@@ -10,7 +10,7 @@ interface MarkdownContentProps {
  * Shared Markdown renderer using ReactMarkdown + remark-gfm.
  * Replaces all dangerouslySetInnerHTML + formatMarkdown() patterns.
  */
-const MarkdownContent: React.FC<MarkdownContentProps> = ({ content }) => (
+const MarkdownContent: React.FC<MarkdownContentProps> = React.memo(({ content }) => (
   <div style={{ userSelect: 'text', cursor: 'text' }}>
   <ReactMarkdown
     remarkPlugins={[remarkGfm]}
@@ -97,6 +97,6 @@ const MarkdownContent: React.FC<MarkdownContentProps> = ({ content }) => (
     {content}
   </ReactMarkdown>
   </div>
-);
+));
 
 export default MarkdownContent;

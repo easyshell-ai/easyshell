@@ -15,6 +15,8 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
+import java.util.Optional;
+
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -366,6 +368,17 @@ public class DataInitializer implements CommandLineRunner {
                                       String permissions, String modelProvider, String modelName,
                                       String systemPrompt, int maxIterations, String description) {
         if (agentDefinitionRepository.findByNameAndEnabledTrue(name).isEmpty()) {
+            // Check if agent exists but is disabled — if so, enable it
+            Optional<AgentDefinition> existing = agentDefinitionRepository.findByName(name);
+            if (existing.isPresent()) {
+                AgentDefinition agent = existing.get();
+                if (!Boolean.TRUE.equals(agent.getEnabled())) {
+                    agent.setEnabled(true);
+                    agentDefinitionRepository.save(agent);
+                    log.info("Enabled existing agent definition: {}", name);
+                }
+                return;
+            }
             AgentDefinition agent = new AgentDefinition();
             agent.setName(name);
             agent.setDisplayName(displayName);

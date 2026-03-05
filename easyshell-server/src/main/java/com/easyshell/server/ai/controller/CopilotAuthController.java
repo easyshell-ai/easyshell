@@ -1,5 +1,6 @@
 package com.easyshell.server.ai.controller;
 
+import com.easyshell.server.ai.service.ChatModelFactory;
 import com.easyshell.server.ai.service.CopilotAuthService;
 import com.easyshell.server.common.result.R;
 import lombok.RequiredArgsConstructor;
@@ -15,7 +16,7 @@ import java.util.*;
 public class CopilotAuthController {
 
     private final CopilotAuthService copilotAuthService;
-
+    private final ChatModelFactory chatModelFactory;
     @PostMapping("/device-code")
     public R<CopilotAuthService.DeviceCodeResponse> requestDeviceCode() {
         return R.ok(copilotAuthService.requestDeviceCode());
@@ -25,9 +26,14 @@ public class CopilotAuthController {
     public R<Map<String, String>> pollForToken(@RequestBody Map<String, String> body) {
         String deviceCode = body.get("deviceCode");
         if (deviceCode == null || deviceCode.isBlank()) {
-            return R.fail(400, "deviceCode 不能为空");
+            return R.fail(400, "deviceCode \u4e0d\u80fd\u4e3a\u7a7a");
         }
-        return R.ok(copilotAuthService.pollForToken(deviceCode));
+        Map<String, String> result = copilotAuthService.pollForToken(deviceCode);
+        // Invalidate cached ChatModel so new bearer token is picked up
+        if ("success".equals(result.get("status"))) {
+            chatModelFactory.invalidateCache();
+        }
+        return R.ok(result);
     }
 
     @GetMapping("/status")
@@ -39,6 +45,7 @@ public class CopilotAuthController {
     @DeleteMapping("/logout")
     public R<Void> logout() {
         copilotAuthService.logout();
+        chatModelFactory.invalidateCache();
         return R.ok();
     }
 

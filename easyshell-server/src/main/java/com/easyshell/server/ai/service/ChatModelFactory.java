@@ -75,6 +75,10 @@ public class ChatModelFactory {
         if (provider == null || provider.isBlank() || "default".equals(provider)) {
             provider = getConfigValue("ai.default.provider", "openai");
         }
+        // GitHub Copilot tokens are short-lived (~30min) — never cache the model
+        if ("github-copilot".equals(provider)) {
+            return createChatModel(provider, modelOverride);
+        }
         String cacheKey = modelOverride != null ? provider + ":" + modelOverride : provider;
         final String resolvedProvider = provider;
         return modelCache.computeIfAbsent(cacheKey, k -> createChatModel(resolvedProvider, modelOverride));

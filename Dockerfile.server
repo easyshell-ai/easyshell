@@ -1,4 +1,4 @@
-ARG VERSION=0.2.2
+ARG VERSION=0.2.4
 
 # ---- Stage 1: Build Go Agent binaries (always cross-compile both) ----
 FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS agent-builder

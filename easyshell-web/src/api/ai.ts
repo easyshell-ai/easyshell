@@ -127,7 +127,7 @@ export function sendChatStream(
   })
     .then(async (response) => {
       if (!response.ok) {
-        if (response.status === 401) {
+        if (response.status === 401 || response.status === 403) {
           localStorage.removeItem('token');
           window.location.href = '/login';
           return;

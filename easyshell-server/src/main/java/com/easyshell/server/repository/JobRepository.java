@@ -24,4 +24,6 @@ public interface JobRepository extends JpaRepository<Job, String> {
     List<Job> findByAgentIdOrderByCreatedAtDesc(String agentId);
 
     Page<Job> findByAgentId(String agentId, Pageable pageable);
+
+    List<Job> findByStatus(Integer status);
 }

@@ -58,7 +58,7 @@ public class TaskClassifier {
         // 5. QUERY - read-only queries (lowest priority, only matches if nothing else does)
         PATTERNS.put(TaskType.QUERY, List.of(
                 Pattern.compile("查看|查询|列出|显示|多少|哪些|状态|版本|列表|看看"),
-                Pattern.compile("(?i)show|list|get|status|how many|which|check|look")
+                Pattern.compile("(?i)show|list|get|status|how many|which|look")
         ));
     }
 

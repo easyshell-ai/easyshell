@@ -9,12 +9,16 @@ import com.easyshell.server.repository.SystemConfigRepository;
 import com.easyshell.server.model.entity.SystemConfig;
 import com.easyshell.server.repository.AgentRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class TaskManageTool {
@@ -22,6 +26,11 @@ public class TaskManageTool {
     private final TaskService taskService;
     private final AgentRepository agentRepository;
     private final SystemConfigRepository systemConfigRepository;
+
+    /** Track poll attempts per taskId for exponential backoff: 5s, 10s, 20s, 40s... cap at 60s */
+    private final ConcurrentHashMap<String, AtomicInteger> pollCounts = new ConcurrentHashMap<>();
+    private static final long BASE_DELAY_MS = 5_000L;
+    private static final long MAX_DELAY_MS = 60_000L;
 
     @Tool(description = "查询最近的任务列表，包括任务名称、状态、创建时间等信息")
     public String listRecentTasks() {
@@ -51,6 +60,24 @@ public class TaskManageTool {
         try {
             TaskDetailVO detail = taskService.getTaskDetail(taskId);
             Task task = detail.getTask();
+
+            // Exponential backoff when task is still running or pending
+            if (task.getStatus() != null && (task.getStatus() == 0 || task.getStatus() == 1)) {
+                AtomicInteger counter = pollCounts.computeIfAbsent(taskId, k -> new AtomicInteger(0));
+                int attempt = counter.incrementAndGet();
+                long delayMs = Math.min(BASE_DELAY_MS * (1L << (attempt - 1)), MAX_DELAY_MS);
+                log.info("Task {} still running/pending, backoff attempt={}, delay={}ms", taskId, attempt, delayMs);
+                try {
+                    Thread.sleep(delayMs);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    log.warn("Backoff sleep interrupted for task {}", taskId);
+                }
+            } else {
+                // Task completed/failed — clean up tracking
+                pollCounts.remove(taskId);
+            }
+
             StringBuilder sb = new StringBuilder();
             sb.append(String.format("任务: %s\nID: %s\n状态: %s\n创建时间: %s\n\n",
                     task.getName(), task.getId(),

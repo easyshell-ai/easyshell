@@ -39,7 +39,9 @@
     "exportSuccess": "导出成功",
     "updateTime": "更新时间",
     "minutes": "分钟",
-    "close": "关闭"
+    "close": "关闭",
+    "copied": "已复制",
+    "copyFailed": "复制失败"
   },
   "nav": {
     "group": {

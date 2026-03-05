@@ -53,6 +53,8 @@ public class ToolSetSelector {
                     "listHosts", "listHostsByStatus",
                     "listRecentTasks", "listScripts", "listClusters",
                     "getDashboardStats",
+                    "executeScript", "createTask", "getTaskDetail",
+                    "createScript", "detectSoftware",
                     "fetchUrl", "webSearch", "searchKnowledge"
             ))
     );

@@ -166,7 +166,31 @@ func (c *Client) handleMessage(ctx context.Context, data []byte) {
 }
 
 func (c *Client) executeJob(ctx context.Context, msg ExecuteMessage) {
-	slog.Info("executing job", "job_id", msg.JobID, "task_id", msg.TaskID, "timeout", msg.Timeout)
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("PANIC in executeJob - recovered", "job_id", msg.JobID, "panic", r)
+			// Try to report the failure back
+			result := ResultMessage{
+				Type:     "result",
+				JobID:    msg.JobID,
+				Status:   3, // failed
+				ExitCode: -1,
+				Output:   fmt.Sprintf("agent panic: %v", r),
+			}
+			if err := c.sendJSON(result); err != nil {
+				slog.Error("failed to send panic result via WS", "error", err)
+				_ = c.httpClient.ReportJobResult(&client.JobResultRequest{
+					JobID:    msg.JobID,
+					AgentID:  c.AgentID,
+					Status:   3,
+					ExitCode: -1,
+					Output:   fmt.Sprintf("agent panic: %v", r),
+				})
+			}
+		}
+	}()
+
+	slog.Info("executing job", "job_id", msg.JobID, "task_id", msg.TaskID, "timeout", msg.Timeout, "script_length", len(msg.Script))
 
 	timeout := time.Duration(msg.Timeout) * time.Second
 	if timeout == 0 {
@@ -195,7 +219,9 @@ func (c *Client) executeJob(ctx context.Context, msg ExecuteMessage) {
 		}
 	}
 
+	slog.Info("starting script execution", "job_id", msg.JobID)
 	exitCode, err := c.executor.ExecuteWithCallback(execCtx, msg.Script, onLog)
+	slog.Info("script execution completed", "job_id", msg.JobID, "exit_code", exitCode, "error", err)
 
 	const statusSuccess = 2
 	const statusFailed = 3
@@ -231,8 +257,9 @@ func (c *Client) executeJob(ctx context.Context, msg ExecuteMessage) {
 		Output:   output,
 	}
 
+	slog.Info("sending job result", "job_id", msg.JobID, "status", status, "output_length", len(output))
 	if err := c.sendJSON(result); err != nil {
-		slog.Warn("ws result send failed, falling back to HTTP", "error", err)
+		slog.Warn("ws result send failed, falling back to HTTP", "job_id", msg.JobID, "error", err)
 		_ = c.httpClient.ReportJobResult(&client.JobResultRequest{
 			JobID:    msg.JobID,
 			AgentID:  c.AgentID,
@@ -240,6 +267,8 @@ func (c *Client) executeJob(ctx context.Context, msg ExecuteMessage) {
 			ExitCode: exitCode,
 			Output:   output,
 		})
+	} else {
+		slog.Info("job result sent successfully via WS", "job_id", msg.JobID)
 	}
 }
 

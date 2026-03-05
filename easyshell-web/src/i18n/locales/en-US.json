@@ -39,7 +39,9 @@
     "exportSuccess": "Export successful",
     "updateTime": "Update Time",
     "minutes": "minutes",
-    "close": "Close"
+    "close": "Close",
+    "copied": "Copied!",
+    "copyFailed": "Copy failed"
   },
   "nav": {
     "group": {
