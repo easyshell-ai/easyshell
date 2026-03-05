@@ -8,6 +8,7 @@ const Dashboard = lazy(() => import('../pages/dashboard'));
 const Host = lazy(() => import('../pages/host'));
 const HostDetail = lazy(() => import('../pages/host/detail'));
 const Script = lazy(() => import('../pages/script'));
+const ScriptWorkbench = lazy(() => import('../pages/script/ScriptWorkbench'));
 const Task = lazy(() => import('../pages/task'));
 const Cluster = lazy(() => import('../pages/cluster'));
 const Audit = lazy(() => import('../pages/audit'));
@@ -64,6 +65,14 @@ const router = createBrowserRouter([
       {
         path: 'script',
         element: <LazyLoad><Script /></LazyLoad>,
+      },
+      {
+        path: 'script/new',
+        element: <LazyLoad><ScriptWorkbench /></LazyLoad>,
+      },
+      {
+        path: 'script/edit/:id',
+        element: <LazyLoad><ScriptWorkbench /></LazyLoad>,
       },
       {
         path: 'task',

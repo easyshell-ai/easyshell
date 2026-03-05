@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Table, Button, Form, Input, Select, InputNumber, Tag, Space, Drawer, Card,
@@ -7,6 +7,9 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import { PlayCircleOutlined, EyeOutlined, ClusterOutlined, TagsOutlined, ReloadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
+import CodeMirror from '@uiw/react-codemirror';
+import { StreamLanguage } from '@codemirror/language';
+import { shell } from '@codemirror/legacy-modes/mode/shell';
 import { createTask, getTaskList, getTaskDetail } from '../../api/task';
 import { getScriptList } from '../../api/script';
 import { getHostList } from '../../api/host';
@@ -14,8 +17,6 @@ import { getClusterList } from '../../api/cluster';
 import { getTagList } from '../../api/tag';
 import type { Task, TaskDetail, Script, Agent, Job, TaskCreateRequest, ClusterVO, TagVO } from '../../types';
 import { taskStatusMap, jobStatusMap } from '../../utils/status';
-
-const { TextArea } = Input;
 
 const TaskPage: React.FC = () => {
   const { t } = useTranslation();
@@ -39,6 +40,13 @@ const TaskPage: React.FC = () => {
   const wsRef = useRef<WebSocket | null>(null);
   const logContainerRef = useRef<HTMLDivElement>(null);
   const detailTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [manualScriptContent, setManualScriptContent] = useState('');
+
+  // Determine dark mode from theme token
+  const isDark = token.colorBgContainer !== '#ffffff' && token.colorBgBase !== '#ffffff';
+
+  // CodeMirror extensions for shell highlighting
+  const editorExtensions = useMemo(() => [StreamLanguage.define(shell)], []);
 
   const refreshTaskDetail = useCallback((taskId: string) => {
     getTaskDetail(taskId).then((res) => {
@@ -162,9 +170,13 @@ const TaskPage: React.FC = () => {
   };
 
   const handleSubmit = () => {
+    // Validate manual script content before form validation
+    if (scriptMode === 'manual' && !manualScriptContent.trim()) {
+      message.error(t('task.pleaseInputScript'));
+      return;
+    }
     form.validateFields().then((values) => {
       setSubmitting(true);
-
       const request: TaskCreateRequest = {
         name: values.name,
         timeoutSeconds: values.timeoutSeconds || 600,
@@ -180,8 +192,8 @@ const TaskPage: React.FC = () => {
 
       if (scriptMode === 'select' && values.scriptId) {
         request.scriptId = values.scriptId;
-      } else if (scriptMode === 'manual' && values.scriptContentManual) {
-        request.scriptContent = values.scriptContentManual;
+      } else if (scriptMode === 'manual' && manualScriptContent) {
+        request.scriptContent = manualScriptContent;
       }
 
       createTask(request)
@@ -189,6 +201,7 @@ const TaskPage: React.FC = () => {
           if (res.code === 200) {
             message.success(t('task.taskCreated'));
             form.resetFields();
+            setManualScriptContent('');
             fetchTasks();
             if (res.data?.id) {
               setDrawerOpen(true);
@@ -383,9 +396,29 @@ const TaskPage: React.FC = () => {
                   />
                 </Form.Item>
               ) : (
-                <Form.Item name="scriptContentManual" label={t('task.scriptContent')} rules={[{ required: true, message: t('task.pleaseInputScript') }]}>
-                  <TextArea rows={6} placeholder={"#!/bin/bash\necho 'Hello EasyShell'"} style={{ fontFamily: 'monospace', background: token.colorFillAlter, color: token.colorText, border: `1px solid ${token.colorBorderSecondary}` }} />
-                </Form.Item>
+                <div>
+                  <div style={{ marginBottom: 8, color: token.colorText, fontWeight: 500 }}>{t('task.scriptContent')} <span style={{ color: token.colorError }}>*</span></div>
+                  <div style={{
+                    border: `1px solid ${token.colorBorderSecondary}`,
+                    borderRadius: 8,
+                    overflow: 'hidden',
+                  }}>
+                    <CodeMirror
+                      value={manualScriptContent}
+                      onChange={(val) => setManualScriptContent(val)}
+                      extensions={editorExtensions}
+                      theme={isDark ? 'dark' : 'light'}
+                      height="240px"
+                      placeholder={"#!/bin/bash\necho 'Hello EasyShell'"}
+                      basicSetup={{
+                        lineNumbers: true,
+                        foldGutter: true,
+                        highlightActiveLine: true,
+                        autocompletion: false,
+                      }}
+                    />
+                  </div>
+                </div>
               )}
             </Col>
           </Row>

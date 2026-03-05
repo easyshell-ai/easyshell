@@ -45,6 +45,7 @@ const getSelectedKeys = (pathname: string): string[] => {
   if (pathname.startsWith('/system/')) return [pathname];
   if (pathname.startsWith('/host/')) return ['/host'];
   if (pathname.startsWith('/terminal/')) return ['/host'];
+  if (pathname.startsWith('/script/')) return ['/script'];
   if (pathname.startsWith('/ai/')) return [pathname];
   return ['/' + pathname.split('/')[1]];
 };
@@ -72,6 +73,8 @@ const MainLayout: React.FC = () => {
     '/': t('nav.dashboard'),
     '/host': t('nav.host'),
     '/script': t('nav.script'),
+    '/script/new': t('script.createScript'),
+    '/script/edit': t('script.editScript'),
     '/task': t('nav.task'),
     '/cluster': t('nav.cluster'),
     '/audit': t('nav.audit'),
@@ -305,7 +308,7 @@ const MainLayout: React.FC = () => {
             color: isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.3)',
             textAlign: 'center',
           }}>
-            EasyShell v0.2.4
+            EasyShell v0.2.5
           </div>
         </div>
       )}

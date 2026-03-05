@@ -1,15 +1,14 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router-dom';
 import {
-  Card, Table, Button, Modal, Form, Input, Select, Switch, Popconfirm, Tag, Space, message, Tabs, Typography, theme,
+  Card, Table, Button, Modal, Popconfirm, Tag, Space, message, Tabs, Typography, theme,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { PlusOutlined, EditOutlined, DeleteOutlined, FileTextOutlined, BookOutlined, EyeOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
-import { getScriptList, getScriptTemplates, getUserScripts, createScript, updateScript, deleteScript } from '../../api/script';
-import type { Script, ScriptRequest } from '../../types';
-
-const { TextArea } = Input;
+import { getScriptList, getScriptTemplates, getUserScripts, deleteScript } from '../../api/script';
+import type { Script } from '../../types';
 
 const scriptTypeColors: Record<string, string> = {
   bash: 'green',
@@ -20,14 +19,11 @@ const scriptTypeColors: Record<string, string> = {
 const ScriptPage: React.FC = () => {
   const { t } = useTranslation();
   const { token } = theme.useToken();
+  const navigate = useNavigate();
   const [userScripts, setUserScripts] = useState<Script[]>([]);
   const [templates, setTemplates] = useState<Script[]>([]);
   const [loading, setLoading] = useState(true);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [editingScript, setEditingScript] = useState<Script | null>(null);
-  const [submitting, setSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState('user');
-  const [form] = Form.useForm<ScriptRequest>();
   const [viewScript, setViewScript] = useState<Script | null>(null);
 
   const fetchData = useCallback(() => {
@@ -54,22 +50,11 @@ const ScriptPage: React.FC = () => {
   }, [fetchData]);
 
   const handleCreate = () => {
-    setEditingScript(null);
-    form.resetFields();
-    form.setFieldsValue({ scriptType: 'bash', isPublic: false });
-    setModalOpen(true);
+    navigate('/script/new');
   };
 
   const handleEdit = (record: Script) => {
-    setEditingScript(record);
-    form.setFieldsValue({
-      name: record.name,
-      description: record.description,
-      content: record.content,
-      scriptType: record.scriptType,
-      isPublic: record.isPublic,
-    });
-    setModalOpen(true);
+    navigate(`/script/edit/${record.id}`);
   };
 
   const handleDelete = (id: number) => {
@@ -80,27 +65,6 @@ const ScriptPage: React.FC = () => {
       } else {
         message.error(res.message || t('common.deleteFailed'));
       }
-    });
-  };
-
-  const handleSubmit = () => {
-    form.validateFields().then((values) => {
-      setSubmitting(true);
-      const action = editingScript
-        ? updateScript(editingScript.id, values)
-        : createScript(values);
-
-      action
-        .then((res) => {
-          if (res.code === 200) {
-            message.success(editingScript ? t('common.updateSuccess') : t('common.createSuccess'));
-            setModalOpen(false);
-            fetchData();
-          } else {
-            message.error(res.message || t('common.operationFailed'));
-          }
-        })
-        .finally(() => setSubmitting(false));
     });
   };
 
@@ -194,42 +158,6 @@ const ScriptPage: React.FC = () => {
           ]}
         />
       </Card>
-
-      <Modal
-        title={editingScript ? t('script.editScript') : t('script.createScript')}
-        open={modalOpen}
-        onOk={handleSubmit}
-        onCancel={() => setModalOpen(false)}
-        confirmLoading={submitting}
-        width={700}
-        okText={t('common.confirm')}
-        cancelText={t('common.cancel')}
-        destroyOnClose
-      >
-        <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
-          <Form.Item name="name" label={t('script.scriptName')} rules={[{ required: true, message: t('script.pleaseInputName') }]}>
-            <Input placeholder={t('script.pleaseInputName')} />
-          </Form.Item>
-          <Form.Item name="description" label={t('script.description')}>
-            <Input placeholder={t('script.pleaseInputDescription')} />
-          </Form.Item>
-          <Form.Item name="content" label={t('script.content')} rules={[{ required: true, message: t('script.pleaseInputContent') }]}>
-            <TextArea rows={10} placeholder={"#!/bin/bash\necho 'Hello EasyShell'"} style={{ fontFamily: 'monospace', background: token.colorFillAlter, color: token.colorText, border: `1px solid ${token.colorBorderSecondary}` }} />
-          </Form.Item>
-          <Form.Item name="scriptType" label={t('script.scriptType')} rules={[{ required: true, message: t('script.pleaseSelectType') }]}>
-            <Select
-              options={[
-                { value: 'bash', label: 'Bash' },
-                { value: 'sh', label: 'Shell' },
-                { value: 'python', label: 'Python' },
-              ]}
-            />
-          </Form.Item>
-          <Form.Item name="isPublic" label={t('script.publicScript')} valuePropName="checked">
-            <Switch />
-          </Form.Item>
-        </Form>
-      </Modal>
 
       <Modal
         title={viewScript?.name || t('script.template')}

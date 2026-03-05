@@ -127,6 +127,13 @@ private final Map<String, WebSocketSession> agentSessions = new ConcurrentHashMa
         }
 
         try {
+            // Save job status BEFORE sending WebSocket message to avoid race condition:
+            // if agent responds extremely fast, reportJobResult could process the result
+            // before this save completes, leading to started_at=NULL
+            job.setStatus(1);
+            job.setStartedAt(LocalDateTime.now());
+            jobRepository.save(job);
+
             Map<String, Object> payload = Map.of(
                     "type", "execute",
                     "jobId", job.getId(),
@@ -135,9 +142,6 @@ private final Map<String, WebSocketSession> agentSessions = new ConcurrentHashMa
                     "timeout", timeoutSeconds
             );
             session.sendMessage(new TextMessage(objectMapper.writeValueAsString(payload)));
-            job.setStatus(1);
-            job.setStartedAt(LocalDateTime.now());
-            jobRepository.save(job);
             return true;
         } catch (Exception e) {
             log.error("Failed to dispatch job {} to agent {}", job.getId(), agentId, e);
