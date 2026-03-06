@@ -46,7 +46,7 @@ public class NotificationTool {
                 return String.format("已发送通知到 %s 渠道", channel);
             } else {
                 // Send to all enabled channels
-                List<String> channels = List.of("telegram", "discord", "dingtalk", "slack", "feishu", "wecom");
+                List<String> channels = List.of("telegram", "discord", "dingtalk", "slack", "feishu", "wechat-work");
                 channelMessageRouter.pushToChannelsAsync(channels, formattedMessage);
                 return "已向所有已启用的渠道发送通知";
             }
@@ -60,7 +60,7 @@ public class NotificationTool {
     public String listChannels() {
         try {
             // Check known channels
-            List<String> knownChannels = List.of("telegram", "discord", "dingtalk", "slack", "feishu", "wecom");
+            List<String> knownChannels = List.of("telegram", "discord", "dingtalk", "slack", "feishu", "wechat-work");
             StringBuilder sb = new StringBuilder("可用通知渠道：\n\n");
 
             for (String channel : knownChannels) {

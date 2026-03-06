@@ -299,7 +299,7 @@ public class ChannelMessageRouter {
 
     /**
      * 主动推送消息到指定渠道的配置目标。
-     * @param channelKey 渠道标识 (telegram / discord / dingtalk)
+     * @param channelKey 渠道标识 (telegram / discord / dingtalk / slack / feishu / wechat-work)
      * @param content 消息内容
      */
     public void pushMessage(String channelKey, String content) {
@@ -343,7 +343,8 @@ public class ChannelMessageRouter {
      * 根据渠道配置解析推送目标。
      * Telegram → allowed-chat-ids 配置
      * Discord → allowed-channel-ids 配置
-     * DingTalk → 固定返回 "webhook"
+     * Slack → allowed-channel-ids 配置，无配置则默认 "webhook"
+     * DingTalk / Feishu / WeCom → 固定返回 "webhook"
      */
     private List<String> resolvePushTargets(String channelKey) {
         return switch (channelKey) {
@@ -355,7 +356,11 @@ public class ChannelMessageRouter {
                 String channelIds = getConfigValue("ai.channel.discord.allowed-channel-ids");
                 yield parseCsvList(channelIds);
             }
-            case "dingtalk" -> List.of("webhook");
+            case "dingtalk", "feishu", "wechat-work" -> List.of("webhook");
+            case "slack" -> {
+                String slackChannelIds = getConfigValue("ai.channel.slack.allowed-channel-ids");
+                yield (slackChannelIds != null && !slackChannelIds.isBlank()) ? parseCsvList(slackChannelIds) : List.of("webhook");
+            }
             default -> {
                 log.warn("Unknown channel key for push targets: {}", channelKey);
                 yield List.of();

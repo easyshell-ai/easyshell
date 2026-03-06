@@ -171,15 +171,21 @@ public class DataInitializer implements CommandLineRunner {
         createConfigIfAbsent("ai.channel.discord.guild-id", "", "config.desc.ai_channel_discord_guild_id", "ai-channel");
         createConfigIfAbsent("ai.channel.discord.allowed-channel-ids", "", "config.desc.ai_channel_discord_allowed_channel_ids", "ai-channel");
 
-        // 钉钉 Webhook
+        // 钉钉 DingTalk
         createConfigIfAbsent("ai.channel.dingtalk.enabled", "false", "config.desc.ai_channel_dingtalk_enabled", "ai-channel");
+        createConfigIfAbsent("ai.channel.dingtalk.mode", "webhook", "config.desc.ai_channel_dingtalk_mode", "ai-channel");
         createConfigIfAbsent("ai.channel.dingtalk.webhook-url", "", "config.desc.ai_channel_dingtalk_webhook_url", "ai-channel");
         createConfigIfAbsent("ai.channel.dingtalk.secret", "", "config.desc.ai_channel_dingtalk_secret", "ai-channel");
+        createConfigIfAbsent("ai.channel.dingtalk.client-id", "", "config.desc.ai_channel_dingtalk_client_id", "ai-channel");
+        createConfigIfAbsent("ai.channel.dingtalk.client-secret", "", "config.desc.ai_channel_dingtalk_client_secret", "ai-channel");
 
         // 飞书 Webhook
         createConfigIfAbsent("ai.channel.feishu.enabled", "false", "config.desc.ai_channel_feishu_enabled", "ai-channel");
         createConfigIfAbsent("ai.channel.feishu.webhook-url", "", "config.desc.ai_channel_feishu_webhook_url", "ai-channel");
         createConfigIfAbsent("ai.channel.feishu.secret", "", "config.desc.ai_channel_feishu_secret", "ai-channel");
+        createConfigIfAbsent("ai.channel.feishu.mode", "webhook", "config.desc.ai_channel_feishu_mode", "ai-channel");
+        createConfigIfAbsent("ai.channel.feishu.app-id", "", "config.desc.ai_channel_feishu_app_id", "ai-channel");
+        createConfigIfAbsent("ai.channel.feishu.app-secret", "", "config.desc.ai_channel_feishu_app_secret", "ai-channel");
 
         // Slack Webhook
         createConfigIfAbsent("ai.channel.slack.enabled", "false", "config.desc.ai_channel_slack_enabled", "ai-channel");

@@ -66,6 +66,7 @@
     "system_users": "用户管理",
     "system_config": "系统配置",
     "system_ai": "AI 配置",
+    "system_bot": "渠道机器人",
     "system_risk": "风险管控",
     "system_agents": "Agent 管理",
     "system_memory": "记忆管理",

@@ -16,6 +16,7 @@ const TerminalPage = lazy(() => import('../pages/terminal'));
 const Users = lazy(() => import('../pages/system/users'));
 const SystemConfig = lazy(() => import('../pages/system/config'));
 const AiConfig = lazy(() => import('../pages/system/ai'));
+const BotConfig = lazy(() => import('../pages/system/bot'));
 const RiskConfig = lazy(() => import('../pages/system/risk'));
 const AgentConfig = lazy(() => import('../pages/system/agents'));
 const MemoryManagement = lazy(() => import('../pages/system/memory'));
@@ -113,6 +114,10 @@ const router = createBrowserRouter([
       {
         path: 'system/ai',
         element: <LazyLoad><AiConfig /></LazyLoad>,
+      },
+      {
+        path: 'system/bot',
+        element: <LazyLoad><BotConfig /></LazyLoad>,
       },
       {
         path: 'system/risk',

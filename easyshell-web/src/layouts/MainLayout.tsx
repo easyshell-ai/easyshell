@@ -31,6 +31,7 @@ import {
   MenuOutlined,
   QuestionCircleOutlined,
   LinkOutlined,
+  ApiOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import { useTheme } from '../contexts/ThemeContext';
@@ -87,6 +88,7 @@ const MainLayout: React.FC = () => {
     '/system/users': t('nav.system_users'),
     '/system/config': t('nav.system_config'),
     '/system/ai': t('nav.system_ai'),
+    '/system/bot': t('nav.system_bot'),
     '/system/risk': t('nav.system_risk'),
     '/system/agents': t('nav.system_agents'),
     '/system/memory': t('nav.system_memory'),
@@ -141,6 +143,7 @@ const MainLayout: React.FC = () => {
             { key: '/system/users', icon: <TeamOutlined />, label: t('nav.system_users') },
             { key: '/system/config', icon: <ToolOutlined />, label: t('nav.system_config') },
             { key: '/system/ai', icon: <RobotOutlined />, label: t('nav.system_ai') },
+            { key: '/system/bot', icon: <ApiOutlined />, label: t('nav.system_bot') },
             { key: '/system/risk', icon: <SafetyCertificateOutlined />, label: t('nav.system_risk') },
             { key: '/system/agents', icon: <RobotOutlined />, label: t('nav.system_agents') },
             { key: '/system/memory', icon: <BulbOutlined />, label: t('nav.system_memory') },
@@ -308,7 +311,7 @@ const MainLayout: React.FC = () => {
             color: isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.3)',
             textAlign: 'center',
           }}>
-            EasyShell v1.0
+            EasyShell v1.0.5
           </div>
         </div>
       )}

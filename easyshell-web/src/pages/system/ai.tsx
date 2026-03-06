@@ -97,41 +97,6 @@ const EMBEDDING_PROVIDERS: Record<string, { label: string; models: string[] }> =
   },
 };
 
-const CHANNEL_LABELS: Record<string, string> = {
-  telegram: 'Telegram',
-  discord: 'Discord',
-  dingtalk: '钉钉',
-  feishu: '飞书',
-  slack: 'Slack',
-  'wechat-work': '企业微信',
-};
-
-const CHANNEL_SETTINGS_META: Record<string, { key: string; label: string; sensitive: boolean; placeholder: string }[]> = {
-  telegram: [
-    { key: 'bot-token', label: 'Bot Token', sensitive: true, placeholder: '请输入 Telegram Bot Token' },
-    { key: 'allowed-chat-ids', label: '允许的 Chat ID', sensitive: false, placeholder: '多个 ID 用逗号分隔' },
-  ],
-  discord: [
-    { key: 'bot-token', label: 'Bot Token', sensitive: true, placeholder: '请输入 Discord Bot Token' },
-    { key: 'guild-id', label: 'Server (Guild) ID', sensitive: false, placeholder: '请输入 Discord Server ID' },
-    { key: 'allowed-channel-ids', label: '允许的 Channel ID', sensitive: false, placeholder: '多个 ID 用逗号分隔' },
-  ],
-  dingtalk: [
-    { key: 'webhook-url', label: 'Webhook 地址', sensitive: true, placeholder: '请输入钉钉 Webhook URL' },
-    { key: 'secret', label: '签名密钥', sensitive: true, placeholder: '请输入钉钉签名 Secret' },
-  ],
-  feishu: [
-    { key: 'webhook-url', label: 'Webhook 地址', sensitive: true, placeholder: '请输入飞书 Webhook URL' },
-    { key: 'secret', label: '签名密钥', sensitive: true, placeholder: '请输入飞书签名 Secret' },
-  ],
-  slack: [
-    { key: 'webhook-url', label: 'Webhook 地址', sensitive: true, placeholder: '请输入 Slack Webhook URL' },
-    { key: 'bot-token', label: 'Bot Token', sensitive: true, placeholder: '请输入 Slack Bot Token' },
-  ],
-  'wechat-work': [
-    { key: 'webhook-url', label: 'Webhook 地址', sensitive: true, placeholder: '请输入企业微信 Webhook URL' },
-  ],
-};
 
 interface TestState {
   loading: boolean;
@@ -177,11 +142,6 @@ const AiConfig: React.FC = () => {
   const [maxTokens, setMaxTokens] = useState(4096);
   const [chatTimeout, setChatTimeout] = useState(120);
   const [testStates, setTestStates] = useState<Record<string, TestState>>({});
-  const [channelForms, setChannelForms] = useState<Record<string, { enabled: boolean; settings: Record<string, string> }>>({});
-  const [channelContextMode, setChannelContextMode] = useState<string>('persistent');
-  const [channelSessionTimeout, setChannelSessionTimeout] = useState<number>(30);
-  const [channelDefaultProvider, setChannelDefaultProvider] = useState<string>('');
-  const [channelDefaultModel, setChannelDefaultModel] = useState<string>('');
   const [customProviders, setCustomProviders] = useState<Record<string, string>>({});
   const [addProviderModalVisible, setAddProviderModalVisible] = useState(false);
   const [newProviderKey, setNewProviderKey] = useState('');
@@ -257,21 +217,6 @@ const AiConfig: React.FC = () => {
           setProviderForms(forms);
           setCustomProviders(customs);
 
-          const channels: Record<string, { enabled: boolean; settings: Record<string, string> }> = {};
-          Object.entries(data.channels || {}).forEach(([key, ch]) => {
-            channels[key] = {
-              enabled: ch.enabled,
-              settings: { ...(ch.settings || {}) },
-            };
-          });
-          setChannelForms(channels);
-
-          if (data.channelContext) {
-            setChannelContextMode(data.channelContext.contextMode || 'persistent');
-            setChannelSessionTimeout(data.channelContext.sessionTimeout ?? 30);
-            setChannelDefaultProvider(data.channelContext.defaultProvider || '');
-            setChannelDefaultModel(data.channelContext.defaultModel || '');
-          }
 
           if (data.embedding) {
             setEmbeddingForm({
@@ -365,13 +310,6 @@ const AiConfig: React.FC = () => {
         defaultProvider,
         providers,
         quota: { dailyLimit, maxTokens, chatTimeout },
-        channels: channelForms,
-        channelContext: {
-          contextMode: channelContextMode,
-          sessionTimeout: channelSessionTimeout,
-          defaultProvider: channelDefaultProvider,
-          defaultModel: channelDefaultModel,
-        },
         embedding: {
           provider: embeddingForm.provider,
           model: embeddingForm.model,
@@ -463,22 +401,6 @@ const AiConfig: React.FC = () => {
     message.success(t('aiConfig.providerRemoved'));
   };
 
-  const updateChannelEnabled = (channel: string, value: boolean) => {
-    setChannelForms((prev) => ({
-      ...prev,
-      [channel]: { ...prev[channel], enabled: value },
-    }));
-  };
-
-  const updateChannelSetting = (channel: string, key: string, value: string) => {
-    setChannelForms((prev) => ({
-      ...prev,
-      [channel]: {
-        ...prev[channel],
-        settings: { ...(prev[channel]?.settings || {}), [key]: value },
-      },
-    }));
-  };
 
   const handleCopilotLogin = async () => {
     setCopilotLoading(true);
@@ -804,57 +726,6 @@ const AiConfig: React.FC = () => {
     );
   };
 
-  const renderChannelTab = (channel: string) => {
-    const form = channelForms[channel] || { enabled: false, settings: {} };
-    const meta = CHANNEL_SETTINGS_META[channel] || [];
-
-    return (
-      <div style={{ opacity: enabled ? 1 : 0.5, pointerEvents: enabled ? 'auto' : 'none' }}>
-        <Form layout="vertical" style={{ maxWidth: 600 }}>
-          <Form.Item label={t('aiConfig.channel.enabled')}>
-            <Switch checked={form.enabled} onChange={(v) => updateChannelEnabled(channel, v)} />
-          </Form.Item>
-          {meta.map((field) => (
-            <Form.Item key={field.key} label={field.label}>
-              {field.sensitive ? (
-                <Input.Password
-                  value={form.settings?.[field.key] || ''}
-                  onChange={(e) => updateChannelSetting(channel, field.key, e.target.value)}
-                  placeholder={field.placeholder}
-                />
-              ) : (
-                <Input
-                  value={form.settings?.[field.key] || ''}
-                  onChange={(e) => updateChannelSetting(channel, field.key, e.target.value)}
-                  placeholder={field.placeholder}
-                />
-              )}
-            </Form.Item>
-          ))}
-          <Divider dashed />
-          <Form.Item label={t('aiConfig.channel.channelProvider')} extra={t('aiConfig.channel.channelProviderHint')}>
-            <Select
-              value={form.settings?.['provider'] || ''}
-              onChange={(v) => updateChannelSetting(channel, 'provider', v)}
-              allowClear
-              placeholder={t('aiConfig.channel.channelProviderPlaceholder')}
-              options={[
-                { label: t('aiConfig.channel.useDefault'), value: '' },
-                ...allProviders().map(({ key, label }) => ({ label, value: key })),
-              ]}
-            />
-          </Form.Item>
-          <Form.Item label={t('aiConfig.channel.channelModel')} extra={t('aiConfig.channel.channelModelHint')}>
-            <Input
-              value={form.settings?.['model'] || ''}
-              onChange={(e) => updateChannelSetting(channel, 'model', e.target.value)}
-              placeholder={t('aiConfig.channel.channelModelPlaceholder')}
-            />
-          </Form.Item>
-        </Form>
-      </div>
-    );
-  };
 
   const renderEmbeddingConfig = () => {
     const embeddingModels = EMBEDDING_PROVIDERS[embeddingForm.provider]?.models || [];
@@ -1146,97 +1017,6 @@ const AiConfig: React.FC = () => {
         </Form>
       </Card>
 
-      <Card
-        style={{ borderRadius: 12, marginBottom: 16, opacity: enabled ? 1 : 0.5, pointerEvents: enabled ? 'auto' : 'none' }}
-      >
-        <Title level={5} style={{ marginTop: 0, color: token.colorText }}>{t('aiConfig.channel.title')}</Title>
-        <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
-          {t('aiConfig.channel.description')}
-        </Text>
-        <Collapse
-          ghost
-          style={{ marginBottom: 16 }}
-          items={[
-            {
-              key: 'context',
-              label: (
-                <Space>
-                  <SettingOutlined />
-                  <span>{t('aiConfig.channel.contextTitle')}</span>
-                </Space>
-              ),
-              children: (
-                <Form layout="vertical" style={{ maxWidth: 600 }}>
-                  <Row gutter={16}>
-                    <Col xs={24} sm={12}>
-                      <Form.Item label={t('aiConfig.channel.contextMode')} extra={t('aiConfig.channel.contextModeHint')}>
-                        <Select
-                          value={channelContextMode}
-                          onChange={setChannelContextMode}
-                          options={[
-                            { label: t('aiConfig.channel.contextModePersistent'), value: 'persistent' },
-                            { label: t('aiConfig.channel.contextModeStateless'), value: 'stateless' },
-                          ]}
-                        />
-                      </Form.Item>
-                    </Col>
-                    <Col xs={24} sm={12}>
-                      <Form.Item label={t('aiConfig.channel.sessionTimeout')} extra={t('aiConfig.channel.sessionTimeoutHint')}>
-                        <InputNumber
-                          value={channelSessionTimeout}
-                          onChange={(v) => setChannelSessionTimeout(v ?? 30)}
-                          min={0}
-                          max={1440}
-                          addonAfter={t('common.minutes')}
-                          style={{ width: '100%' }}
-                        />
-                      </Form.Item>
-                    </Col>
-                  </Row>
-                  <Row gutter={16}>
-                    <Col xs={24} sm={12}>
-                      <Form.Item label={t('aiConfig.channel.defaultProvider')} extra={t('aiConfig.channel.defaultProviderHint')}>
-                        <Select
-                          value={channelDefaultProvider}
-                          onChange={setChannelDefaultProvider}
-                          allowClear
-                          placeholder={t('aiConfig.channel.defaultProviderPlaceholder')}
-                          options={[
-                            { label: t('aiConfig.channel.useSystemDefault'), value: '' },
-                            ...allProviders().map(({ key, label }) => ({ label, value: key })),
-                          ]}
-                        />
-                      </Form.Item>
-                    </Col>
-                    <Col xs={24} sm={12}>
-                      <Form.Item label={t('aiConfig.channel.defaultModel')} extra={t('aiConfig.channel.defaultModelHint')}>
-                        <Input
-                          value={channelDefaultModel}
-                          onChange={(e) => setChannelDefaultModel(e.target.value)}
-                          placeholder={t('aiConfig.channel.defaultModelPlaceholder')}
-                        />
-                      </Form.Item>
-                    </Col>
-                  </Row>
-                  <Alert
-                    type="info"
-                    showIcon
-                    message={t('aiConfig.channel.newCommandHint')}
-                    style={{ marginTop: 8 }}
-                  />
-                </Form>
-              ),
-            },
-          ]}
-        />
-        <Tabs
-          items={Object.keys(CHANNEL_LABELS).map((key) => ({
-            key,
-            label: t(`aiConfig.channel.${key === 'wechat-work' ? 'wechatWork' : key}`),
-            children: renderChannelTab(key),
-          }))}
-        />
-      </Card>
 
       <Modal
         title={t('aiConfig.addProviderModal.title')}

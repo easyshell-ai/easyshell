@@ -34,6 +34,7 @@ import {
   disableScheduledTask,
   runScheduledTask,
   getTemplates,
+  getAiConfig,
 } from '../../api/ai';
 import { getHostList } from '../../api/host';
 import { getClusterList } from '../../api/cluster';
@@ -205,6 +206,16 @@ const AiScheduled: React.FC = () => {
 
   const targetType = Form.useWatch('targetType', form);
   const notifyStrategy = Form.useWatch('notifyStrategy', form);
+  const [enabledChannels, setEnabledChannels] = useState<{ key: string; label: string }[]>([]);
+
+  const CHANNEL_LABELS: Record<string, string> = {
+    telegram: 'Telegram',
+    discord: 'Discord',
+    dingtalk: 'DingTalk',
+    feishu: 'Feishu',
+    slack: 'Slack',
+    'wechat-work': 'WeCom',
+  };
 
   const fetchTasks = useCallback(() => {
     setLoading(true);
@@ -255,6 +266,25 @@ const AiScheduled: React.FC = () => {
     fetchTemplates();
     fetchTargets();
   }, [fetchTasks, fetchTemplates, fetchTargets]);
+
+  useEffect(() => {
+    getAiConfig()
+      .then((res) => {
+        if (res.code === 200 && res.data) {
+          const channels = Object.entries(res.data.channels || {})
+            .filter(([, ch]) => ch.enabled)
+            .map(([key]) => ({ key, label: CHANNEL_LABELS[key] || key }));
+          // Also include all known channels so user can select any
+          const allChannels = Object.keys(CHANNEL_LABELS).map((key) => ({
+            key,
+            label: CHANNEL_LABELS[key],
+          }));
+          setEnabledChannels(allChannels.length > 0 ? allChannels : channels);
+        }
+      })
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleCreate = () => {
     setEditingTask(null);
@@ -592,9 +622,9 @@ const AiScheduled: React.FC = () => {
 
           <Form.Item name="notifyChannels" label={t('scheduled.field.notifyChannels')}>
             <Select mode="multiple" placeholder={t('scheduled.field.notifyChannelsPlaceholder')}>
-              <Select.Option value="telegram">Telegram</Select.Option>
-              <Select.Option value="discord">Discord</Select.Option>
-              <Select.Option value="dingtalk">DingTalk</Select.Option>
+              {enabledChannels.map((ch) => (
+                <Select.Option key={ch.key} value={ch.key}>{ch.label}</Select.Option>
+              ))}
             </Select>
           </Form.Item>
         </Form>

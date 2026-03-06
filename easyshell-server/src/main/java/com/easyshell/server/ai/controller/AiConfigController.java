@@ -79,13 +79,13 @@ public class AiConfigController {
 
     private static final String MASKED_KEY_PATTERN = "***";
     private static final Set<String> CHANNEL_SENSITIVE_KEYS = Set.of(
-            "bot-token", "webhook-url", "secret"
+            "bot-token", "webhook-url", "secret", "client-id", "client-secret", "app-id", "app-secret"
     );
     private static final Map<String, List<String>> CHANNEL_SETTINGS_KEYS = Map.of(
             "telegram", List.of("bot-token", "allowed-chat-ids"),
             "discord", List.of("bot-token", "guild-id", "allowed-channel-ids"),
-            "dingtalk", List.of("webhook-url", "secret"),
-            "feishu", List.of("webhook-url", "secret"),
+            "dingtalk", List.of("mode", "webhook-url", "secret", "client-id", "client-secret"),
+            "feishu", List.of("mode", "webhook-url", "secret", "app-id", "app-secret"),
             "slack", List.of("webhook-url", "bot-token"),
             "wechat-work", List.of("webhook-url")
     );

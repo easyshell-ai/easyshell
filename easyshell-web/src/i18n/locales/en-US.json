@@ -66,6 +66,7 @@
     "system_users": "Users",
     "system_config": "Configuration",
     "system_ai": "AI Settings",
+    "system_bot": "Bot Channels",
     "system_risk": "Risk Control",
     "system_agents": "Agent Manager",
     "system_memory": "Memory Store",
