@@ -12,9 +12,9 @@ import {
   theme,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { DeleteOutlined, ClearOutlined } from '@ant-design/icons';
+import { DeleteOutlined, ClearOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
-import { getMemoryList, deleteMemory, clearAllMemory } from '../../api/memory';
+import { getMemoryList, deleteMemory, clearAllMemory, triggerSummarization } from '../../api/memory';
 import type { AiSessionSummary } from '../../types';
 
 const { Title } = Typography;
@@ -50,6 +50,7 @@ const MemoryManagement: React.FC = () => {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+  
 
   const handleDelete = async (id: number) => {
     try {
@@ -77,6 +78,20 @@ const MemoryManagement: React.FC = () => {
       }
     } catch {
       message.error(t('memory.deleteError'));
+    }
+  };
+
+  const handleTriggerSummarization = async () => {
+    try {
+      const res = await triggerSummarization();
+      if (res.code === 200) {
+        message.success(t('memory.triggerSuccess'));
+        setTimeout(() => fetchData(), 5000);
+      } else {
+        message.error(res.message || t('memory.triggerError'));
+      }
+    } catch {
+      message.error(t('memory.triggerError'));
     }
   };
 
@@ -170,17 +185,23 @@ const MemoryManagement: React.FC = () => {
         <Title level={4} style={{ margin: 0, color: token.colorText }}>
           {t('memory.title')}
         </Title>
-        <Popconfirm
-          title={t('memory.clearAllConfirm')}
-          onConfirm={handleClearAll}
-          okText={t('common.confirm')}
-          cancelText={t('common.cancel')}
-        >
-          <Button danger icon={<ClearOutlined />}>
-            {t('memory.clearAll')}
+        <Space>
+          <Button type="primary" icon={<ThunderboltOutlined />} onClick={handleTriggerSummarization}>
+            {t('memory.triggerSummarization')}
           </Button>
-        </Popconfirm>
+          <Popconfirm
+            title={t('memory.clearAllConfirm')}
+            onConfirm={handleClearAll}
+            okText={t('common.confirm')}
+            cancelText={t('common.cancel')}
+          >
+            <Button danger icon={<ClearOutlined />}>
+              {t('memory.clearAll')}
+            </Button>
+          </Popconfirm>
+        </Space>
       </div>
+
 
       <Card style={{ borderRadius: 12 }} styles={{ body: { padding: 0 } }}>
         <Table<AiSessionSummary>

@@ -46,8 +46,8 @@ public class RiskAssessment {
         return switch (level) {
             case LOW -> "所有命令均为低风险，AI 可自主执行";
             case MEDIUM -> "包含 " + nonLowCount + " 条中风险命令，需人工确认";
-            case HIGH -> "包含高危命令，禁止 AI 执行";
-            case BANNED -> "包含封禁命令";
+            case HIGH -> "包含高危命令，需管理员审批后执行";
+            case BANNED -> "包含封禁命令，需管理员审批后执行";
         };
     }
 }

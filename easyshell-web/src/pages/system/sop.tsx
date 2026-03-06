@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   Card,
+  Alert,
   Table,
   Button,
   Space,
@@ -22,6 +23,8 @@ import {
   ThunderboltOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router-dom';
+import { getAiConfig } from '../../api/ai';
 import { getSopList, updateSop, deleteSop, triggerSopExtraction } from '../../api/sop';
 import type { AiSopTemplate, AiSopTemplateRequest } from '../../types';
 
@@ -31,6 +34,8 @@ const { TextArea } = Input;
 const SopManagement: React.FC = () => {
   const { token } = theme.useToken();
   const { t } = useTranslation();
+  const navigate = useNavigate();
+  const [embeddingConfigured, setEmbeddingConfigured] = useState(true);
   const [data, setData] = useState<AiSopTemplate[]>([]);
   const [loading, setLoading] = useState(false);
   const [total, setTotal] = useState(0);
@@ -56,6 +61,19 @@ const SopManagement: React.FC = () => {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+  
+  useEffect(() => {
+    getAiConfig().then((res) => {
+      if (res.data?.embedding?.apiKey) {
+        setEmbeddingConfigured(res.data.embedding.apiKey.trim() !== "");
+      } else {
+        setEmbeddingConfigured(false);
+      }
+    }).catch(() => {
+      // fallback to true if config fetch fails
+      setEmbeddingConfigured(true);
+    });
+  }, []);
 
   const openEdit = (sop: AiSopTemplate) => {
     setEditingSop(sop);
@@ -228,6 +246,20 @@ const SopManagement: React.FC = () => {
           {t('sop.extract')}
         </Button>
       </div>
+
+      {!embeddingConfigured && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message={t('sop.embeddingWarning')}
+          action={
+            <Button size="small" type="link" onClick={() => navigate('/system/ai')}>
+              {t('sop.goToSettings')}
+            </Button>
+          }
+        />
+      )}
 
       <Card style={{ borderRadius: 12 }} styles={{ body: { padding: 0 } }}>
         <Table<AiSopTemplate>

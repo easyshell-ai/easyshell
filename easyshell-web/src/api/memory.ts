@@ -16,3 +16,7 @@ export function deleteMemory(id: number): Promise<ApiResponse<null>> {
 export function clearAllMemory(): Promise<ApiResponse<null>> {
   return request.delete('/memory');
 }
+
+export function triggerSummarization(): Promise<ApiResponse<string>> {
+  return request.post('/memory/trigger-summarization');
+}

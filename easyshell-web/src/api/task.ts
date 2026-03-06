@@ -1,7 +1,7 @@
 import request from './request';
-import type { ApiResponse, Task, TaskCreateRequest, TaskDetail, PageResponse } from '../types';
+import type { ApiResponse, Task, TaskCreateRequest, TaskDetail, PageResponse, RiskAssessment } from '../types';
 
-export function createTask(data: TaskCreateRequest): Promise<ApiResponse<Task>> {
+export function createTask(data: TaskCreateRequest): Promise<ApiResponse<Task | RiskAssessment>> {
   return request.post('/v1/task', data);
 }
 
@@ -15,4 +15,8 @@ export function getTaskPage(params: { status?: number; page?: number; size?: num
 
 export function getTaskDetail(taskId: string): Promise<ApiResponse<TaskDetail>> {
   return request.get(`/v1/task/${taskId}`);
+}
+
+export function submitTaskForApproval(data: TaskCreateRequest): Promise<ApiResponse<Task>> {
+  return request.post('/v1/task/submit-approval', data);
 }

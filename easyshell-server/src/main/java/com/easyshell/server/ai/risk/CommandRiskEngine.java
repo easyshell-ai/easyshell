@@ -8,6 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
+import java.util.regex.Pattern;
 
 @Slf4j
 @Service
@@ -108,7 +109,7 @@ public class CommandRiskEngine {
         String trimmed = command.trim();
 
         for (String pattern : getAllBannedPatterns()) {
-            if (trimmed.contains(pattern)) {
+            if (matchesPattern(trimmed, pattern)) {
                 return RiskLevel.BANNED;
             }
         }
@@ -166,7 +167,7 @@ public class CommandRiskEngine {
         String lower = scriptContent.toLowerCase();
 
         for (String pattern : getAllBannedPatterns()) {
-            if (lower.contains(pattern.toLowerCase())) {
+            if (matchesPatternInScript(lower, pattern.toLowerCase())) {
                 matches.add(pattern);
             }
         }
@@ -211,6 +212,37 @@ public class CommandRiskEngine {
             if (tokens.contains(part)) return true;
         }
         return false;
+    }
+
+    /**
+     * Check if a single command line matches a banned pattern using word-boundary matching.
+     * For short patterns (single word like "rm", "dd"), uses word-boundary regex to avoid
+     * false positives (e.g., "rm" matching "format", "inform").
+     * For multi-word patterns (like "rm -rf /", "nc -e"), uses substring matching since
+     * they are specific enough to not cause false positives.
+     */
+    private boolean matchesPattern(String command, String pattern) {
+        String lowerCmd = command.toLowerCase();
+        String lowerPattern = pattern.toLowerCase();
+        if (!pattern.contains(" ")) {
+            // Single-word pattern: use word-boundary matching
+            return Pattern.compile("(?i)\\b" + Pattern.quote(lowerPattern) + "\\b").matcher(lowerCmd).find();
+        }
+        // Multi-word pattern: substring matching is safe (specific enough)
+        return lowerCmd.contains(lowerPattern);
+    }
+
+    /**
+     * Check if a full script (multi-line) contains a banned pattern.
+     * Same word-boundary logic as matchesPattern but applied to the full script content.
+     */
+    private boolean matchesPatternInScript(String scriptLower, String patternLower) {
+        if (!patternLower.contains(" ")) {
+            // Single-word pattern: use word-boundary matching
+            return Pattern.compile("\\b" + Pattern.quote(patternLower) + "\\b").matcher(scriptLower).find();
+        }
+        // Multi-word pattern: substring matching
+        return scriptLower.contains(patternLower);
     }
 
     private String buildReason(String command, RiskLevel level) {

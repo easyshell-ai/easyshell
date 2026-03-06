@@ -43,8 +43,12 @@ public class AiExecutionService {
         );
 
         return switch (risk.getOverallRisk()) {
-            case BANNED -> AiExecutionResult.rejected(
-                    "脚本包含封禁命令: " + String.join(", ", risk.getBannedMatches()));
+            case BANNED -> {
+                Task task = createPendingApprovalTask(request, risk);
+                yield AiExecutionResult.pendingApproval(task.getId(),
+                        "脚本包含封禁命令: " + String.join(", ", risk.getBannedMatches()) + "，已提交待管理员审批",
+                        risk.getCommandRisks());
+            }
 
             case HIGH -> {
                 Task task = createPendingApprovalTask(request, risk);

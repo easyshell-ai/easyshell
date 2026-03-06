@@ -132,6 +132,7 @@ const RiskConfig: React.FC = () => {
 
   const renderCommandCard = (
     title: string,
+    description: string,
     icon: React.ReactNode,
     color: string,
     borderColor: string,
@@ -146,11 +147,12 @@ const RiskConfig: React.FC = () => {
       style={{ borderRadius: 12, borderTop: `3px solid ${borderColor}` }}
       styles={{ body: { padding: '16px 20px' } }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
         {icon}
         <Text strong style={{ fontSize: 15, color: token.colorText }}>{title}</Text>
         <Tag color={color}>{commands.length}</Tag>
       </div>
+      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 12 }}>{description}</Text>
 
       <div
         style={{
@@ -237,6 +239,7 @@ const RiskConfig: React.FC = () => {
         <Col xs={24} md={8}>
           {renderCommandCard(
             t('risk.bannedCommands'),
+            t('risk.bannedDescription'),
             <StopOutlined style={{ fontSize: isMobile ? 16 : 18, color: '#eb2f96' }} />,
             'magenta',
             '#eb2f96',
@@ -251,6 +254,7 @@ const RiskConfig: React.FC = () => {
         <Col xs={24} md={8}>
           {renderCommandCard(
             t('risk.highCommands'),
+            t('risk.highDescription'),
             <WarningOutlined style={{ fontSize: isMobile ? 16 : 18, color: '#fa541c' }} />,
             'red',
             '#fa541c',
@@ -265,6 +269,7 @@ const RiskConfig: React.FC = () => {
         <Col xs={24} md={8}>
           {renderCommandCard(
             t('risk.lowCommands'),
+            t('risk.lowDescription'),
             <SafetyCertificateOutlined style={{ fontSize: isMobile ? 16 : 18, color: '#52c41a' }} />,
             'green',
             '#52c41a',

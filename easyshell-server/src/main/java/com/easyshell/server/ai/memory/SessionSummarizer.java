@@ -69,20 +69,22 @@ public class SessionSummarizer {
 
     @Async
     public void summarizeSession(String sessionId, Long userId) {
+        log.info("[Memory] Starting summarization for session {} (user={})", sessionId, userId);
         try {
             if (!configService.getBoolean("ai.memory.enabled", true)) {
+                log.info("[Memory] Memory feature disabled, skipping session {}", sessionId);
                 return;
             }
 
             if (summaryRepository.existsBySessionId(sessionId)) {
-                log.debug("Session {} already summarized, skipping", sessionId);
+                log.info("[Memory] Session {} already summarized, skipping", sessionId);
                 return;
             }
 
             List<AiChatMessage> messages = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
             int minMessages = configService.getInt("ai.memory.min-messages-for-summary", 3);
             if (messages.size() < minMessages) {
-                log.debug("Session {} has only {} messages, skipping summary (min: {})",
+                log.info("[Memory] Session {} has only {} messages, need {} — skipping",
                         sessionId, messages.size(), minMessages);
                 return;
             }
@@ -101,6 +103,7 @@ public class SessionSummarizer {
                 input = input.substring(0, maxChars) + "\n...[truncated]";
             }
 
+            log.info("[Memory] Calling AI to summarize session {} ({} chars input)", sessionId, input.length());
             ChatModel chatModel = chatModelFactory.getChatModel(null);
             List<org.springframework.ai.chat.messages.Message> promptMessages = List.of(
                     new SystemMessage(SUMMARIZE_PROMPT),
@@ -141,9 +144,15 @@ public class SessionSummarizer {
 
             Document doc = new Document(embeddingId, embeddingText, metadata);
             if (vectorStore != null) {
-                vectorStore.add(List.of(doc));
+                try {
+                    vectorStore.add(List.of(doc));
+                    log.info("[Memory] Stored embedding for session {}", sessionId);
+                } catch (Exception vecEx) {
+                    log.warn("[Memory] VectorStore failed for session {}, saving summary without embedding: {}",
+                            sessionId, vecEx.getMessage());
+                }
             } else {
-                log.warn("VectorStore not available, skipping embedding for session {}", sessionId);
+                log.warn("[Memory] VectorStore not available, saving summary without embedding for session {}", sessionId);
             }
 
             summaryRepository.save(summary);
@@ -162,7 +171,7 @@ public class SessionSummarizer {
             }
 
         } catch (Exception e) {
-            log.error("Failed to summarize session {}: {}", sessionId, e.getMessage(), e);
+            log.error("[Memory] Failed to summarize session {}: {}", sessionId, e.getMessage(), e);
         }
     }
 

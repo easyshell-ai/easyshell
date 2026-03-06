@@ -33,4 +33,12 @@ public class R<T> {
         r.setMessage(message);
         return r;
     }
+
+    public static <T> R<T> of(int code, String message, T data) {
+        R<T> r = new R<>();
+        r.setCode(code);
+        r.setMessage(message);
+        r.setData(data);
+        return r;
+    }
 }

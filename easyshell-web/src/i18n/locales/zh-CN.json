@@ -49,7 +49,8 @@
       "infrastructure": "基础设施",
       "devops": "运维操作",
       "intelligence": "AI 智能",
-      "administration": "系统管理"
+      "administration": "系统管理",
+      "approval": "审批管理"
     },
     "dashboard": "仪表盘",
     "host": "主机管理",
@@ -314,8 +315,11 @@
     "commandExists": "该命令已存在",
     "scriptRequired": "请输入要检测的脚本内容",
     "bannedCommands": "封禁命令",
+    "bannedDescription": "封禁命令在 AI 和手动执行时都需要管理员审批才能执行",
     "highCommands": "高危命令",
+    "highDescription": "高危命令需要人工审批确认后才能执行",
     "lowCommands": "低风险命令",
+    "lowDescription": "低风险命令 AI 可自动执行，无需审批",
     "noCommands": "暂无命令",
     "bannedPlaceholder": "输入要封禁的命令，如 rm -rf /",
     "highPlaceholder": "输入高危命令，如 reboot",
@@ -843,7 +847,10 @@
       "PARTIAL": "部分成功",
       "FAILED": "失败"
     },
-    "confirmDelete": "确认删除此记忆？"
+    "confirmDelete": "确认删除此记忆？",
+    "triggerSummarization": "触发摘要生成",
+    "triggerSuccess": "已触发摘要生成，请稍等片刻后刷新",
+    "triggerError": "触发摘要生成失败"
   },
   "sop": {
     "title": "SOP 管理",
@@ -880,6 +887,9 @@
       "enabled": "启用"
     },
     "confirmDelete": "确认删除此 SOP？"
+    ,
+    "embeddingWarning": "向量化模型未配置，SOP 语义匹配功能不可用。请设置 Embedding 模型以启用完整的 SOP 功能。",
+    "goToSettings": "前往设置"
   },
   "dag": {
     "title": "DAG 工作流",
@@ -1442,6 +1452,19 @@
       "startedAt": "开始时间",
       "finishedAt": "结束时间",
       "exitCode": "退出码"
+    },
+    "risk": {
+      "title": "风险检测",
+      "level": "风险等级",
+      "banned": "封禁",
+      "high": "高危",
+      "bannedCommands": "封禁命令",
+      "explanation": "风险说明",
+      "confirmHint": "该脚本包含高风险命令，执行前需要管理员审批。是否提交审批？",
+      "submitApproval": "提交审批",
+      "cancel": "取消",
+      "approvalSubmitted": "已提交审批，请等待管理员处理",
+      "approvalFailed": "提交审批失败"
     }
   }
 }

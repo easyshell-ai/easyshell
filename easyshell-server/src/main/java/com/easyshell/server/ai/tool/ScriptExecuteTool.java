@@ -26,7 +26,7 @@ public class ScriptExecuteTool {
         this.currentSourceIp = sourceIp;
     }
 
-    @Tool(description = "在指定主机上执行 Shell 脚本。脚本会经过风险评估：低风险自动执行，中/高风险需人工确认（用户确认后请调用 approveTask 工具），封禁命令将被拒绝。")
+    @Tool(description = "在指定主机上执行 Shell 脚本。脚本会经过风险评估：低风险自动执行，中/高风险和封禁命令均需人工审批（用户确认后请调用 approveTask 工具）。")
     public String executeScript(
             @ToolParam(description = "要执行的 Shell 脚本内容") String scriptContent,
             @ToolParam(description = "目标主机 ID 列表。必须是真实存在的主机 Agent ID，如果上下文中用户已指定目标主机则直接使用其 ID，否则请先调用 listHosts 工具获取可用主机列表及其 ID，不要猜测或编造 ID") List<String> agentIds,
@@ -55,7 +55,13 @@ public class ScriptExecuteTool {
 
         return switch (result.getStatus()) {
             case "executed" -> "脚本已自动执行，任务ID: " + result.getTaskId();
-            case "pending_approval" -> "脚本包含中风险命令，已提交待人工审批。任务ID: " + result.getTaskId() + "\n原因: " + result.getMessage();
+            case "pending_approval" -> {
+                String riskPrefix = result.getMessage() != null && result.getMessage().contains("封禁")
+                        ? "脚本包含封禁命令，已提交待管理员审批。"
+                        : "脚本包含风险命令，已提交待人工审批。";
+                yield riskPrefix + "任务ID: " + result.getTaskId() + "\n原因: " + result.getMessage()
+                        + "\n请告知用户可以通过审批页面或调用 approveTask 工具来审批执行。";
+            }
             case "rejected" -> "脚本被拒绝执行。\n原因: " + result.getMessage();
             default -> "执行状态: " + result.getStatus() + " - " + result.getMessage();
         };

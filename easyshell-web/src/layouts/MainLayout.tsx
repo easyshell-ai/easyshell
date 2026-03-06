@@ -47,6 +47,7 @@ const getSelectedKeys = (pathname: string): string[] => {
   if (pathname.startsWith('/host/')) return ['/host'];
   if (pathname.startsWith('/terminal/')) return ['/host'];
   if (pathname.startsWith('/script/')) return ['/script'];
+  if (pathname === '/ai/approval') return ['/ai/approval'];
   if (pathname.startsWith('/ai/')) return [pathname];
   return ['/' + pathname.split('/')[1]];
 };
@@ -54,7 +55,7 @@ const getSelectedKeys = (pathname: string): string[] => {
 const getOpenKeys = (pathname: string): string[] => {
   const keys: string[] = [];
   if (pathname.startsWith('/system')) keys.push('/system');
-  if (pathname.startsWith('/ai')) keys.push('/ai');
+  if (pathname.startsWith('/ai') && pathname !== '/ai/approval') keys.push('/ai');
   return keys;
 };
 
@@ -121,6 +122,9 @@ const MainLayout: React.FC = () => {
         { key: '/task', icon: <PlayCircleOutlined />, label: t('nav.task') },
         { key: '/audit', icon: <AuditOutlined />, label: t('nav.audit') },
       ]},
+      { type: 'group', label: <div style={groupLabelStyle}>{t('nav.group.approval')}</div>, children: [
+        { key: '/ai/approval', icon: <CheckSquareOutlined />, label: t('nav.ai_approval') },
+      ]},
       { type: 'group', label: <div style={groupLabelStyle}>{t('nav.group.intelligence')}</div>, children: [
         {
           key: '/ai',
@@ -130,7 +134,6 @@ const MainLayout: React.FC = () => {
             { key: '/ai/chat', icon: <MessageOutlined />, label: t('nav.ai_chat') },
             { key: '/ai/scheduled', icon: <ClockCircleOutlined />, label: t('nav.ai_scheduled') },
             { key: '/ai/reports', icon: <FileTextOutlined />, label: t('nav.ai_reports') },
-            { key: '/ai/approval', icon: <CheckSquareOutlined />, label: t('nav.ai_approval') },
           ],
         },
       ]},
@@ -311,7 +314,7 @@ const MainLayout: React.FC = () => {
             color: isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.3)',
             textAlign: 'center',
           }}>
-            EasyShell v1.0.5
+            EasyShell v1.0.6
           </div>
         </div>
       )}

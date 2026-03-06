@@ -49,7 +49,8 @@
       "infrastructure": "INFRASTRUCTURE",
       "devops": "OPERATIONS",
       "intelligence": "AI INTELLIGENCE",
-      "administration": "ADMINISTRATION"
+      "administration": "ADMINISTRATION",
+      "approval": "APPROVAL"
     },
     "dashboard": "Dashboard",
     "host": "Hosts",
@@ -314,8 +315,11 @@
     "commandExists": "This command already exists",
     "scriptRequired": "Please enter script content to assess",
     "bannedCommands": "Banned Commands",
+    "bannedDescription": "Banned commands require admin approval for both AI and manual execution",
     "highCommands": "High Risk Commands",
+    "highDescription": "High risk commands require manual approval before execution",
     "lowCommands": "Low Risk Commands",
+    "lowDescription": "Low risk commands can be auto-executed by AI without approval",
     "noCommands": "No commands",
     "bannedPlaceholder": "Enter command to ban, e.g. rm -rf /",
     "highPlaceholder": "Enter high risk command, e.g. reboot",
@@ -843,7 +847,10 @@
       "PARTIAL": "Partial",
       "FAILED": "Failed"
     },
-    "confirmDelete": "Delete this memory?"
+    "confirmDelete": "Delete this memory?",
+    "triggerSummarization": "Trigger Summarization",
+    "triggerSuccess": "Summarization triggered, please refresh shortly",
+    "triggerError": "Failed to trigger summarization"
   },
   "sop": {
     "title": "SOP Management",
@@ -880,6 +887,9 @@
       "enabled": "Enabled"
     },
     "confirmDelete": "Delete this SOP?"
+    ,
+    "embeddingWarning": "Embedding model not configured. Semantic SOP matching is unavailable. Please configure an Embedding model to enable full SOP functionality.",
+    "goToSettings": "Go to Settings"
   },
   "dag": {
     "title": "DAG Workflow",
@@ -1442,6 +1452,19 @@
       "startedAt": "Start Time",
       "finishedAt": "End Time",
       "exitCode": "Exit Code"
+    },
+    "risk": {
+      "title": "Risk Detected",
+      "level": "Risk Level",
+      "banned": "Banned",
+      "high": "High Risk",
+      "bannedCommands": "Banned Commands",
+      "explanation": "Explanation",
+      "confirmHint": "This script contains high-risk commands and requires admin approval before execution. Submit for approval?",
+      "submitApproval": "Submit for Approval",
+      "cancel": "Cancel",
+      "approvalSubmitted": "Submitted for approval. Please wait for admin review.",
+      "approvalFailed": "Failed to submit for approval"
     }
   }
 }

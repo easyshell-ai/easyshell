@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Table, Button, Form, Input, Select, InputNumber, Tag, Space, Drawer, Card,
-  Row, Col, message, Divider, Descriptions, theme,
+  Row, Col, message, Divider, Descriptions, theme, Modal,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { PlayCircleOutlined, EyeOutlined, ClusterOutlined, TagsOutlined, ReloadOutlined } from '@ant-design/icons';
@@ -10,12 +10,12 @@ import dayjs from 'dayjs';
 import CodeMirror from '@uiw/react-codemirror';
 import { StreamLanguage } from '@codemirror/language';
 import { shell } from '@codemirror/legacy-modes/mode/shell';
-import { createTask, getTaskList, getTaskDetail } from '../../api/task';
+import { createTask, getTaskList, getTaskDetail, submitTaskForApproval } from '../../api/task';
 import { getScriptList } from '../../api/script';
 import { getHostList } from '../../api/host';
 import { getClusterList } from '../../api/cluster';
 import { getTagList } from '../../api/tag';
-import type { Task, TaskDetail, Script, Agent, Job, TaskCreateRequest, ClusterVO, TagVO } from '../../types';
+import type { Task, TaskDetail, Script, Agent, Job, TaskCreateRequest, ClusterVO, TagVO, RiskAssessment } from '../../types';
 import { taskStatusMap, jobStatusMap } from '../../utils/status';
 
 const TaskPage: React.FC = () => {
@@ -206,45 +206,77 @@ const TaskPage: React.FC = () => {
     }
     form.validateFields().then((values) => {
       setSubmitting(true);
-      const request: TaskCreateRequest = {
+      const taskRequest: TaskCreateRequest = {
         name: values.name,
         timeoutSeconds: values.timeoutSeconds || 600,
       };
 
       if (targetMode === 'agent') {
-        request.agentIds = values.agentIds;
+        taskRequest.agentIds = values.agentIds;
       } else if (targetMode === 'cluster') {
-        request.clusterIds = values.clusterIds;
+        taskRequest.clusterIds = values.clusterIds;
       } else if (targetMode === 'tag') {
-        request.tagIds = values.tagIds;
+        taskRequest.tagIds = values.tagIds;
       }
 
       if (scriptMode === 'select' && values.scriptId) {
-        request.scriptId = values.scriptId;
+        taskRequest.scriptId = values.scriptId;
       } else if (scriptMode === 'manual' && manualScriptContent) {
-        request.scriptContent = manualScriptContent;
+        taskRequest.scriptContent = manualScriptContent;
       }
 
-      createTask(request)
+      createTask(taskRequest)
         .then((res) => {
           if (res.code === 200) {
             message.success(t('task.taskCreated'));
             form.resetFields();
             setManualScriptContent('');
             fetchTasks();
-            if (res.data?.id) {
+            if (res.data && 'id' in res.data) {
+              const taskData = res.data as Task;
               setDrawerOpen(true);
               setDetailLoading(true);
               setTaskDetail(null);
-              connectWebSocket(res.data.id);
+              connectWebSocket(taskData.id);
               setTimeout(() => {
-                getTaskDetail(res.data.id)
+                getTaskDetail(taskData.id)
                   .then((detailRes) => {
                     if (detailRes.code === 200) setTaskDetail(detailRes.data);
                   })
                   .finally(() => setDetailLoading(false));
               }, 1500);
             }
+          } else if (res.code === 449 && res.data) {
+            // Risk detected — show confirmation dialog for approval
+            const risk = res.data as RiskAssessment;
+            const riskLabel = risk.overallRisk === 'BANNED' ? t('task.risk.banned') : t('task.risk.high');
+            Modal.confirm({
+              title: t('task.risk.title'),
+              content: (
+                <div>
+                  <p><strong>{t('task.risk.level')}:</strong> <Tag color="red">{riskLabel}</Tag></p>
+                  {risk.bannedMatches && risk.bannedMatches.length > 0 && (
+                    <p><strong>{t('task.risk.bannedCommands')}:</strong> {risk.bannedMatches.join(', ')}</p>
+                  )}
+                  <p><strong>{t('task.risk.explanation')}:</strong> {risk.explanation}</p>
+                  <p style={{ marginTop: 12, color: '#faad14' }}>{t('task.risk.confirmHint')}</p>
+                </div>
+              ),
+              okText: t('task.risk.submitApproval'),
+              cancelText: t('task.risk.cancel'),
+              onOk: () => {
+                return submitTaskForApproval(taskRequest).then((approvalRes) => {
+                  if (approvalRes.code === 200) {
+                    message.success(t('task.risk.approvalSubmitted'));
+                    form.resetFields();
+                    setManualScriptContent('');
+                    fetchTasks();
+                  } else {
+                    message.error(approvalRes.message || t('task.risk.approvalFailed'));
+                  }
+                });
+              },
+            });
           } else {
             message.error(res.message || t('task.createFailed'));
           }

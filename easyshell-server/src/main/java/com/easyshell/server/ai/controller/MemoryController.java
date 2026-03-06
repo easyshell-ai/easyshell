@@ -2,6 +2,8 @@ package com.easyshell.server.ai.controller;
 
 import com.easyshell.server.ai.model.entity.AiSessionSummary;
 import com.easyshell.server.ai.repository.AiSessionSummaryRepository;
+import com.easyshell.server.ai.repository.AiChatSessionRepository;
+import com.easyshell.server.ai.service.AiChatService;
 import com.easyshell.server.common.result.R;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -16,6 +18,8 @@ import org.springframework.web.bind.annotation.*;
 public class MemoryController {
 
     private final AiSessionSummaryRepository sessionSummaryRepository;
+    private final AiChatSessionRepository chatSessionRepository;
+    private final AiChatService aiChatService;
 
     @GetMapping
     public R<Page<AiSessionSummary>> list(
@@ -34,16 +38,34 @@ public class MemoryController {
 
     @DeleteMapping("/{id}")
     public R<Void> delete(@PathVariable Long id) {
-        if (!sessionSummaryRepository.existsById(id)) {
-            return R.fail("Memory not found");
-        }
-        sessionSummaryRepository.deleteById(id);
-        return R.ok(null);
+        return sessionSummaryRepository.findById(id).map(summary -> {
+            String sessionId = summary.getSessionId();
+            sessionSummaryRepository.deleteById(id);
+            // Reset summaryGenerated so it can be re-triggered
+            chatSessionRepository.findById(sessionId).ifPresent(session -> {
+                session.setSummaryGenerated(false);
+                chatSessionRepository.save(session);
+            });
+            return R.<Void>ok(null);
+        }).orElse(R.fail("Memory not found"));
     }
 
     @DeleteMapping
     public R<Void> clearAll() {
         sessionSummaryRepository.deleteAll();
+        // Reset summaryGenerated on all sessions so they can be re-triggered
+        chatSessionRepository.findAll().forEach(session -> {
+            if (Boolean.TRUE.equals(session.getSummaryGenerated())) {
+                session.setSummaryGenerated(false);
+                chatSessionRepository.save(session);
+            }
+        });
         return R.ok(null);
+    }
+
+    @PostMapping("/trigger-summarization")
+    public R<String> triggerSummarization() {
+        int count = aiChatService.triggerAllSessionSummarization();
+        return R.ok("Triggered summarization for " + count + " sessions");
     }
 }

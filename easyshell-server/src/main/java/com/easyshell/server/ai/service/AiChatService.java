@@ -442,17 +442,39 @@ public class AiChatService {
     private void triggerPreviousSessionSummarization(Long userId, String currentSessionId) {
         try {
             List<AiChatSession> userSessions = sessionRepository.findByUserIdOrderByUpdatedAtDesc(userId);
+            int triggered = 0;
             for (AiChatSession s : userSessions) {
                 if (s.getId().equals(currentSessionId)) continue;
                 if (Boolean.TRUE.equals(s.getSummaryGenerated())) continue;
                 if (s.getMessageCount() != null && s.getMessageCount() >= 3) {
+                    log.info("[Memory] Triggering summarization for session {} (user={}, msgCount={})",
+                            s.getId(), userId, s.getMessageCount());
                     sessionSummarizer.summarizeSession(s.getId(), userId);
-                    break;
+                    triggered++;
                 }
             }
+            if (triggered > 0) {
+                log.info("[Memory] Triggered summarization for {} sessions (user={})", triggered, userId);
+            }
         } catch (Exception e) {
-            log.warn("Failed to trigger session summarization for user {}: {}", userId, e.getMessage());
+            log.warn("[Memory] Failed to trigger session summarization for user {}: {}", userId, e.getMessage());
         }
+    }
+
+    public int triggerAllSessionSummarization() {
+        List<AiChatSession> allSessions = sessionRepository.findAll();
+        int triggered = 0;
+        for (AiChatSession s : allSessions) {
+            if (Boolean.TRUE.equals(s.getSummaryGenerated())) continue;
+            if (s.getMessageCount() != null && s.getMessageCount() >= 3) {
+                log.info("[Memory] Manual trigger: summarizing session {} (user={}, msgCount={})",
+                        s.getId(), s.getUserId(), s.getMessageCount());
+                sessionSummarizer.summarizeSession(s.getId(), s.getUserId());
+                triggered++;
+            }
+        }
+        log.info("[Memory] Manual trigger: {} sessions queued for summarization", triggered);
+        return triggered;
     }
 
     public void triggerSessionSummarization(String sessionId, Long userId) {
