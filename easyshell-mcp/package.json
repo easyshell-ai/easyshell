@@ -1,0 +1,67 @@
+{
+  "name": "@easyshell/mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server for EasyShell — AI-Native Server Operations Platform. Manage hosts, execute scripts, orchestrate multi-host tasks, and schedule inspections from any AI assistant.",
+  "license": "MIT",
+  "type": "module",
+  "mcpName": "io.github.easyshell-ai/mcp-server",
+  "homepage": "https://github.com/easyshell-ai/easyshell",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/easyshell-ai/easyshell.git",
+    "directory": "easyshell-mcp"
+  },
+  "bugs": {
+    "url": "https://github.com/easyshell-ai/easyshell/issues"
+  },
+  "author": "EasyShell AI <contact@req.email>",
+  "bin": {
+    "easyshell-mcp": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "server.json",
+    "smithery.yaml"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "lint": "eslint src/",
+    "test": "vitest",
+    "inspector": "npx @modelcontextprotocol/inspector dist/index.js",
+    "prepare": "npm run build",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.0.0"
+  },
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "easyshell",
+    "devops",
+    "server-management",
+    "shell",
+    "ssh",
+    "ai-ops",
+    "infrastructure",
+    "automation",
+    "claude",
+    "cursor",
+    "opencode"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}
