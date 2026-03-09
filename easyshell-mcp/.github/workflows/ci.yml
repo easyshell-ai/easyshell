@@ -1,0 +1,29 @@
+name: CI
+on:
+  push:
+    branches: [main]
+    paths: ['easyshell-mcp/**']
+  pull_request:
+    branches: [main]
+    paths: ['easyshell-mcp/**']
+
+defaults:
+  run:
+    working-directory: easyshell-mcp
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18, 20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: easyshell-mcp/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: node dist/index.js --help || true
