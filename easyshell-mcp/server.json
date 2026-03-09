@@ -1,0 +1,35 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.easyshell-ai/mcp-server",
+  "display_name": "EasyShell",
+  "description": "AI-Native Server Operations — manage hosts, execute scripts, orchestrate multi-host tasks, schedule inspections with AI-powered analysis.",
+  "homepage": "https://easyshell.ai",
+  "repository": "https://github.com/easyshell-ai/easyshell",
+  "icon": "https://easyshell.ai/logo.png",
+  "categories": ["devops", "cloud", "automation"],
+  "artifacts": {
+    "npm": {
+      "package": "@easyshell/mcp-server"
+    }
+  },
+  "configuration": {
+    "properties": {
+      "EASYSHELL_URL": {
+        "type": "string",
+        "description": "EasyShell Server URL (e.g. http://localhost:18080)",
+        "required": true
+      },
+      "EASYSHELL_USER": {
+        "type": "string",
+        "description": "EasyShell username",
+        "required": true
+      },
+      "EASYSHELL_PASS": {
+        "type": "string",
+        "description": "EasyShell password",
+        "sensitive": true,
+        "required": true
+      }
+    }
+  }
+}

@@ -1,0 +1,39 @@
+name: easyshell
+displayName: EasyShell
+description: >
+  AI-Native Server Operations Platform — manage hosts, execute scripts,
+  orchestrate multi-host tasks, and schedule AI-powered inspections.
+icon: https://easyshell.ai/logo.png
+category: devops
+license: MIT
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties:
+      easyshellUrl:
+        type: string
+        title: EasyShell Server URL
+        description: "The URL of your EasyShell server (e.g. http://localhost:18080)"
+        default: "http://localhost:18080"
+      easyshellUser:
+        type: string
+        title: Username
+        default: "easyshell"
+      easyshellPass:
+        type: string
+        title: Password
+        format: password
+    required: [easyshellUrl, easyshellUser, easyshellPass]
+  commandFunction:
+    # Smithery 会调用此函数生成启动命令
+    |-
+    (config) => ({
+      command: "npx",
+      args: ["-y", "@easyshell/mcp-server"],
+      env: {
+        EASYSHELL_URL: config.easyshellUrl,
+        EASYSHELL_USER: config.easyshellUser,
+        EASYSHELL_PASS: config.easyshellPass
+      }
+    })
