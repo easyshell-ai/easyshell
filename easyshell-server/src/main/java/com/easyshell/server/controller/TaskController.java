@@ -4,6 +4,7 @@ import com.easyshell.server.ai.model.vo.RiskAssessment;
 import com.easyshell.server.ai.risk.CommandRiskEngine;
 import com.easyshell.server.ai.risk.RiskLevel;
 import com.easyshell.server.common.result.R;
+import com.easyshell.server.common.utils.ScriptParameterUtils;
 import com.easyshell.server.model.dto.TaskCreateRequest;
 import com.easyshell.server.model.entity.Job;
 import com.easyshell.server.model.entity.Script;
@@ -47,7 +48,6 @@ public class TaskController {
                           HttpServletRequest httpRequest) {
         Long userId = (Long) auth.getPrincipal();
 
-        // Resolve script content for risk assessment
         String scriptContent = request.getScriptContent();
         if (scriptContent == null && request.getScriptId() != null) {
             Script script = scriptRepository.findById(request.getScriptId()).orElse(null);
@@ -56,7 +56,12 @@ public class TaskController {
             }
         }
 
-        // Risk assessment for manual execution
+        if (scriptContent != null && request.getParameters() != null && !request.getParameters().isEmpty()) {
+            scriptContent = ScriptParameterUtils.substituteParameters(scriptContent, request.getParameters());
+            request.setScriptContent(scriptContent);
+            request.setScriptId(null);
+        }
+
         if (scriptContent != null && !scriptContent.isBlank()) {
             RiskAssessment risk = riskEngine.assessScript(scriptContent);
             if (risk.getOverallRisk() == RiskLevel.BANNED || risk.getOverallRisk() == RiskLevel.HIGH) {
@@ -76,7 +81,6 @@ public class TaskController {
                                      HttpServletRequest httpRequest) {
         Long userId = (Long) auth.getPrincipal();
 
-        // Resolve script content
         String scriptContent = request.getScriptContent();
         String scriptType = "shell";
         if (scriptContent == null && request.getScriptId() != null) {
@@ -84,6 +88,10 @@ public class TaskController {
                     .orElseThrow(() -> new RuntimeException("Script not found"));
             scriptContent = script.getContent();
             scriptType = script.getScriptType();
+        }
+
+        if (scriptContent != null && request.getParameters() != null && !request.getParameters().isEmpty()) {
+            scriptContent = ScriptParameterUtils.substituteParameters(scriptContent, request.getParameters());
         }
 
         if (scriptContent == null || scriptContent.isBlank()) {

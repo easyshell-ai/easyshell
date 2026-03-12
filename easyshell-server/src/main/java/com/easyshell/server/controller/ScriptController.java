@@ -1,6 +1,7 @@
 package com.easyshell.server.controller;
 
 import com.easyshell.server.common.result.R;
+import com.easyshell.server.common.utils.ScriptParameterUtils;
 import com.easyshell.server.model.dto.ScriptRequest;
 import com.easyshell.server.model.entity.Script;
 import com.easyshell.server.service.AuditLogService;
@@ -12,6 +13,8 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 @RestController
 @RequestMapping("/api/v1/script")
@@ -70,5 +73,21 @@ public class ScriptController {
     @GetMapping("/user-scripts")
     public R<List<Script>> userScripts() {
         return R.ok(scriptService.findUserScripts());
+    }
+
+    @PostMapping("/parse-parameters")
+    public R<Set<String>> parseParameters(@RequestBody Map<String, String> body) {
+        String content = body.get("content");
+        if (content == null || content.isBlank()) {
+            return R.ok(Set.of());
+        }
+        return R.ok(ScriptParameterUtils.extractParameters(content));
+    }
+
+    @GetMapping("/{id}/parameters")
+    public R<Set<String>> getScriptParameters(@PathVariable Long id) {
+        return scriptService.findById(id)
+                .map(script -> R.ok(ScriptParameterUtils.extractParameters(script.getContent())))
+                .orElse(R.fail(404, "Script not found"));
     }
 }

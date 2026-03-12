@@ -12,8 +12,7 @@ import type { Script } from '../../types';
 
 const scriptTypeColors: Record<string, string> = {
   bash: 'green',
-  sh: 'blue',
-  python: 'orange',
+  shell: 'blue',
 };
 
 const ScriptPage: React.FC = () => {

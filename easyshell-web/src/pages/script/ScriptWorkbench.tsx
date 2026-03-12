@@ -1,15 +1,15 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Button, Input, Select, Switch, Space, Typography, message, theme, Spin, Tooltip } from 'antd';
+import { Button, Input, Select, Switch, Space, Typography, message, theme, Spin, Tooltip, Alert } from 'antd';
 import {
   ArrowLeftOutlined, SaveOutlined,
   FullscreenOutlined, FullscreenExitOutlined,
+  InfoCircleOutlined,
 } from '@ant-design/icons';
 import CodeMirror from '@uiw/react-codemirror';
 import { StreamLanguage } from '@codemirror/language';
 import { shell } from '@codemirror/legacy-modes/mode/shell';
-import { python } from '@codemirror/lang-python';
 import { getScript, createScript, updateScript } from '../../api/script';
 import ScriptAiPanel from './ScriptAiPanel';
 
@@ -116,10 +116,8 @@ export default function ScriptWorkbench() {
   }, []);
 
   const extensions = useMemo(() => {
-    return [
-      scriptType === 'python' ? python() : StreamLanguage.define(shell)
-    ];
-  }, [scriptType]);
+    return [StreamLanguage.define(shell)];
+  }, []);
 
   // --- Drag resize handler ---
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -290,8 +288,8 @@ export default function ScriptWorkbench() {
                   onChange={setScriptType}
                   style={{ width: 120 }}
                   options={[
-                    { value: 'bash', label: 'Bash/Shell' },
-                    { value: 'python', label: 'Python' }
+                    { value: 'bash', label: 'Bash' },
+                    { value: 'shell', label: 'Shell' }
                   ]}
                 />
                 <Space>
@@ -306,6 +304,15 @@ export default function ScriptWorkbench() {
                 size="middle"
               />
             </Space>
+
+            <Alert
+              message={t('script.workbench.parameterHint')}
+              type="info"
+              showIcon
+              icon={<InfoCircleOutlined />}
+              banner
+              style={{ marginBottom: 8, flexShrink: 0 }}
+            />
 
             <div ref={editorContainerRef} style={{ 
               ...(editorHeight ? { height: editorHeight, flexShrink: 0 } : { flex: 1, minHeight: 200 }),

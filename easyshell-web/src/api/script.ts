@@ -30,6 +30,14 @@ export function deleteScript(id: number): Promise<ApiResponse<void>> {
   return request.delete(`/v1/script/${id}`);
 }
 
+export function getScriptParameters(id: number): Promise<ApiResponse<string[]>> {
+  return request.get(`/v1/script/${id}/parameters`);
+}
+
+export function parseScriptParameters(content: string): Promise<ApiResponse<string[]>> {
+  return request.post('/v1/script/parse-parameters', { content });
+}
+
 export interface ScriptGenerateRequest {
   prompt: string;
   os: string;

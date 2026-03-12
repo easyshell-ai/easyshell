@@ -1116,7 +1116,8 @@
       "editorPanel": "脚本编辑器",
       "aiPanel": "AI 助手",
       "expand": "展开面板",
-      "collapse": "收起面板"
+      "collapse": "收起面板",
+      "parameterHint": "提示：在脚本中使用 {{variable_name}} 语法定义参数。执行时用户将被提示填写参数值。"
     },
     "management": "脚本管理",
     "templates": "脚本模板",
@@ -1498,6 +1499,13 @@
       "finishedAt": "结束时间",
       "exitCode": "退出码"
     },
+    "parameters": "脚本参数",
+    "parametersDetected": "检测到 {{count}} 个参数",
+    "parameterName": "参数名",
+    "parameterValue": "参数值",
+    "fillParameters": "请填写脚本参数",
+    "parameterPlaceholder": "请输入 {{name}} 的值",
+    "noParameters": "未检测到参数",
     "risk": {
       "title": "风险检测",
       "level": "风险等级",

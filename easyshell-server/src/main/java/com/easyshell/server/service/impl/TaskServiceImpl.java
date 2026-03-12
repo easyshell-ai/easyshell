@@ -1,6 +1,7 @@
 package com.easyshell.server.service.impl;
 
 import com.easyshell.server.common.exception.BusinessException;
+import com.easyshell.server.common.utils.ScriptParameterUtils;
 import com.easyshell.server.model.dto.JobResultRequest;
 import com.easyshell.server.model.dto.TaskCreateRequest;
 import com.easyshell.server.model.entity.Agent;
@@ -80,6 +81,14 @@ public class TaskServiceImpl implements TaskService {
 
         if (scriptContent == null || scriptContent.isBlank()) {
             throw new BusinessException(400, "Script content is required");
+        }
+
+        if (request.getParameters() != null && !request.getParameters().isEmpty()) {
+            Set<String> missing = ScriptParameterUtils.findMissingParameters(scriptContent, request.getParameters());
+            if (!missing.isEmpty()) {
+                throw new BusinessException(400, "Missing parameter values: " + String.join(", ", missing));
+            }
+            scriptContent = ScriptParameterUtils.substituteParameters(scriptContent, request.getParameters());
         }
 
         Set<String> resolvedAgentIds = new LinkedHashSet<>();

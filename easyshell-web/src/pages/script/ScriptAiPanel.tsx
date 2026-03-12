@@ -10,7 +10,6 @@ import CodeMirror from '@uiw/react-codemirror';
 import CodeMirrorMerge from 'react-codemirror-merge';
 import { StreamLanguage } from '@codemirror/language';
 import { shell } from '@codemirror/legacy-modes/mode/shell';
-import { python } from '@codemirror/lang-python';
 import { EditorView } from '@codemirror/view';
 import { generateScript } from '../../api/script';
 
@@ -119,13 +118,13 @@ const ScriptAiPanel: React.FC<ScriptAiPanelProps> = ({ scriptType, currentScript
 
   // CodeMirror extensions based on script type
   const editorExtensions = useMemo(() => {
-    const langExt = scriptType === 'python' ? [python()] : [StreamLanguage.define(shell)];
+    const langExt = [StreamLanguage.define(shell)];
     return [...langExt, EditorView.editable.of(false)];
-  }, [scriptType]);
+  }, []);
 
   const editableExtensions = useMemo(() => {
-    return scriptType === 'python' ? [python()] : [StreamLanguage.define(shell)];
-  }, [scriptType]);
+    return [StreamLanguage.define(shell)];
+  }, []);
 
   // Auto-switch to relevant tab as content streams in
   useEffect(() => {

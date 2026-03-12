@@ -11,7 +11,7 @@ import CodeMirror from '@uiw/react-codemirror';
 import { StreamLanguage } from '@codemirror/language';
 import { shell } from '@codemirror/legacy-modes/mode/shell';
 import { createTask, getTaskList, getTaskDetail, submitTaskForApproval } from '../../api/task';
-import { getScriptList } from '../../api/script';
+import { getScriptList, getScriptParameters } from '../../api/script';
 import { getHostList } from '../../api/host';
 import { getClusterList } from '../../api/cluster';
 import { getTagList } from '../../api/tag';
@@ -44,6 +44,8 @@ const TaskPage: React.FC = () => {
   const [taskEditorHeight, setTaskEditorHeight] = useState<number>(240);
   const taskEditorDraggingRef = useRef(false);
   const taskEditorContainerRef = useRef<HTMLDivElement>(null);
+  const [scriptParameters, setScriptParameters] = useState<string[]>([]);
+  const [parameterValues, setParameterValues] = useState<Record<string, string>>({});
 
   // Determine dark mode from theme token
   const isDark = token.colorBgContainer !== '#ffffff' && token.colorBgBase !== '#ffffff';
@@ -120,6 +122,51 @@ const TaskPage: React.FC = () => {
     fetchTasks();
     fetchOptions();
   }, [fetchTasks, fetchOptions]);
+
+  // Detect parameters from manual script content (client-side)
+  useEffect(() => {
+    if (scriptMode !== 'manual') return;
+    const regex = /\{\{\s*(\w+)\s*\}\}/g;
+    const found = new Set<string>();
+    let match;
+    while ((match = regex.exec(manualScriptContent)) !== null) {
+      found.add(match[1]);
+    }
+    const params = Array.from(found);
+    setScriptParameters(params);
+    setParameterValues((prev) => {
+      const next: Record<string, string> = {};
+      for (const p of params) {
+        next[p] = prev[p] || '';
+      }
+      return next;
+    });
+  }, [manualScriptContent, scriptMode]);
+
+  // Detect parameters from selected script (API call)
+  const selectedScriptId = Form.useWatch('scriptId', form);
+  useEffect(() => {
+    if (scriptMode !== 'select' || !selectedScriptId) {
+      if (scriptMode === 'select') {
+        setScriptParameters([]);
+        setParameterValues({});
+      }
+      return;
+    }
+    getScriptParameters(selectedScriptId).then((res) => {
+      if (res.code === 200) {
+        const params = res.data || [];
+        setScriptParameters(params);
+        setParameterValues((prev) => {
+          const next: Record<string, string> = {};
+          for (const p of params) {
+            next[p] = prev[p] || '';
+          }
+          return next;
+        });
+      }
+    });
+  }, [selectedScriptId, scriptMode]);
 
   useEffect(() => {
     if (logContainerRef.current) {
@@ -225,12 +272,18 @@ const TaskPage: React.FC = () => {
         taskRequest.scriptContent = manualScriptContent;
       }
 
+      if (scriptParameters.length > 0) {
+        taskRequest.parameters = parameterValues;
+      }
+
       createTask(taskRequest)
         .then((res) => {
           if (res.code === 200) {
             message.success(t('task.taskCreated'));
             form.resetFields();
             setManualScriptContent('');
+            setScriptParameters([]);
+            setParameterValues({});
             fetchTasks();
             if (res.data && 'id' in res.data) {
               const taskData = res.data as Task;
@@ -270,6 +323,8 @@ const TaskPage: React.FC = () => {
                     message.success(t('task.risk.approvalSubmitted'));
                     form.resetFields();
                     setManualScriptContent('');
+                    setScriptParameters([]);
+                    setParameterValues({});
                     fetchTasks();
                   } else {
                     message.error(approvalRes.message || t('task.risk.approvalFailed'));
@@ -503,6 +558,45 @@ const TaskPage: React.FC = () => {
               )}
             </Col>
           </Row>
+          {scriptParameters.length > 0 && (
+            <Row gutter={16}>
+              <Col span={24}>
+                <div style={{
+                  border: `1px solid ${token.colorBorderSecondary}`,
+                  borderRadius: 8,
+                  padding: 16,
+                  marginBottom: 16,
+                  background: token.colorFillAlter,
+                }}>
+                  <div style={{ marginBottom: 12, fontWeight: 500, color: token.colorText }}>
+                    {t('task.parameters')}
+                    <Tag color="blue" style={{ marginLeft: 8 }}>
+                      {t('task.parametersDetected', { count: scriptParameters.length })}
+                    </Tag>
+                  </div>
+                  <Row gutter={[16, 12]}>
+                    {scriptParameters.map((param) => (
+                      <Col span={12} key={param}>
+                        <div style={{ marginBottom: 4, color: token.colorTextSecondary, fontSize: 13 }}>
+                          <code style={{
+                            background: token.colorFillSecondary,
+                            padding: '1px 6px',
+                            borderRadius: 4,
+                            fontSize: 12,
+                          }}>{`{{${param}}}`}</code>
+                        </div>
+                        <Input
+                          placeholder={t('task.parameterPlaceholder', { name: param })}
+                          value={parameterValues[param] || ''}
+                          onChange={(e) => setParameterValues((prev) => ({ ...prev, [param]: e.target.value }))}
+                        />
+                      </Col>
+                    ))}
+                  </Row>
+                </div>
+              </Col>
+            </Row>
+          )}
           <Button type="primary" icon={<PlayCircleOutlined />} loading={submitting} onClick={handleSubmit}>
             {t('task.executeTask')}
           </Button>

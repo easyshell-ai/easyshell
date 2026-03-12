@@ -4,6 +4,7 @@ import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 
 import java.util.List;
+import java.util.Map;
 
 @Data
 public class TaskCreateRequest {
@@ -22,4 +23,10 @@ public class TaskCreateRequest {
     private List<Long> tagIds;
 
     private Integer timeoutSeconds = 3600;
+
+    /**
+     * Script parameter values for {{variable_name}} substitution.
+     * Key: parameter name (without braces), Value: parameter value.
+     */
+    private Map<String, String> parameters;
 }

@@ -1116,7 +1116,8 @@
       "editorPanel": "Script Editor",
       "aiPanel": "AI Assistant",
       "expand": "Expand Panel",
-      "collapse": "Collapse Panel"
+      "collapse": "Collapse Panel",
+      "parameterHint": "Tip: Use {{variable_name}} syntax in your script to define parameters. Users will be prompted to fill in values when executing."
     },
     "management": "Script Management",
     "templates": "Script Templates",
@@ -1498,6 +1499,13 @@
       "finishedAt": "End Time",
       "exitCode": "Exit Code"
     },
+    "parameters": "Script Parameters",
+    "parametersDetected": "{{count}} parameter(s) detected",
+    "parameterName": "Parameter",
+    "parameterValue": "Value",
+    "fillParameters": "Please fill in the script parameters",
+    "parameterPlaceholder": "Enter value for {{name}}",
+    "noParameters": "No parameters detected",
     "risk": {
       "title": "Risk Detected",
       "level": "Risk Level",

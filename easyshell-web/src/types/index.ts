@@ -137,6 +137,7 @@ export interface TaskCreateRequest {
   clusterIds?: number[];
   tagIds?: number[];
   timeoutSeconds: number;
+  parameters?: Record<string, string>;
 }
 
 export interface Job {

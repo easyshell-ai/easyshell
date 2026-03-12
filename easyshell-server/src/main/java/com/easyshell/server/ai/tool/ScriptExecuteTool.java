@@ -10,6 +10,7 @@ import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Map;
 
 @Component
 @RequiredArgsConstructor
@@ -26,11 +27,12 @@ public class ScriptExecuteTool {
         this.currentSourceIp = sourceIp;
     }
 
-    @Tool(description = "在指定主机上执行 Shell 脚本。脚本会经过风险评估：低风险自动执行，中/高风险和封禁命令均需人工审批（用户确认后请调用 approveTask 工具）。")
+    @Tool(description = "在指定主机上执行 Shell 脚本。脚本会经过风险评估：低风险自动执行，中/高风险和封禁命令均需人工审批（用户确认后请调用 approveTask 工具）。注意：脚本中可能包含 {{variable_name}} 格式的参数占位符，执行前必须检查并通过 parameters 传入对应的值。")
     public String executeScript(
             @ToolParam(description = "要执行的 Shell 脚本内容") String scriptContent,
             @ToolParam(description = "目标主机 ID 列表。必须是真实存在的主机 Agent ID，如果上下文中用户已指定目标主机则直接使用其 ID，否则请先调用 listHosts 工具获取可用主机列表及其 ID，不要猜测或编造 ID") List<String> agentIds,
-            @ToolParam(description = "脚本用途简述") String description) {
+            @ToolParam(description = "脚本用途简述") String description,
+            @ToolParam(description = "脚本参数键值对。如果脚本内容中包含 {{variable_name}} 格式的占位符，必须提供对应的参数值。例如：{\"server_ip\": \"192.168.1.1\", \"port\": \"8080\"}。如果脚本不含参数占位符，传 null 即可", required = false) Map<String, String> parameters) {
 
         // Validate all agentIds exist before executing
         if (agentIds == null || agentIds.isEmpty()) {
@@ -50,6 +52,7 @@ public class ScriptExecuteTool {
         request.setTimeoutSeconds(60);
         request.setUserId(currentUserId != null ? currentUserId : 0L);
         request.setSourceIp(currentSourceIp != null ? currentSourceIp : "ai-chat");
+        request.setParameters(parameters);
 
         AiExecutionResult result = aiExecutionService.execute(request);
 

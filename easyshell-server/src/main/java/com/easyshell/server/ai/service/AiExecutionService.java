@@ -5,6 +5,7 @@ import com.easyshell.server.ai.model.vo.AiExecutionResult;
 import com.easyshell.server.ai.model.vo.RiskAssessment;
 import com.easyshell.server.ai.risk.CommandRiskEngine;
 import com.easyshell.server.common.exception.BusinessException;
+import com.easyshell.server.common.utils.ScriptParameterUtils;
 import com.easyshell.server.model.dto.TaskCreateRequest;
 import com.easyshell.server.model.entity.Task;
 import com.easyshell.server.repository.TaskRepository;
@@ -33,6 +34,13 @@ public class AiExecutionService {
     private final ObjectMapper objectMapper;
 
     public AiExecutionResult execute(AiExecutionRequest request) {
+        // Substitute parameters before risk assessment so risk engine evaluates actual values
+        String scriptContent = request.getScriptContent();
+        if (request.getParameters() != null && !request.getParameters().isEmpty()) {
+            scriptContent = ScriptParameterUtils.substituteParameters(scriptContent, request.getParameters());
+            request.setScriptContent(scriptContent);
+        }
+
         RiskAssessment risk = riskEngine.assessScript(request.getScriptContent());
 
         auditLogService.log(
@@ -127,6 +135,7 @@ public class AiExecutionService {
         taskReq.setScriptContent(request.getScriptContent());
         taskReq.setAgentIds(request.getAgentIds());
         taskReq.setTimeoutSeconds(request.getTimeoutSeconds() != null ? request.getTimeoutSeconds() : 60);
+        taskReq.setParameters(request.getParameters());
 
         Task task = taskService.createAndDispatch(taskReq, request.getUserId());
         task.setSource("ai_auto");
