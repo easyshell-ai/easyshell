@@ -52,6 +52,9 @@ public class CopilotAuthService {
     private volatile String cachedCopilotToken;
     private volatile Instant cachedTokenExpiry = Instant.EPOCH;
 
+    // Cached plan-specific API base URL from token exchange response (endpoints.api)
+    private volatile String cachedApiBaseUrl = "https://api.githubcopilot.com";
+
     // Store active device flow sessions (device_code -> expiry)
     private final Map<String, DeviceFlowSession> activeDeviceFlows = new ConcurrentHashMap<>();
 
@@ -191,6 +194,11 @@ public class CopilotAuthService {
         }
     }
 
+    public String getCopilotApiBaseUrl() {
+        getCopilotBearerToken();
+        return cachedApiBaseUrl;
+    }
+
     /**
      * Get the current Copilot bearer token, auto-refreshing if needed.
      * This is the token used for actual API calls to api.githubcopilot.com.
@@ -228,6 +236,7 @@ public class CopilotAuthService {
         });
         cachedCopilotToken = null;
         cachedTokenExpiry = Instant.EPOCH;
+        cachedApiBaseUrl = "https://api.githubcopilot.com";
         log.info("GitHub Copilot OAuth token cleared");
     }
 
@@ -237,6 +246,7 @@ public class CopilotAuthService {
     public void invalidateTokenCache() {
         cachedCopilotToken = null;
         cachedTokenExpiry = Instant.EPOCH;
+        cachedApiBaseUrl = "https://api.githubcopilot.com";
     }
 
     /**
@@ -320,6 +330,15 @@ public class CopilotAuthService {
             JsonNode json = objectMapper.readTree(response.body());
             String token = json.get("token").asText();
             long expiresAt = json.get("expires_at").asLong();
+
+            JsonNode endpoints = json.path("endpoints");
+            if (!endpoints.isMissingNode() && endpoints.has("api")) {
+                String apiUrl = endpoints.get("api").asText();
+                if (!apiUrl.isBlank()) {
+                    cachedApiBaseUrl = apiUrl;
+                    log.debug("Copilot endpoints.api resolved to: {}", apiUrl);
+                }
+            }
 
             // Cache the token
             cachedCopilotToken = token;

@@ -39,6 +39,7 @@ import org.springframework.context.MessageSource;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.context.i18n.LocaleContextHolder;
 import org.springframework.stereotype.Component;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
 import reactor.core.scheduler.Schedulers;
@@ -449,8 +450,14 @@ public class OrchestratorEngine {
                     llmSuccess = true;
                     break;
                 } catch (Exception e) {
-                    log.error("LLM streaming failed at iteration {}, attempt {}/{} for session {}",
-                            iteration, attempt, llmRetries, request.getSessionId(), e);
+                    if (e instanceof WebClientResponseException wcre) {
+                        log.error("LLM streaming HTTP error {}: body={} | iteration={}, attempt={}/{}, session={}",
+                                wcre.getStatusCode(), wcre.getResponseBodyAsString(),
+                                iteration, attempt, llmRetries, request.getSessionId(), wcre);
+                    } else {
+                        log.error("LLM streaming failed at iteration {}, attempt {}/{} for session {}",
+                                iteration, attempt, llmRetries, request.getSessionId(), e);
+                    }
                     // On 401 Unauthorized (expired Copilot token), invalidate caches and allow one extra retry
                     if (!retriedAuth && e.getMessage() != null && e.getMessage().contains("401")) {
                         log.info("Got 401, invalidating Copilot token cache and retrying for session {}", request.getSessionId());
@@ -465,7 +472,19 @@ public class OrchestratorEngine {
                         continue;
                     }
                     if (attempt >= llmRetries) {
-                        sink.next(AgentEvent.error(i18n("ai.error.llm_streaming", e.getMessage())));
+                        String errMsg = e.getMessage();
+                        if (e instanceof WebClientResponseException wcre) {
+                            try {
+                                String body = wcre.getResponseBodyAsString();
+                                com.fasterxml.jackson.databind.JsonNode node = new com.fasterxml.jackson.databind.ObjectMapper()
+                                        .readTree(body);
+                                com.fasterxml.jackson.databind.JsonNode msg = node.at("/error/message");
+                                if (!msg.isMissingNode() && !msg.asText().isEmpty()) {
+                                    errMsg = wcre.getStatusCode() + ": " + msg.asText();
+                                }
+                            } catch (Exception ignored) {}
+                        }
+                        sink.next(AgentEvent.error(i18n("ai.error.llm_streaming", errMsg)));
                     } else {
                         sink.next(AgentEvent.thinking("LLM call failed, retrying...", "system"));
                         try { Thread.sleep(1000); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
