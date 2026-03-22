@@ -97,6 +97,19 @@ export function getPendingApprovals(): Promise<ApiResponse<Task[]>> {
   return request.get('/v1/ai/chat/pending-approvals');
 }
 
+const STREAM_TIMEOUT_MS = 180_000;
+const STREAM_MAX_RETRIES = 2;
+const NON_RETRYABLE_STATUSES = new Set([400, 401, 403, 404, 422]);
+
+function isRetryableError(err: unknown): boolean {
+  if (err instanceof DOMException && err.name === 'AbortError') return false;
+  if (err instanceof Error && err.message.startsWith('HTTP ')) {
+    const status = parseInt(err.message.slice(5), 10);
+    if (NON_RETRYABLE_STATUSES.has(status)) return false;
+  }
+  return true;
+}
+
 export function sendChatStream(
   data: AiChatRequest,
   onEvent: (event: AgentEvent) => void,
@@ -104,105 +117,135 @@ export function sendChatStream(
   onComplete: () => void,
 ): AbortController {
   const controller = new AbortController();
-  const token = localStorage.getItem('token');
-  let receivedTerminalEvent = false;
+  let attempt = 0;
 
-  const wrappedOnEvent = (event: AgentEvent) => {
-    if (event.type === 'DONE' || event.type === 'ERROR') {
-      receivedTerminalEvent = true;
-    }
-    onEvent(event);
-  };
+  const doFetch = () => {
+    const token = localStorage.getItem('token');
+    let receivedTerminalEvent = false;
 
-  fetch('/api/v1/ai/chat/stream', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': token ? `Bearer ${token}` : '',
-      'Accept': 'text/event-stream',
-      'Accept-Language': i18n.language || 'zh-CN',
-    },
-    body: JSON.stringify(data),
-    signal: controller.signal,
-  })
-    .then(async (response) => {
-      if (!response.ok) {
-        if (response.status === 401 || response.status === 403) {
-          localStorage.removeItem('token');
-          window.location.href = '/login';
+    const wrappedOnEvent = (event: AgentEvent) => {
+      if (event.type === 'DONE' || event.type === 'ERROR') {
+        receivedTerminalEvent = true;
+      }
+      onEvent(event);
+    };
+
+    // Dual AbortController: timeoutId fires fetchAbort (triggers retry),
+    // while controller.abort() is the user-initiated cancel (no retry).
+    const timeoutId = setTimeout(() => {
+      if (!receivedTerminalEvent && !controller.signal.aborted) {
+        fetchAbort.abort(new DOMException('Stream timeout', 'TimeoutError'));
+      }
+    }, STREAM_TIMEOUT_MS);
+
+    const fetchAbort = new AbortController();
+    const onUserAbort = () => fetchAbort.abort();
+    controller.signal.addEventListener('abort', onUserAbort, { once: true });
+
+    fetch('/api/v1/ai/chat/stream', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': token ? `Bearer ${token}` : '',
+        'Accept': 'text/event-stream',
+        'Accept-Language': i18n.language || 'zh-CN',
+      },
+      body: JSON.stringify(data),
+      signal: fetchAbort.signal,
+    })
+      .then(async (response) => {
+        clearTimeout(timeoutId);
+        if (!response.ok) {
+          if (response.status === 401 || response.status === 403) {
+            localStorage.removeItem('token');
+            window.location.href = '/login';
+            return;
+          }
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error('No response body');
+
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+              if (line.startsWith('data:')) {
+                const jsonStr = line.slice(5).trim();
+                if (jsonStr) {
+                  try {
+                    const event: AgentEvent = JSON.parse(jsonStr);
+                    wrappedOnEvent(event);
+                  } catch { }
+                }
+              }
+            }
+
+            if (receivedTerminalEvent) {
+              // After receiving DONE/ERROR, drain remaining buffer then let stream close naturally
+              // DO NOT call reader.cancel() - it triggers server-side cancellation before doFinally runs
+              if (buffer.startsWith('data:')) {
+                const jsonStr = buffer.slice(5).trim();
+                if (jsonStr) {
+                  try {
+                    const event: AgentEvent = JSON.parse(jsonStr);
+                    wrappedOnEvent(event);
+                  } catch { }
+                }
+                buffer = '';
+              }
+              // Simply break the loop - the server will close the stream naturally
+              break;
+            }
+          }
+        } catch (readErr) {
+          if (!receivedTerminalEvent) throw readErr;
+        }
+
+        if (buffer.startsWith('data:')) {
+          const jsonStr = buffer.slice(5).trim();
+          if (jsonStr) {
+            try {
+              const event: AgentEvent = JSON.parse(jsonStr);
+              wrappedOnEvent(event);
+            } catch { }
+          }
+        }
+
+        onComplete();
+      })
+      .catch((err) => {
+        clearTimeout(timeoutId);
+        controller.signal.removeEventListener('abort', onUserAbort);
+
+        if (controller.signal.aborted) return;
+
+        if (receivedTerminalEvent) {
+          onComplete();
           return;
         }
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error('No response body');
 
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-
-          for (const line of lines) {
-            if (line.startsWith('data:')) {
-              const jsonStr = line.slice(5).trim();
-              if (jsonStr) {
-                try {
-                  const event: AgentEvent = JSON.parse(jsonStr);
-                  wrappedOnEvent(event);
-                } catch { }
-              }
-            }
-          }
-
-          if (receivedTerminalEvent) {
-            // After receiving DONE/ERROR, drain remaining buffer then let stream close naturally
-            // DO NOT call reader.cancel() - it triggers server-side cancellation before doFinally runs
-            if (buffer.startsWith('data:')) {
-              const jsonStr = buffer.slice(5).trim();
-              if (jsonStr) {
-                try {
-                  const event: AgentEvent = JSON.parse(jsonStr);
-                  wrappedOnEvent(event);
-                } catch { }
-              }
-              buffer = '';
-            }
-            // Simply break the loop - the server will close the stream naturally
-            break;
-          }
+        if (isRetryableError(err) && attempt < STREAM_MAX_RETRIES) {
+          attempt++;
+          const backoff = Math.min(1000 * Math.pow(2, attempt - 1), 8000);
+          setTimeout(doFetch, backoff);
+          return;
         }
-      } catch (readErr) {
-        if (!receivedTerminalEvent) throw readErr;
-      }
 
-      if (buffer.startsWith('data:')) {
-        const jsonStr = buffer.slice(5).trim();
-        if (jsonStr) {
-          try {
-            const event: AgentEvent = JSON.parse(jsonStr);
-            wrappedOnEvent(event);
-          } catch { }
-        }
-      }
+        onError(err instanceof Error ? err : new Error(String(err)));
+      });
+  };
 
-      onComplete();
-    })
-    .catch((err) => {
-      if (err.name === 'AbortError') return;
-      if (receivedTerminalEvent) {
-        onComplete();
-        return;
-      }
-      onError(err);
-    });
-
+  doFetch();
   return controller;
 }
 
