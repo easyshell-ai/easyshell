@@ -27,6 +27,7 @@ import org.springframework.web.client.RestClient;
 
 import java.time.Duration;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 @Slf4j
 @Service
@@ -190,10 +191,7 @@ public class ChatModelFactory {
 
         return OpenAiChatModel.builder()
                 .openAiApi(api)
-                .defaultOptions(OpenAiChatOptions.builder()
-                        .model(model)
-                        .temperature(0.7)
-                        .build())
+                .defaultOptions(buildCopilotChatOptions(model))
                 .build();
     }
 
@@ -221,8 +219,37 @@ public class ChatModelFactory {
         headers.add("Editor-Version", "vscode/1.80.1");
         headers.add("Editor-Plugin-Version", "copilot.vim/1.16.0");
         headers.add("Copilot-Integration-Id", "vscode-chat");
-        headers.add("User-Agent", "GithubCopilot/1.155.0");
+        headers.add("User-Agent", "EasyShell/1.0.0");
         return headers;
+    }
+
+    /**
+     * Build model-aware OpenAiChatOptions for GitHub Copilot.
+     * Reasoning models (o1, o3-mini, o4-mini, etc.) reject temperature and require
+     * maxCompletionTokens instead of maxTokens.
+     */
+    public static OpenAiChatOptions buildCopilotChatOptions(String model) {
+        var builder = OpenAiChatOptions.builder().model(model);
+        if (isCopilotReasoningModel(model)) {
+            builder.maxCompletionTokens(16384);
+        } else {
+            builder.temperature(0.7);
+        }
+        return builder.build();
+    }
+
+    // Reference: OpenCode's copilot.go CanReason model list
+    private static final Set<String> COPILOT_REASONING_MODELS = Set.of(
+            "o1", "o1-mini", "o1-preview",
+            "o3-mini",
+            "o4-mini"
+    );
+
+    static boolean isCopilotReasoningModel(String model) {
+        if (model == null) return false;
+        String lowerModel = model.toLowerCase();
+        if (COPILOT_REASONING_MODELS.contains(lowerModel)) return true;
+        return lowerModel.startsWith("o1-") || lowerModel.startsWith("o3-") || lowerModel.startsWith("o4-");
     }
 
     /**

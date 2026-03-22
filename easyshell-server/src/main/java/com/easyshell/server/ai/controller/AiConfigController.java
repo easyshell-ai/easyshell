@@ -491,11 +491,11 @@ public class AiConfigController {
                 copilotHeaders.add("Editor-Version", "vscode/1.80.1");
                 copilotHeaders.add("Editor-Plugin-Version", "copilot.vim/1.16.0");
                 copilotHeaders.add("Copilot-Integration-Id", "vscode-chat");
-                copilotHeaders.add("User-Agent", "GithubCopilot/1.155.0");
+                copilotHeaders.add("User-Agent", "EasyShell/1.0.0");
                 var api = OpenAiApi.builder().apiKey(bearerToken).baseUrl(baseUrl).completionsPath("/chat/completions").headers(copilotHeaders).build();
                 yield OpenAiChatModel.builder()
                         .openAiApi(api)
-                        .defaultOptions(OpenAiChatOptions.builder().model(model).build())
+                        .defaultOptions(ChatModelFactory.buildCopilotChatOptions(model))
                         .build();
             }
             default -> throw new IllegalArgumentException("不支持的 Provider: " + request.getProvider());
