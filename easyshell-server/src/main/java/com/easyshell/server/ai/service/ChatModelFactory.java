@@ -176,11 +176,17 @@ public class ChatModelFactory {
                 .build();
     }
 
-    private OpenAiChatModel createGithubCopilotModel(@Nullable String modelOverride) {
+    private ChatModel createGithubCopilotModel(@Nullable String modelOverride) {
         String bearerToken = copilotAuthService.getCopilotBearerToken();
-        String baseUrl = getConfigValue("ai.github-copilot.base-url", "https://api.githubcopilot.com");
+        String baseUrl = copilotAuthService.getCopilotApiBaseUrl();
         String model = modelOverride != null ? modelOverride : getConfigValue("ai.github-copilot.model", "gpt-4o");
 
+        if (requiresResponsesApi(model)) {
+            log.info("Using Copilot Responses API (/responses) for model: {}", model);
+            return new CopilotResponsesChatModel(baseUrl, bearerToken, model);
+        }
+
+        log.debug("Using Copilot Chat Completions API (/chat/completions) for model: {}", model);
         var api = OpenAiApi.builder()
                 .apiKey(bearerToken)
                 .baseUrl(baseUrl)
@@ -236,6 +242,18 @@ public class ChatModelFactory {
             builder.temperature(0.7);
         }
         return builder.build();
+    }
+
+    private static final Set<String> COPILOT_RESPONSES_MODELS = Set.of(
+            "gpt-5.4",
+            "gpt-5.3-codex",
+            "gpt-5.2", "gpt-5.2-codex",
+            "gpt-5.1", "gpt-5.1-codex", "gpt-5.1-codex-max"
+    );
+
+    static boolean requiresResponsesApi(String model) {
+        if (model == null) return false;
+        return COPILOT_RESPONSES_MODELS.contains(model.toLowerCase());
     }
 
     // Reference: OpenCode's copilot.go CanReason model list
