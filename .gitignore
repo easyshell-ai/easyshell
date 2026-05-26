@@ -56,3 +56,19 @@ data/
 
 # Spec (local design docs)
 spec/
+
+# Temp debug / test scripts and screenshots (root level)
+debug-page.mjs
+final-verify.mjs
+verify.mjs
+verify-full.mjs
+verify-login.mjs
+test_*.js
+test_*.mjs
+update_script_workbench.js
+*.png
+package.json
+package-lock.json
+
+# Compiled agent binary (root level)
+easyshell-agent/agent
