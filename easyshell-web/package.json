@@ -32,7 +32,7 @@
     "axios": "^1.21.0",
     "dayjs": "^1.11.19",
     "diff": "^8.0.3",
-    "i18next": "^25.8.7",
+    "i18next": "^26.7.1",
     "i18next-browser-languagedetector": "^8.2.1",
     "react": "^19.2.0",
     "react-codemirror-merge": "^4.25.7",
