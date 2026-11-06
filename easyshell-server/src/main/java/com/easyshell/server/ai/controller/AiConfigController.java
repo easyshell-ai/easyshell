@@ -492,7 +492,7 @@ public class AiConfigController {
                 copilotHeaders.add("Editor-Version", "vscode/1.80.1");
                 copilotHeaders.add("Editor-Plugin-Version", "copilot.vim/1.16.0");
                 copilotHeaders.add("Copilot-Integration-Id", "vscode-chat");
-                copilotHeaders.add("User-Agent", "EasyShell/1.0.0");
+                copilotHeaders.add("User-Agent", "EasyShell/1.1.0");
                 var api = OpenAiApi.builder().apiKey(bearerToken).baseUrl(baseUrl).completionsPath("/chat/completions").headers(copilotHeaders).build();
                 yield OpenAiChatModel.builder()
                         .openAiApi(api)
