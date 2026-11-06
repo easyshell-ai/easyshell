@@ -67,7 +67,7 @@ dependencies {
     implementation("org.springframework.ai:spring-ai-vector-store")
 
     // SSH
-    implementation("com.github.mwiede:jsch:0.2.21")
+    implementation("com.github.mwiede:jsch:2.28.8")
 
     // API Docs
     implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.15")
