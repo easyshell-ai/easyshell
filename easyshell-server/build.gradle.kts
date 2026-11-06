@@ -70,7 +70,7 @@ dependencies {
     implementation("com.github.mwiede:jsch:0.2.21")
 
     // API Docs
-    implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.15")
+    implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:3.2.0")
 
     // Utils
     compileOnly("org.projectlombok:lombok")
