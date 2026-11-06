@@ -40,6 +40,11 @@ func main() {
 	}
 
 	setupLogger(cfg.Log.Level)
+	warnIfWorldReadableConfig(*configPath)
+
+	if warning := cfg.WarnAboutFileRoot(); warning != "" {
+		slog.Warn("file server configuration warning", "detail", warning)
+	}
 
 	agentID := cfg.Agent.ID
 	if agentID == "" {
@@ -54,7 +59,7 @@ func main() {
 		"agent_id", agentID,
 	)
 
-	httpClient := client.NewHTTPClient(cfg.Server.URL)
+	httpClient := client.NewHTTPClient(cfg.Server.URL, cfg.Server.RegistrationSecret)
 
 	sysInfo, err := collector.Collect()
 	if err != nil {
@@ -90,7 +95,11 @@ func main() {
 
 	// Initialize file server handler
 	fileCfg := cfg.Agent.File
-	secCfg := fileserver.NewSecurityConfig(&fileCfg)
+	secCfg, err := fileserver.NewSecurityConfig(&fileCfg)
+	if err != nil {
+		slog.Error("refusing to start: unsafe file server configuration", "error", err)
+		os.Exit(1)
+	}
 	fileHandler := fileserver.NewHandler(secCfg)
 	fileHandler.CleanupStaleTempFiles()
 
@@ -135,21 +144,29 @@ func applyRemoteConfig(httpClient *client.HTTPClient, agentID string, hbService 
 		return
 	}
 
-	applied := false
 	if v, ok := cfgMap["agent.heartbeat.interval"]; ok {
 		if seconds, err := strconv.Atoi(v); err == nil && seconds > 0 {
 			hbService.UpdateInterval(time.Duration(seconds) * time.Second)
-			applied = true
 			slog.Info("applied remote config", "heartbeat_interval", seconds)
 		}
 	}
+	// NOTE: agent.metrics.interval is deliberately NOT applied to the heartbeat service.
+	// Doing so made the heartbeat oscillate between the two configured intervals; metrics
+	// are collected together with the heartbeat on the agent side.
 	if v, ok := cfgMap["agent.metrics.interval"]; ok {
-		if seconds, err := strconv.Atoi(v); err == nil && seconds > 0 {
-			hbService.UpdateInterval(time.Duration(seconds) * time.Second)
-			if !applied {
-				slog.Info("applied remote config", "metrics_interval", seconds)
-			}
-		}
+		slog.Debug("remote metrics interval ignored (metrics ride on the heartbeat)", "metrics_interval", v)
+	}
+}
+
+// warnIfWorldReadableConfig flags a config file other users on the host can read. Once the
+// agent stores a token next to the config, that file becomes sensitive too.
+func warnIfWorldReadableConfig(path string) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		slog.Warn("config file is readable by other users", "path", path, "mode", fmt.Sprintf("%04o", info.Mode().Perm()))
 	}
 }
 

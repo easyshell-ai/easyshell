@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { idParam } from "./params.js";
 import type { EasyShellClient } from "../client.js";
 import { toMcpError } from "../errors.js";
 
@@ -24,7 +25,7 @@ export function registerMonitoringTools(server: McpServer, client: EasyShellClie
     "get_host_metrics",
     "Get historical CPU, memory, and disk metrics for a specific host.",
     {
-      hostId: z.string(),
+      hostId: idParam("The agent/host ID"),
       range: z.enum(["1h", "6h", "24h", "7d", "30d"]).default("1h").optional().describe("Time range"),
     },
     async ({ hostId, range }: { hostId: string; range?: "1h" | "6h" | "24h" | "7d" | "30d" }) => {

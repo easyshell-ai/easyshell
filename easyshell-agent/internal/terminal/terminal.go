@@ -46,7 +46,9 @@ func NewSession(id string, onOutput OutputCallback) (*Session, error) {
 
 	shell := getShell()
 	cmd := exec.CommandContext(ctx, shell)
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	// Minimal environment: inheriting os.Environ() exposed every secret of the agent
+	// process (tokens, API keys) to anyone who could open a shell.
+	cmd.Env = minimalEnv()
 
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
@@ -128,6 +130,10 @@ func (s *Session) Close() {
 	slog.Info("terminal session closed", "session", s.ID)
 }
 
+// MaxSessions caps concurrent PTY sessions; without it a single WebSocket could spawn
+// shells until the agent runs out of processes or file descriptors.
+const MaxSessions = 16
+
 // Manager manages multiple terminal sessions
 type Manager struct {
 	sessions map[string]*Session
@@ -145,6 +151,10 @@ func NewManager() *Manager {
 func (m *Manager) Create(id string, onOutput OutputCallback) (*Session, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if _, exists := m.sessions[id]; !exists && len(m.sessions) >= MaxSessions {
+		return nil, fmt.Errorf("too many terminal sessions (max %d)", MaxSessions)
+	}
 
 	// Close existing session with same ID
 	if existing, ok := m.sessions[id]; ok {
@@ -237,6 +247,35 @@ func (m *Manager) HandleMessage(data []byte, onOutput OutputCallback) error {
 	default:
 		return fmt.Errorf("unknown terminal message type: %s", msgType)
 	}
+}
+
+// minimalEnv builds the small environment a shell actually needs. Anything sensitive
+// stays out of the PTY.
+func minimalEnv() []string {
+	env := []string{
+		"TERM=xterm-256color",
+		"PATH=" + defaultPath(),
+		"LANG=" + valueOrDefault(os.Getenv("LANG"), "C.UTF-8"),
+		"HOME=" + valueOrDefault(os.Getenv("HOME"), "/root"),
+	}
+	if user := os.Getenv("USER"); user != "" {
+		env = append(env, "USER="+user)
+	}
+	return env
+}
+
+func valueOrDefault(value string, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func defaultPath() string {
+	if path := os.Getenv("PATH"); path != "" {
+		return path
+	}
+	return "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 }
 
 func getShell() string {

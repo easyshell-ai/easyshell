@@ -14,6 +14,7 @@ import org.springframework.web.socket.WebSocketMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 
+import java.security.MessageDigest;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.net.URI;
@@ -372,7 +373,10 @@ public class DingtalkBotService implements BotChannelService {
     // ==================== Webhook Mode: Signature Verification ====================
 
     public boolean verifySignature(String timestamp, String sign) {
-        if (secret == null || secret.isBlank()) return true;
+        if (secret == null || secret.isBlank()) {
+            log.error("DingTalk signature verification requested but no signing secret is configured");
+            return false;
+        }
         try {
             String stringToSign = timestamp + "\n" + secret;
             Mac mac = Mac.getInstance("HmacSHA256");
@@ -380,7 +384,9 @@ public class DingtalkBotService implements BotChannelService {
             byte[] signData = mac.doFinal(stringToSign.getBytes(StandardCharsets.UTF_8));
             String calculatedSign = URLEncoder.encode(
                     Base64.getEncoder().encodeToString(signData), StandardCharsets.UTF_8);
-            return calculatedSign.equals(sign);
+            return MessageDigest.isEqual(
+                    calculatedSign.getBytes(StandardCharsets.UTF_8),
+                    sign == null ? new byte[0] : sign.getBytes(StandardCharsets.UTF_8));
         } catch (Exception e) {
             log.warn("DingTalk signature verification failed: {}", e.getMessage());
             return false;

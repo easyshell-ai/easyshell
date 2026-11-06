@@ -1,5 +1,6 @@
 package com.easyshell.server.websocket;
 
+import com.easyshell.server.config.WebSocketAuthInterceptor;
 import com.easyshell.server.model.dto.JobResultRequest;
 import com.easyshell.server.model.entity.Job;
 import com.easyshell.server.repository.JobRepository;
@@ -38,18 +39,45 @@ private final Map<String, WebSocketSession> agentSessions = new ConcurrentHashMa
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
         String agentId = extractAgentId(session);
-        if (agentId != null) {
-            agentSessions.put(agentId, session);
-            log.info("Agent WebSocket connected: {}", agentId);
+        if (agentId == null) {
+            try {
+                session.close(CloseStatus.BAD_DATA);
+            } catch (Exception ignored) {
+                // best effort
+            }
+            return;
         }
+
+        WebSocketSession existing = agentSessions.putIfAbsent(agentId, session);
+        if (existing != null && existing.isOpen()) {
+            // Another live connection already owns this agentId. Reject the newcomer instead of
+            // silently hijacking the mapping (which used to evict the real agent permanently).
+            log.warn("Rejecting duplicate agent connection for {} (session {})", agentId, session.getId());
+            try {
+                session.close(CloseStatus.POLICY_VIOLATION);
+            } catch (Exception ignored) {
+                // best effort
+            }
+            return;
+        }
+        if (existing != null) {
+            // stale entry, replace it
+            agentSessions.put(agentId, session);
+        }
+        log.info("Agent WebSocket connected: {}", agentId);
     }
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
         String agentId = extractAgentId(session);
-        if (agentId != null) {
-            agentSessions.remove(agentId);
-            log.info("Agent WebSocket disconnected: {} (status={})", agentId, status);
+        if (agentId == null) {
+            return;
+        }
+        // Only drop the mapping if this session is still the registered one, otherwise a
+        // reconnecting agent would be evicted by the closing of its predecessor.
+        boolean wasOwner = agentSessions.remove(agentId, session);
+        log.info("Agent WebSocket disconnected: {} (status={}, wasOwner={})", agentId, status, wasOwner);
+        if (wasOwner) {
             // Auto-fail any running/pending jobs for this agent
             try {
                 taskService.failRunningJobsForAgent(agentId,
@@ -73,7 +101,7 @@ private final Map<String, WebSocketSession> agentSessions = new ConcurrentHashMa
                     String jobId = node.get("jobId").asText();
                     String logLine = node.get("log").asText();
                     log.debug("Agent {} log for job {}: {}", agentId, jobId, logLine);
-                    taskService.appendJobLog(jobId, logLine);
+                    taskService.appendJobLog(jobId, logLine, agentId);
                 }
                 case "result" -> {
                     String jobId = node.get("jobId").asText();
@@ -85,26 +113,32 @@ private final Map<String, WebSocketSession> agentSessions = new ConcurrentHashMa
                             .exitCode(node.has("exitCode") ? node.get("exitCode").asInt() : null)
                             .output(node.has("output") ? node.get("output").asText() : null)
                             .build();
-                    taskService.reportJobResult(result);
+                    taskService.reportJobResult(result, agentId);
                 }
                 case "terminal_output" -> {
                     String sessionId = node.has("sessionId") ? node.get("sessionId").asText() : "";
                     String data = node.has("data") ? node.get("data").asText() : "";
-                    if (terminalHandler != null) {
+                    if (terminalHandler != null && terminalHandler.isSessionOwnedByAgent(sessionId, agentId)) {
                         terminalHandler.handleAgentOutput(sessionId, data);
+                    } else {
+                        log.warn("Ignoring terminal_output for session {} not owned by agent {}", sessionId, agentId);
                     }
                 }
                 case "terminal_ready" -> {
                     String sessionId = node.has("sessionId") ? node.get("sessionId").asText() : "";
-                    if (terminalHandler != null) {
+                    if (terminalHandler != null && terminalHandler.isSessionOwnedByAgent(sessionId, agentId)) {
                         terminalHandler.handleAgentReady(sessionId);
+                    } else {
+                        log.warn("Ignoring terminal_ready for session {} not owned by agent {}", sessionId, agentId);
                     }
                 }
                 case "terminal_error" -> {
                     String sessionId = node.has("sessionId") ? node.get("sessionId").asText() : "";
                     String data = node.has("data") ? node.get("data").asText() : "";
-                    if (terminalHandler != null) {
+                    if (terminalHandler != null && terminalHandler.isSessionOwnedByAgent(sessionId, agentId)) {
                         terminalHandler.handleAgentError(sessionId, data);
+                    } else {
+                        log.warn("Ignoring terminal_error for session {} not owned by agent {}", sessionId, agentId);
                     }
                 }
                 case "file_list_result", "file_download_chunk", "file_result" -> {
@@ -184,11 +218,18 @@ private final Map<String, WebSocketSession> agentSessions = new ConcurrentHashMa
     }
 
     private String extractAgentId(WebSocketSession session) {
-        String uri = session.getUri() != null ? session.getUri().toString() : "";
-        String[] parts = uri.split("/");
-        if (parts.length > 0) {
-            return parts[parts.length - 1];
+        Object attr = session.getAttributes().get(WebSocketAuthInterceptor.ATTR_AGENT_ID);
+        if (attr instanceof String agentId && !agentId.isBlank()) {
+            return agentId;
         }
-        return null;
+        // Fallback for sessions established outside the interceptor (tests). Only the path
+        // part may be used: the URI carries the query string too.
+        java.net.URI uri = session.getUri();
+        if (uri == null || uri.getPath() == null) {
+            return null;
+        }
+        String path = uri.getPath();
+        String last = path.substring(path.lastIndexOf('/') + 1);
+        return last.isBlank() ? null : last;
     }
 }

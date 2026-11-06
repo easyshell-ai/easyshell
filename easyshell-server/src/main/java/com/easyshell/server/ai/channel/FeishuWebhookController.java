@@ -1,5 +1,7 @@
 package com.easyshell.server.ai.channel;
 
+import com.easyshell.server.ai.channel.support.WebhookVerification;
+import com.easyshell.server.ai.channel.support.WebhookVerification.Result;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -9,11 +11,19 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
 
+/**
+ * Feishu/Lark event webhook.
+ *
+ * <p>Signature verification is mandatory: a request without the signature headers is rejected
+ * instead of silently bypassing verification.
+ */
 @Slf4j
 @RestController
 @RequestMapping("/api/v1/webhook")
 @RequiredArgsConstructor
 public class FeishuWebhookController {
+
+    private static final long MAX_TIMESTAMP_SKEW_MS = 5 * 60 * 1000L;
 
     private final FeishuBotService feishuBotService;
     private final ObjectMapper objectMapper;
@@ -33,12 +43,16 @@ public class FeishuWebhookController {
                 return ResponseEntity.ok(Map.of("challenge", body.path("challenge").asText()));
             }
 
-            // Verify signature if headers present
-            if (timestamp != null && nonce != null && signature != null) {
-                if (!feishuBotService.verifyEventSignature(timestamp, nonce, signature, rawBody)) {
-                    log.warn("Feishu webhook signature verification failed");
-                    return ResponseEntity.ok(Map.of());
-                }
+            if (!feishuBotService.isRunning()) {
+                return ResponseEntity.status(503).body(Map.of("error", "feishu channel disabled"));
+            }
+
+            Result verification = WebhookVerification.verify(
+                    timestamp, nonce, signature, MAX_TIMESTAMP_SKEW_MS,
+                    (n, sig) -> feishuBotService.verifyEventSignature(timestamp, n, sig, rawBody));
+            if (verification != Result.OK) {
+                log.warn("Rejecting Feishu webhook: {}", verification);
+                return ResponseEntity.status(verification.httpStatus()).body(Map.of("error", verification.message()));
             }
 
             // Extract event type

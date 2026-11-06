@@ -3,6 +3,7 @@ package fileserver
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -12,12 +13,52 @@ import (
 	"sync"
 )
 
-var protectedPaths = map[string]bool{
-	"/": true, "/bin": true, "/sbin": true, "/etc": true,
-	"/usr": true, "/var": true, "/lib": true, "/lib64": true,
-	"/boot": true, "/proc": true, "/sys": true, "/dev": true,
-	"/home": true, "/root": true, "/tmp": true, "/run": true,
-	"/opt": true, "/srv": true, "/mnt": true, "/media": true,
+// protectedPaths are top level directories that must never be deleted or renamed.
+// The check is prefix based: "/etc/nginx" is protected just like "/etc" itself, which the
+// previous exact-match map allowed through.
+var protectedPaths = []string{
+	"/", "/bin", "/sbin", "/etc",
+	"/usr", "/var", "/lib", "/lib64",
+	"/boot", "/proc", "/sys", "/dev",
+	"/home", "/root", "/tmp", "/run",
+	"/opt", "/srv", "/mnt", "/media",
+}
+
+// isProtectedPath reports whether a path may not be deleted or renamed.
+//
+// Two rules keep the file manager fully usable while making it impossible to destroy the
+// host by accident:
+//   - inside a dedicated file root (the default) nothing is protected, so the operator can
+//     manage their own files freely;
+//   - when the root is a system directory (explicit allow-system-root opt-in) only the
+//     protected directories themselves are off limits ("/etc" cannot be removed), while
+//     their contents stay manageable as before.
+var protectedPathsSet = func() map[string]bool {
+	set := make(map[string]bool, len(protectedPaths))
+	for _, p := range protectedPaths {
+		set[p] = true
+	}
+	return set
+}()
+
+func isProtectedPath(path string, root string) bool {
+	clean := filepath.Clean(path)
+	rootClean := filepath.Clean(root)
+
+	if rootClean != "/" && (clean == rootClean || strings.HasPrefix(clean, rootClean+"/")) {
+		return false
+	}
+
+	if systemRoots[rootClean] {
+		return protectedPathsSet[clean]
+	}
+
+	for _, protected := range protectedPaths {
+		if clean == protected || strings.HasPrefix(clean, protected+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 type uploadState struct {
@@ -233,9 +274,17 @@ func (h *Handler) handleUploadStart(data []byte, reqID string, send func(interfa
 		return
 	}
 
-	absPath, err := h.config.ValidateWrite(req.Path)
+	absPath, err := h.config.ValidateWriteTarget(req.Path)
 	if err != nil {
 		h.sendError(reqID, err.Error(), send)
+		return
+	}
+	if isProtectedPath(absPath, h.config.RootPath) {
+		h.sendError(reqID, "cannot write to system protected path", send)
+		return
+	}
+	if req.Size < 0 {
+		h.sendError(reqID, "invalid upload size", send)
 		return
 	}
 	if err := h.config.ValidateFileSize(req.Size); err != nil {
@@ -290,6 +339,27 @@ func (h *Handler) handleUploadChunk(data []byte, reqID string, send func(interfa
 	}
 	state.received += int64(n)
 
+	// The declared size is only a hint: enforce both it and the configured maximum on the
+	// bytes actually received, otherwise a client can write unbounded data to disk.
+	if state.expected > 0 && state.received > state.expected {
+		state.file.Close()
+		h.uploadsMu.Lock()
+		delete(h.uploads, reqID)
+		h.uploadsMu.Unlock()
+		_ = os.Remove(state.tempPath)
+		h.sendError(reqID, fmt.Sprintf("upload exceeds declared size of %d bytes", state.expected), send)
+		return
+	}
+	if err := h.config.ValidateFileSize(state.received); err != nil {
+		state.file.Close()
+		h.uploadsMu.Lock()
+		delete(h.uploads, reqID)
+		h.uploadsMu.Unlock()
+		_ = os.Remove(state.tempPath)
+		h.sendError(reqID, err.Error(), send)
+		return
+	}
+
 	if req.Final {
 		state.file.Close()
 		h.uploadsMu.Lock()
@@ -312,7 +382,7 @@ func (h *Handler) handleMkdir(data []byte, reqID string, send func(interface{}))
 		return
 	}
 
-	absPath, err := h.config.ValidateWrite(req.Path)
+	absPath, err := h.config.ValidateWriteTarget(req.Path)
 	if err != nil {
 		h.sendError(reqID, err.Error(), send)
 		return
@@ -339,8 +409,8 @@ func (h *Handler) handleDelete(data []byte, reqID string, send func(interface{})
 		return
 	}
 
-	if protectedPaths[absPath] {
-		h.sendError(reqID, "cannot delete system protected directory", send)
+	if isProtectedPath(absPath, h.config.RootPath) {
+		h.sendError(reqID, "cannot delete system protected path", send)
 		return
 	}
 
@@ -364,14 +434,18 @@ func (h *Handler) handleRename(data []byte, reqID string, send func(interface{})
 		h.sendError(reqID, "old path: "+err.Error(), send)
 		return
 	}
-	newAbs, err := h.config.ValidateWrite(req.NewPath)
+	newAbs, err := h.config.ValidateWriteTarget(req.NewPath)
 	if err != nil {
 		h.sendError(reqID, "new path: "+err.Error(), send)
 		return
 	}
 
-	if protectedPaths[oldAbs] {
-		h.sendError(reqID, "cannot rename system protected directory", send)
+	if isProtectedPath(oldAbs, h.config.RootPath) {
+		h.sendError(reqID, "cannot rename system protected path", send)
+		return
+	}
+	if isProtectedPath(newAbs, h.config.RootPath) {
+		h.sendError(reqID, "cannot rename onto a system protected path", send)
 		return
 	}
 

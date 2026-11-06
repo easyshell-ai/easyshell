@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { idParam } from "./params.js";
 import type { EasyShellClient } from "../client.js";
 import { toMcpError } from "../errors.js";
 
@@ -20,8 +21,8 @@ export function registerAiChatTools(server: McpServer, client: EasyShellClient) 
         .describe(
           "Natural language instruction, e.g. 'Check disk usage on all production hosts'"
         ),
-      sessionId: z.string().optional().describe("Session ID for conversation continuity"),
-      targetAgentIds: z.array(z.string()).optional().describe("Limit execution to specific hosts"),
+      sessionId: idParam("Session ID for conversation continuity").optional(),
+      targetAgentIds: z.array(idParam("Host ID")).optional().describe("Limit execution to specific hosts"),
       skipPlanning: z
         .boolean()
         .default(false)

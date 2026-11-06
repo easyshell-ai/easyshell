@@ -18,6 +18,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.codec.ServerSentEvent;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
@@ -80,11 +81,13 @@ public class AiChatController {
     }
 
     @GetMapping("/pending-approvals")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
     public R<List<Task>> getPendingApprovals(Authentication auth) {
         return R.ok(aiExecutionService.getPendingApprovals());
     }
 
     @PostMapping("/approve/{taskId}")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
     public R<Void> approveExecution(@PathVariable String taskId,
                                      Authentication auth) {
         Long userId = (Long) auth.getPrincipal();
@@ -93,6 +96,7 @@ public class AiChatController {
     }
 
     @PostMapping("/reject/{taskId}")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
     public R<Void> rejectExecution(@PathVariable String taskId,
                                      Authentication auth) {
         Long userId = (Long) auth.getPrincipal();
@@ -111,12 +115,14 @@ public class AiChatController {
 
     @PostMapping("/sessions/{sessionId}/plan/confirm")
     public R<Void> confirmPlan(@PathVariable String sessionId, Authentication auth) {
+        aiChatService.requireSessionOwner(sessionId, (Long) auth.getPrincipal());
         planConfirmationManager.confirm(sessionId);
         return R.ok();
     }
 
     @PostMapping("/sessions/{sessionId}/plan/reject")
     public R<Void> rejectPlan(@PathVariable String sessionId, Authentication auth) {
+        aiChatService.requireSessionOwner(sessionId, (Long) auth.getPrincipal());
         planConfirmationManager.reject(sessionId);
         return R.ok();
     }
@@ -125,6 +131,7 @@ public class AiChatController {
     public R<Void> approveCheckpoint(@PathVariable String sessionId,
                                       @PathVariable int stepIndex,
                                       Authentication auth) {
+        aiChatService.requireSessionOwner(sessionId, (Long) auth.getPrincipal());
         planConfirmationManager.confirmStepCheckpoint(sessionId, stepIndex);
         return R.ok();
     }
@@ -133,6 +140,7 @@ public class AiChatController {
     public R<Void> rejectCheckpoint(@PathVariable String sessionId,
                                      @PathVariable int stepIndex,
                                      Authentication auth) {
+        aiChatService.requireSessionOwner(sessionId, (Long) auth.getPrincipal());
         planConfirmationManager.rejectStepCheckpoint(sessionId, stepIndex);
         return R.ok();
     }
@@ -140,6 +148,7 @@ public class AiChatController {
     @GetMapping("/sessions/{sessionId}/trace")
     public R<List<AiIterationMessage>> getSessionTrace(@PathVariable String sessionId,
                                                         Authentication auth) {
+        aiChatService.requireSessionOwner(sessionId, (Long) auth.getPrincipal());
         return R.ok(aiIterationMessageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId));
     }
 }

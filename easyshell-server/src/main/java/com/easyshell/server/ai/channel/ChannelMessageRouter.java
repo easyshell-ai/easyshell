@@ -20,6 +20,7 @@ import org.springframework.stereotype.Service;
 import java.util.Iterator;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
@@ -259,7 +260,35 @@ public class ChannelMessageRouter {
         }
     }
 
+    /**
+     * Identity used for actions triggered by a bot channel. Prefers an explicitly configured
+     * restricted account, then the least privileged existing user, and only falls back to the
+     * administrator when nothing else exists. Bot-triggered work must never silently run with
+     * super-admin privileges.
+     */
     private Long resolveUserId() {
+        String configured = getConfigValue("ai.channel.identity-user-id");
+        if (configured != null && !configured.isBlank()) {
+            try {
+                Long id = Long.parseLong(configured.trim());
+                if (userRepository.existsById(id)) {
+                    return id;
+                }
+                log.warn("Configured channel identity user {} does not exist, falling back", id);
+            } catch (NumberFormatException e) {
+                log.warn("Invalid ai.channel.identity-user-id: {}", configured);
+            }
+        }
+
+        Optional<User> restricted = userRepository.findAll().stream()
+                .filter(u -> "viewer".equals(u.getRole()) || "operator".equals(u.getRole()))
+                .map(User.class::cast)
+                .findFirst();
+        if (restricted.isPresent()) {
+            return restricted.get().getId();
+        }
+
+        log.warn("No restricted user available for bot channel identity; using admin account");
         return userRepository.findByUsername("admin")
                 .map(User::getId)
                 .orElse(1L);

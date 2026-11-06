@@ -1,8 +1,10 @@
 package com.easyshell.server.controller;
 
+import com.easyshell.server.security.AuditUsers;
 import com.easyshell.server.ai.model.vo.RiskAssessment;
 import com.easyshell.server.ai.risk.CommandRiskEngine;
 import com.easyshell.server.ai.risk.RiskLevel;
+import com.easyshell.server.common.exception.BusinessException;
 import com.easyshell.server.common.result.R;
 import com.easyshell.server.common.utils.ScriptParameterUtils;
 import com.easyshell.server.model.dto.TaskCreateRequest;
@@ -43,6 +45,8 @@ public class TaskController {
     private final TagService tagService;
     private final ObjectMapper objectMapper;
 
+    private static final int MAX_PAGE_SIZE = 200;
+
     @PostMapping
     public R<?> create(@Valid @RequestBody TaskCreateRequest request, Authentication auth,
                           HttpServletRequest httpRequest) {
@@ -64,14 +68,16 @@ public class TaskController {
 
         if (scriptContent != null && !scriptContent.isBlank()) {
             RiskAssessment risk = riskEngine.assessScript(scriptContent);
-            if (risk.getOverallRisk() == RiskLevel.BANNED || risk.getOverallRisk() == RiskLevel.HIGH) {
-                // Return 449 with risk assessment data so frontend can prompt for approval
+            if (risk.getOverallRisk() != RiskLevel.LOW) {
+                // Return 449 with risk assessment data so frontend can prompt for approval.
+                // Anything that is not explicitly low risk must go through the approval flow,
+                // otherwise the MEDIUM gate could be bypassed by posting a task directly.
                 return R.of(449, risk.getExplanation(), risk);
             }
         }
 
         Task task = taskService.createAndDispatch(request, userId);
-        auditLogService.log(userId, auth.getName(), "CREATE_TASK", "task",
+        auditLogService.log(userId, AuditUsers.name(auth), "CREATE_TASK", "task",
                 task.getId(), request.getName(), httpRequest.getRemoteAddr(), "success");
         return R.ok(task);
     }
@@ -100,7 +106,7 @@ public class TaskController {
 
         // Re-assess risk to confirm it truly needs approval
         RiskAssessment risk = riskEngine.assessScript(scriptContent);
-        if (risk.getOverallRisk() != RiskLevel.BANNED && risk.getOverallRisk() != RiskLevel.HIGH) {
+        if (risk.getOverallRisk() == RiskLevel.LOW) {
             return R.fail(400, "Script does not require approval");
         }
 
@@ -140,7 +146,7 @@ public class TaskController {
             task.setTargetAgentIds(objectMapper.writeValueAsString(new ArrayList<>(resolvedAgentIds)));
             taskRepository.save(task);
 
-            auditLogService.log(userId, auth.getName(), "SUBMIT_APPROVAL", "task",
+            auditLogService.log(userId, AuditUsers.name(auth), "SUBMIT_APPROVAL", "task",
                     task.getId(), request.getName(), httpRequest.getRemoteAddr(), "pending");
 
             log.info("Manual task {} submitted for approval by user {}, risk level: {}",
@@ -163,16 +169,44 @@ public class TaskController {
             @RequestParam(required = false) Integer status,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
-        return R.ok(taskService.listTasks(status, PageRequest.of(page, size)));
+        int safePage = Math.max(page, 0);
+        int safeSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
+        return R.ok(taskService.listTasks(status, PageRequest.of(safePage, safeSize)));
     }
 
     @GetMapping("/{taskId}")
-    public R<TaskDetailVO> detail(@PathVariable String taskId) {
-        return R.ok(taskService.getTaskDetail(taskId));
+    public R<TaskDetailVO> detail(@PathVariable String taskId, Authentication auth) {
+        TaskDetailVO detail = taskService.getTaskDetail(taskId);
+        requireAccess(auth, detail.getTask().getCreatedBy());
+        return R.ok(detail);
     }
 
     @GetMapping("/agent/{agentId}/jobs")
-    public R<List<Job>> agentJobs(@PathVariable String agentId) {
+    public R<List<Job>> agentJobs(@PathVariable String agentId, Authentication auth) {
+        boolean isAdmin = auth.getAuthorities().stream()
+                .anyMatch(a -> a.getAuthority().equals("ROLE_SUPER_ADMIN")
+                        || a.getAuthority().equals("ROLE_ADMIN"));
+        if (!isAdmin) {
+            // Non-administrators only see jobs belonging to their own tasks
+            Long userId = (Long) auth.getPrincipal();
+            List<Job> jobs = taskService.getAgentJobs(agentId).stream()
+                    .filter(job -> {
+                        Task task = taskRepository.findById(job.getTaskId()).orElse(null);
+                        return task != null && userId.equals(task.getCreatedBy());
+                    })
+                    .toList();
+            return R.ok(jobs);
+        }
         return R.ok(taskService.getAgentJobs(agentId));
+    }
+
+    private void requireAccess(Authentication auth, Long createdBy) {
+        boolean isAdmin = auth.getAuthorities().stream()
+                .anyMatch(a -> a.getAuthority().equals("ROLE_SUPER_ADMIN")
+                        || a.getAuthority().equals("ROLE_ADMIN"));
+        Long userId = (Long) auth.getPrincipal();
+        if (!isAdmin && !userId.equals(createdBy)) {
+            throw new BusinessException(403, "Not allowed to access this task");
+        }
     }
 }

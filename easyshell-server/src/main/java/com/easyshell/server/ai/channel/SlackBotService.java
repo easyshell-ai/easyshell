@@ -11,6 +11,7 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import java.security.MessageDigest;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -141,7 +142,10 @@ public class SlackBotService implements BotChannelService {
     }
 
     public boolean verifySlackSignature(String timestamp, String rawBody, String expectedSignature) {
-        if (botToken == null || botToken.isBlank()) return true;
+        if (botToken == null || botToken.isBlank()) {
+            log.error("Slack signature verification requested but no signing secret is configured");
+            return false;
+        }
         try {
             String baseString = "v0:" + timestamp + ":" + rawBody;
             Mac mac = Mac.getInstance("HmacSHA256");
@@ -154,7 +158,9 @@ public class SlackBotService implements BotChannelService {
                 hexString.append(hex);
             }
             String calculated = "v0=" + hexString.toString();
-            return calculated.equals(expectedSignature);
+            return MessageDigest.isEqual(
+                    calculated.getBytes(StandardCharsets.UTF_8),
+                    expectedSignature == null ? new byte[0] : expectedSignature.getBytes(StandardCharsets.UTF_8));
         } catch (Exception e) {
             log.warn("Slack signature verification failed: {}", e.getMessage());
             return false;

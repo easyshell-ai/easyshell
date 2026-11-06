@@ -23,18 +23,26 @@ class PermissionFilterTest {
     }
 
     private OrchestratorEngine createMinimalEngine() {
-        return new OrchestratorEngine(
-                null, null, null, null,
-                null, null, null, null,
-                null, null, null, null,
-                null, null, null, null,
-                null, null, null, null,
-                null, null, null, null,
-                null, null, null, null,
-                null, null, null, null,
-                null, null, null, null,
-                null
-        );
+        // 36 constructor arguments, all unused by filterToolsByPermissions
+        Object[] args = new Object[36];
+        return (OrchestratorEngine) createInstance(args);
+    }
+
+    private static Object createInstance(Object[] args) {
+        try {
+            Class<?>[] types = new Class<?>[args.length];
+            java.util.Arrays.fill(types, Object.class);
+            var ctor = OrchestratorEngine.class.getConstructors()[0];
+            for (var c : OrchestratorEngine.class.getConstructors()) {
+                if (c.getParameterCount() == args.length) {
+                    ctor = c;
+                    break;
+                }
+            }
+            return ctor.newInstance(args);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 
     private ToolCallback mockTool(String name) {
@@ -83,30 +91,30 @@ class PermissionFilterTest {
     }
 
     @Test
-    void nullPermissions_returnsAll() throws Exception {
+    void nullPermissions_returnsNone_failClosed() throws Exception {
         OrchestratorEngine engine = createMinimalEngine();
         ToolCallback[] all = {mockTool("listHosts"), mockTool("executeScript")};
 
         ToolCallback[] result = invokeFilter(engine, all, null);
-        assertThat(result).hasSize(2);
+        assertThat(result).isEmpty();
     }
 
     @Test
-    void blankPermissions_returnsAll() throws Exception {
+    void blankPermissions_returnsNone_failClosed() throws Exception {
         OrchestratorEngine engine = createMinimalEngine();
         ToolCallback[] all = {mockTool("listHosts"), mockTool("executeScript")};
 
         ToolCallback[] result = invokeFilter(engine, all, "  ");
-        assertThat(result).hasSize(2);
+        assertThat(result).isEmpty();
     }
 
     @Test
-    void invalidJson_returnsAll() throws Exception {
+    void invalidJson_returnsNone_failClosed() throws Exception {
         OrchestratorEngine engine = createMinimalEngine();
         ToolCallback[] all = {mockTool("listHosts"), mockTool("executeScript")};
 
         ToolCallback[] result = invokeFilter(engine, all, "{bad json");
-        assertThat(result).hasSize(2);
+        assertThat(result).isEmpty();
     }
 
     @Test

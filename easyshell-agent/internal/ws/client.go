@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +19,15 @@ import (
 	"github.com/easyshell-org/easyshell/easyshell-agent/internal/fileserver"
 )
 
+const (
+	// Reconnect backoff: fixed 5s forever hammered a struggling server and never gave up.
+	minReconnectDelay = 2 * time.Second
+	maxReconnectDelay = 60 * time.Second
+	readDeadline      = 90 * time.Second
+	maxMessageBytes   = 4 * 1024 * 1024
+	maxConcurrentJobs = 8
+)
+
 type Client struct {
 	ServerURL   string
 	AgentID     string
@@ -26,6 +37,7 @@ type Client struct {
 	fileHandler *fileserver.Handler
 	conn        *websocket.Conn
 	mu          sync.Mutex
+	jobs        chan struct{}
 }
 
 type ExecuteMessage struct {
@@ -58,10 +70,12 @@ func NewClient(serverURL string, agentID string, httpClient *client.HTTPClient, 
 		executor:    exec,
 		termManager: terminal.NewManager(),
 		fileHandler: fileHandler,
+		jobs:        make(chan struct{}, maxConcurrentJobs),
 	}
 }
 
 func (c *Client) Start(ctx context.Context) {
+	delay := minReconnectDelay
 	for {
 		select {
 		case <-ctx.Done():
@@ -75,8 +89,15 @@ func (c *Client) Start(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(5 * time.Second):
-				slog.Info("reconnecting websocket...")
+			case <-time.After(delay):
+				slog.Info("reconnecting websocket...", "delay", delay.String())
+			}
+			// Exponential backoff, reset as soon as a connection stays up.
+			if delay < maxReconnectDelay {
+				delay *= 2
+				if delay > maxReconnectDelay {
+					delay = maxReconnectDelay
+				}
 			}
 		}
 	}
@@ -86,20 +107,32 @@ func (c *Client) connectAndListen(ctx context.Context) error {
 	wsURL := c.buildWSURL()
 	slog.Info("connecting websocket", "url", wsURL)
 
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	header := http.Header{}
+	if token := c.httpClient.AgentToken(); token != "" {
+		header.Set("Authorization", "Bearer "+token)
+	}
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, header)
 	if err != nil {
 		return fmt.Errorf("dial: %w", err)
 	}
+
+	c.mu.Lock()
 	c.conn = conn
+	c.mu.Unlock()
+
+	conn.SetReadLimit(maxMessageBytes)
 	slog.Info("websocket connected")
 
 	defer c.close()
 
-	// Set pong handler to reset read deadline on pong received
+	// Reset the read deadline on every pong so a half-open connection is detected.
 	conn.SetPongHandler(func(appData string) error {
+		_ = conn.SetReadDeadline(time.Now().Add(readDeadline))
 		slog.Debug("pong received")
 		return nil
 	})
+	_ = conn.SetReadDeadline(time.Now().Add(readDeadline))
 
 	// Start ping goroutine to keep connection alive
 	pingDone := make(chan struct{})
@@ -155,7 +188,26 @@ func (c *Client) handleMessage(ctx context.Context, data []byte) {
 			slog.Error("failed to parse execute message", "error", err)
 			return
 		}
-		go c.executeJob(ctx, execMsg)
+		select {
+		case c.jobs <- struct{}{}:
+			go func() {
+				defer func() { <-c.jobs }()
+				c.executeJob(ctx, execMsg)
+			}()
+		default:
+			// Never let the server exhaust the agent with concurrent jobs.
+			slog.Warn("too many concurrent jobs, rejecting", "job_id", execMsg.JobID)
+			result := ResultMessage{
+				Type:     "result",
+				JobID:    execMsg.JobID,
+				Status:   3,
+				ExitCode: -1,
+				Output:   "agent is busy: too many concurrent jobs",
+			}
+			if err := c.sendJSON(result); err != nil {
+				slog.Debug("failed to report busy state", "error", err)
+			}
+		}
 	case "terminal_open", "terminal_input", "terminal_resize", "terminal_close":
 		c.handleTerminalMessage(data, msg)
 	case "file_list", "file_download", "file_upload_start", "file_upload_chunk", "file_mkdir", "file_delete", "file_rename":
@@ -340,8 +392,10 @@ func (c *Client) close() {
 }
 
 func (c *Client) buildWSURL() string {
-	url := c.ServerURL
-	url = strings.Replace(url, "https://", "wss://", 1)
-	url = strings.Replace(url, "http://", "ws://", 1)
-	return url + "/ws/agent/" + c.AgentID
+	endpoint := c.ServerURL
+	endpoint = strings.Replace(endpoint, "https://", "wss://", 1)
+	endpoint = strings.Replace(endpoint, "http://", "ws://", 1)
+	// The agent id ends up in the request path, so it has to be escaped: an id containing
+	// "/" or ".." would otherwise change which endpoint is addressed.
+	return endpoint + "/ws/agent/" + url.PathEscape(c.AgentID)
 }

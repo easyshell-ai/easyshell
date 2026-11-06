@@ -63,7 +63,7 @@ httpStartCommand:
     |-
     (config) => ({
       command: "npx",
-      args: ["-y", "@easyshell/mcp-server", "--port", String(config.port || 3000), "--host", "0.0.0.0"],
+      args: ["-y", "@easyshell/mcp-server", "--port", String(config.port || 3000), "--host", "127.0.0.1"],
       env: {
         EASYSHELL_URL: config.easyshellUrl,
         EASYSHELL_USER: config.easyshellUser,

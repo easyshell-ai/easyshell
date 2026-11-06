@@ -7,6 +7,7 @@ import com.easyshell.server.model.dto.UserUpdateRequest;
 import com.easyshell.server.model.entity.User;
 import com.easyshell.server.model.vo.UserVO;
 import com.easyshell.server.repository.UserRepository;
+import com.easyshell.server.security.RefreshTokenStore;
 import com.easyshell.server.service.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -22,6 +23,7 @@ public class UserServiceImpl implements UserService {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final RefreshTokenStore refreshTokenStore;
 
     private static final Set<String> VALID_ROLES = Set.of("super_admin", "admin", "operator", "viewer");
 
@@ -76,8 +78,10 @@ public class UserServiceImpl implements UserService {
             }
             user.setRole(request.getRole());
         }
-        if (request.getStatus() != null) {
+        if (request.getStatus() != null && !request.getStatus().equals(user.getStatus())) {
             user.setStatus(request.getStatus());
+            // A disabled account must not keep working refresh tokens
+            refreshTokenStore.revokeAllForUser(id);
         }
 
         user = userRepository.save(user);
@@ -101,6 +105,7 @@ public class UserServiceImpl implements UserService {
         }
 
         userRepository.delete(user);
+        refreshTokenStore.revokeAllForUser(id);
     }
 
     @Override
@@ -110,6 +115,8 @@ public class UserServiceImpl implements UserService {
                 .orElseThrow(() -> new BusinessException(404, "用户不存在"));
         user.setPassword(passwordEncoder.encode(request.getNewPassword()));
         userRepository.save(user);
+        // Password change invalidates every previously issued refresh token
+        refreshTokenStore.revokeAllForUser(id);
     }
 
     private UserVO toVO(User user) {

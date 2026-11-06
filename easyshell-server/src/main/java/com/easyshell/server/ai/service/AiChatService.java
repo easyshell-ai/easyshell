@@ -257,16 +257,24 @@ public class AiChatService {
     }
 
     public List<AiChatMessageVO> getSessionMessages(String sessionId, Long userId) {
+        requireSessionOwner(sessionId, userId);
+        return messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).stream()
+                .filter(msg -> !"system".equals(msg.getRole()))
+                .map(this::toMessageVO)
+                .toList();
+    }
+
+    /**
+     * Loads a session and verifies the caller owns it. Every endpoint that takes a sessionId
+     * (including plan confirmation and iteration traces) must go through this.
+     */
+    public AiChatSession requireSessionOwner(String sessionId, Long userId) {
         AiChatSession session = sessionRepository.findById(sessionId)
                 .orElseThrow(() -> new BusinessException(404, "会话不存在"));
         if (!session.getUserId().equals(userId)) {
             throw new BusinessException(403, "无权访问此会话");
         }
-
-        return messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).stream()
-                .filter(msg -> !"system".equals(msg.getRole()))
-                .map(this::toMessageVO)
-                .toList();
+        return session;
     }
 
     @Transactional

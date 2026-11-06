@@ -53,6 +53,9 @@ public class HostProvisionServiceImpl implements HostProvisionService {
     @Value("${easyshell.provision.agent-binary-dir:/root/easyshell/easyshell-agent}")
     private String agentBinaryDir;
 
+    @Value("${easyshell.agent.register-secret:}")
+    private String agentRegisterSecret;
+
     private static final DateTimeFormatter FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     @Override
@@ -356,10 +359,16 @@ public class HostProvisionServiceImpl implements HostProvisionService {
             saveStatus(credentialId, "INSTALLING", "正在创建配置和服务...");
 
             String resolvedServerUrl = resolveServerUrl();
-            String agentYaml = "server:\n  url: " + resolvedServerUrl + "\n\nagent:\n  id: \"\"\n\nheartbeat:\n  interval: 30\n\nmetrics:\n  interval: 60\n\nlog:\n  level: info\n";
+            String agentYaml = buildAgentYaml(resolvedServerUrl);
 
-            execCommand(session, "cat > /opt/easyshell/configs/agent.yaml << 'EOFCONFIG'\n" + agentYaml + "EOFCONFIG");
-            saveLog(credentialId, "Agent配置文件已写入 /opt/easyshell/configs/agent.yaml");
+            String delimiter = "EOFCONFIG";
+            if (agentYaml.contains(delimiter)) {
+                throw new BusinessException(500, "Refusing to write agent.yaml: config contains the heredoc delimiter");
+            }
+            execCommand(session, "cat > /opt/easyshell/configs/agent.yaml << '" + delimiter + "'\n" + agentYaml + delimiter);
+            // The config carries the registration secret: keep it root-only.
+            execCommand(session, "chmod 600 /opt/easyshell/configs/agent.yaml");
+            saveLog(credentialId, "Agent配置文件已写入 /opt/easyshell/configs/agent.yaml (0600)");
 
             // --- Detect init system and install service ---
             boolean hasSystemd = detectSystemd(session);
@@ -591,8 +600,9 @@ public class HostProvisionServiceImpl implements HostProvisionService {
                 .filter(v -> !v.isEmpty())
                 .orElse(null);
         if (dbUrl != null) {
-            log.info("Using server URL from system config: {}", dbUrl);
-            return dbUrl;
+            String validated = validateServerUrl(dbUrl);
+            log.info("Using server URL from system config: {}", validated);
+            return validated;
         }
 
         // 2. Fallback to env / application.yml value
@@ -600,13 +610,59 @@ public class HostProvisionServiceImpl implements HostProvisionService {
                 && !"http://127.0.0.1:18080".equals(serverUrl)
                 && !"http://localhost:18080".equals(serverUrl)
                 && !serverUrl.contains("easyshell-server")) {
-            log.info("Using server URL from environment: {}", serverUrl);
-            return serverUrl;
+            String validated = validateServerUrl(serverUrl);
+            log.info("Using server URL from environment: {}", validated);
+            return validated;
         }
 
         // 3. No valid URL — abort
         throw new BusinessException(400,
                 "请先在【系统管理 → 系统配置】中设置 server.external-url 为本服务器的公网可访问地址（例如 http://your-ip:18080），否则 Agent 无法连接 Server");
+    }
+
+    /**
+     * Builds the agent.yaml that is written on the target host.
+     *
+     * The registration secret is embedded so the freshly installed agent can obtain its own
+     * token: without it every provisioned host would be stuck at registration (the server
+     * refuses anonymous registration). The file section pins the file manager to a dedicated
+     * directory instead of the whole filesystem.
+     */
+    private String buildAgentYaml(String resolvedServerUrl) {
+        StringBuilder yaml = new StringBuilder();
+        yaml.append("server:\n");
+        yaml.append("  url: ").append(resolvedServerUrl).append("\n");
+        if (agentRegisterSecret != null && !agentRegisterSecret.isBlank()) {
+            yaml.append("  registration-secret: \"").append(agentRegisterSecret).append("\"\n");
+        }
+        yaml.append("\nagent:\n");
+        yaml.append("  id: \"\"\n");
+        yaml.append("  file:\n");
+        yaml.append("    enabled: true\n");
+        yaml.append("    root: /var/lib/easyshell\n");
+        yaml.append("    readonly: false\n");
+        yaml.append("    max-size-mb: 500\n");
+        yaml.append("    max-list-entries: 1000\n");
+        yaml.append("\nheartbeat:\n  interval: 30\n\nmetrics:\n  interval: 60\n\nlog:\n  level: info\n");
+        return yaml.toString();
+    }
+
+    /**
+     * The URL is interpolated into a shell heredoc on the target host, so it must be a plain
+     * http(s) URL with no whitespace, newlines or quoting characters. Without this check a
+     * value containing "EOFCONFIG" plus a newline breaks out of the heredoc and executes
+     * arbitrary commands on every provisioned host.
+     */
+    private String validateServerUrl(String url) {
+        String trimmed = url.trim();
+        if (!trimmed.matches("https?://[A-Za-z0-9._~-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~!$&'()*+,;=:@%-]*)?")
+                || trimmed.contains("\n") || trimmed.contains("\r")
+                || trimmed.contains("'") || trimmed.contains("\"") || trimmed.contains("`")
+                || trimmed.contains("$") || trimmed.contains("EOFCONFIG")) {
+            throw new BusinessException(400,
+                    "server.external-url 格式无效：只允许 http(s)://host[:port][/path]，且不能包含空白、引号或特殊字符");
+        }
+        return trimmed;
     }
 
     private HostCredentialVO toVO(HostCredential entity) {
@@ -687,7 +743,9 @@ public class HostProvisionServiceImpl implements HostProvisionService {
         }
 
         Properties config = new Properties();
-        config.put("StrictHostKeyChecking", "no");
+        // "accept-new" records the key on first connect and refuses changed keys afterwards;
+        // "no" would silently accept any man-in-the-middle key.
+        config.put("StrictHostKeyChecking", "accept-new");
         session.setConfig(config);
         session.setTimeout(30000);
         session.connect(30000);

@@ -6,7 +6,7 @@ import com.easyshell.server.model.vo.UserVO;
 
 public interface AuthService {
 
-    LoginResponse login(LoginRequest request);
+    LoginResponse login(LoginRequest request, String sourceIp);
 
     LoginResponse refresh(String refreshToken);
 

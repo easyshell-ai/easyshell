@@ -1,5 +1,6 @@
 package com.easyshell.server.ai.controller;
 
+import com.easyshell.server.security.AuditUsers;
 import com.easyshell.server.ai.model.dto.AiRiskAssessRequest;
 import com.easyshell.server.ai.model.dto.AiRiskRulesSaveRequest;
 import com.easyshell.server.ai.model.vo.AiRiskRulesVO;
@@ -66,7 +67,7 @@ public class AiRiskController {
             return R.fail(500, "保存失败: " + e.getMessage());
         }
 
-        auditLogService.log(userId, auth.getName(), "UPDATE_RISK_RULES", "ai_risk",
+        auditLogService.log(userId, AuditUsers.name(auth), "UPDATE_RISK_RULES", "ai_risk",
                 null, "更新命令风险规则", httpRequest.getRemoteAddr(), "success");
 
         return R.ok();

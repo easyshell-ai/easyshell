@@ -35,8 +35,9 @@ public class CommandRiskEngine {
     );
 
     private static final Set<String> FALLBACK_HIGH_COMMANDS = Set.of(
-            "reboot", "shutdown", "poweroff", "halt", "mkfs", "fdisk", "dd",
-            "useradd", "userdel", "passwd", "chmod", "chown",
+            "reboot", "shutdown", "poweroff", "halt", "mkfs", "mkfs.ext2", "mkfs.ext3",
+            "mkfs.ext4", "mkfs.xfs", "mkswap", "fdisk", "parted", "dd",
+            "useradd", "userdel", "usermod", "passwd", "chmod", "chown",
             "iptables", "firewall-cmd", "ufw", "modprobe",
             "systemctl start", "systemctl stop", "systemctl restart",
             "apt install", "apt remove", "yum install", "yum remove", "pip install",
@@ -106,6 +107,9 @@ public class CommandRiskEngine {
     }
 
     public RiskLevel classifyCommand(String command) {
+        if (command == null || command.isBlank()) {
+            return RiskLevel.LOW;
+        }
         String trimmed = command.trim();
 
         for (String pattern : getAllBannedPatterns()) {
@@ -118,6 +122,12 @@ public class CommandRiskEngine {
             if (trimmed.matches(".*" + pattern + ".*")) {
                 return RiskLevel.BANNED;
             }
+        }
+
+        // Obfuscation / interpreter execution: the classic way to smuggle a payload past a
+        // keyword blacklist. Treat as high risk instead of silently trusting it.
+        if (isObfuscated(trimmed)) {
+            return RiskLevel.HIGH;
         }
 
         String baseCommand = extractBaseCommand(trimmed);
@@ -159,7 +169,68 @@ public class CommandRiskEngine {
             }
         }
 
-        return RiskLevel.LOW;
+        if (isNetworkEgress(baseCommand)) {
+            return isNetworkWriteOrExecute(trimmed) ? RiskLevel.HIGH : RiskLevel.MEDIUM;
+        }
+
+        // Unknown command: fail closed. Anything that is not explicitly recognised as
+        // read-only requires human confirmation instead of being auto-executed.
+        return RiskLevel.MEDIUM;
+    }
+
+    private boolean isNetworkEgress(String baseCommand) {
+        return "curl".equals(baseCommand) || "wget".equals(baseCommand)
+                || "nc".equals(baseCommand) || "ncat".equals(baseCommand)
+                || "telnet".equals(baseCommand) || "ssh".equals(baseCommand)
+                || "scp".equals(baseCommand) || "ftp".equals(baseCommand);
+    }
+
+    private boolean isNetworkWriteOrExecute(String command) {
+        String lower = command.toLowerCase();
+        return lower.contains(" -d") || lower.contains("--data")
+                || lower.contains("--upload-file") || lower.contains(" -t ")
+                || lower.contains(" -f ") || lower.contains("--form")
+                || lower.contains("| sh") || lower.contains("| bash")
+                || lower.contains("|sh") || lower.contains("|bash")
+                || lower.contains(" -o ") || lower.contains("--output-document");
+    }
+
+    /**
+     * Detects interpreter execution and encoded payloads, which are the standard way to hide a
+     * command from keyword matching ("python3 -c ...", "base64 -d ... | sh", "$IFS", escapes).
+     */
+    private boolean isObfuscated(String command) {
+        String lower = command.toLowerCase();
+        for (String marker : List.of(
+                "python -c", "python3 -c", "python2 -c",
+                "perl -e", "ruby -e", "node -e", "node --eval",
+                "php -r", "lua -e", "Rscript -e")) {
+            if (lower.contains(marker)) {
+                return true;
+            }
+        }
+        if (lower.matches(".*\\b(eval|exec|source)\\s+.*") && lower.contains("$")) {
+            return true;
+        }
+        if (lower.contains("base64 -d") || lower.contains("base64 --decode")
+                || lower.contains("base64 --dec") || lower.contains("openssl base64 -d")) {
+            return true;
+        }
+        if (command.contains("$IFS") || command.contains("${IFS}")) {
+            return true;
+        }
+        if (lower.contains("xxd -r") || lower.contains("xxd -p -r")) {
+            return true;
+        }
+        // printf/echo with hex or octal escapes used to rebuild a command string
+        if ((lower.startsWith("printf") || lower.startsWith("echo -e") || lower.startsWith("echo -ne"))
+                && (command.contains("\\x") || command.contains("\\0"))) {
+            return true;
+        }
+        if (lower.matches(".*\\b(bash|sh|zsh|dash)\\s+-c\\b.*")) {
+            return true;
+        }
+        return false;
     }
 
     private List<String> findBannedPatterns(String scriptContent) {

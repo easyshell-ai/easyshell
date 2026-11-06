@@ -20,9 +20,12 @@ public interface TaskService {
 
     Page<Task> listTasks(Integer status, Pageable pageable);
 
-    void reportJobResult(JobResultRequest request);
+    /**
+     * @param agentId the agent credential subject that submitted the result; must own the job.
+     */
+    void reportJobResult(JobResultRequest request, String agentId);
 
-    void appendJobLog(String jobId, String logLine);
+    void appendJobLog(String jobId, String logLine, String agentId);
 
     List<Job> getAgentJobs(String agentId);
 

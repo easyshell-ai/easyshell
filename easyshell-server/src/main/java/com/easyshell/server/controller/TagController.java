@@ -1,5 +1,6 @@
 package com.easyshell.server.controller;
 
+import com.easyshell.server.security.AuditUsers;
 import com.easyshell.server.common.result.R;
 import com.easyshell.server.model.dto.TagRequest;
 import com.easyshell.server.model.vo.TagVO;
@@ -26,7 +27,7 @@ public class TagController {
                            HttpServletRequest httpRequest) {
         Long userId = (Long) auth.getPrincipal();
         TagVO tag = tagService.create(request);
-        auditLogService.log(userId, auth.getName(), "CREATE_TAG", "tag",
+        auditLogService.log(userId, AuditUsers.name(auth), "CREATE_TAG", "tag",
                 String.valueOf(tag.getId()), request.getName(), httpRequest.getRemoteAddr(), "success");
         return R.ok(tag);
     }
@@ -36,7 +37,7 @@ public class TagController {
                            Authentication auth, HttpServletRequest httpRequest) {
         Long userId = (Long) auth.getPrincipal();
         TagVO tag = tagService.update(id, request);
-        auditLogService.log(userId, auth.getName(), "UPDATE_TAG", "tag",
+        auditLogService.log(userId, AuditUsers.name(auth), "UPDATE_TAG", "tag",
                 String.valueOf(id), request.getName(), httpRequest.getRemoteAddr(), "success");
         return R.ok(tag);
     }
@@ -45,7 +46,7 @@ public class TagController {
     public R<Void> delete(@PathVariable Long id, Authentication auth, HttpServletRequest httpRequest) {
         Long userId = (Long) auth.getPrincipal();
         tagService.delete(id);
-        auditLogService.log(userId, auth.getName(), "DELETE_TAG", "tag",
+        auditLogService.log(userId, AuditUsers.name(auth), "DELETE_TAG", "tag",
                 String.valueOf(id), null, httpRequest.getRemoteAddr(), "success");
         return R.ok();
     }
@@ -60,7 +61,7 @@ public class TagController {
                                  Authentication auth, HttpServletRequest httpRequest) {
         Long userId = (Long) auth.getPrincipal();
         tagService.addTagToAgent(tagId, agentId);
-        auditLogService.log(userId, auth.getName(), "ADD_AGENT_TAG", "tag",
+        auditLogService.log(userId, AuditUsers.name(auth), "ADD_AGENT_TAG", "tag",
                 String.valueOf(tagId), agentId, httpRequest.getRemoteAddr(), "success");
         return R.ok();
     }
@@ -70,7 +71,7 @@ public class TagController {
                                       Authentication auth, HttpServletRequest httpRequest) {
         Long userId = (Long) auth.getPrincipal();
         tagService.removeTagFromAgent(tagId, agentId);
-        auditLogService.log(userId, auth.getName(), "REMOVE_AGENT_TAG", "tag",
+        auditLogService.log(userId, AuditUsers.name(auth), "REMOVE_AGENT_TAG", "tag",
                 String.valueOf(tagId), agentId, httpRequest.getRemoteAddr(), "success");
         return R.ok();
     }

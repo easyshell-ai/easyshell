@@ -40,7 +40,7 @@ class ErrorBoundaryInner extends React.Component<ErrorBoundaryProps, ErrorBounda
         <Result
           status="error"
           title={t('error.pageError')}
-          subTitle={this.state.error?.message || t('error.unknownError')}
+          subTitle={t('error.unknownError')}
           extra={[
             <Button key="retry" type="primary" onClick={this.handleReset}>
               {t('common.retry')}

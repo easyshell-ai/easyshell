@@ -100,7 +100,8 @@
     "submit": "Sign In",
     "loggingIn": "Signing in...",
     "success": "Login successful",
-    "failed": "Login failed"
+    "failed": "Login failed",
+    "tooManyAttempts": "Too many login attempts, please try again later"
   },
   "users": {
     "title": "User Management",
@@ -449,7 +450,6 @@
       "modeWebhook": "Webhook",
       "modeStream": "Stream (No Public IP)",
       "modeStreamFeishu": "Stream (Long Connection / No Public IP)",
-      "webhookUrl": "Webhook URL",
       "signingSecret": "Signing Secret",
       "clientId": "Client ID (AppKey)",
       "clientSecret": "Client Secret (AppSecret)",
@@ -932,8 +932,7 @@
       "categoryPlaceholder": "e.g. deployment",
       "enabled": "Enabled"
     },
-    "confirmDelete": "Delete this SOP?"
-    ,
+    "confirmDelete": "Delete this SOP?",
     "embeddingWarning": "Embedding model not configured. Semantic SOP matching is unavailable. Please configure an Embedding model to enable full SOP functionality.",
     "goToSettings": "Go to Settings"
   },

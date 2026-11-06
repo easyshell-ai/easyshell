@@ -233,11 +233,17 @@ public class TaskServiceImpl implements TaskService {
 
     @Override
     @Transactional
-    public void reportJobResult(JobResultRequest request) {
+    public void reportJobResult(JobResultRequest request, String agentId) {
         Job job = jobRepository.findById(request.getJobId()).orElse(null);
         if (job == null) {
             log.warn("Ignoring result for unknown job {}: status={}, this may be a stale result from a reconnected agent",
                     request.getJobId(), request.getStatus());
+            return;
+        }
+
+        if (agentId != null && !agentId.equals(job.getAgentId())) {
+            log.warn("Ignoring result for job {} submitted by agent {} (job belongs to {})",
+                    job.getId(), agentId, job.getAgentId());
             return;
         }
 
@@ -258,9 +264,15 @@ public class TaskServiceImpl implements TaskService {
     }
 
     @Override
-    public void appendJobLog(String jobId, String logLine) {
+    public void appendJobLog(String jobId, String logLine, String agentId) {
         Job job = jobRepository.findById(jobId).orElse(null);
         if (job == null) return;
+
+        if (agentId != null && !agentId.equals(job.getAgentId())) {
+            log.warn("Ignoring log for job {} submitted by agent {} (job belongs to {})",
+                    jobId, agentId, job.getAgentId());
+            return;
+        }
 
         String currentOutput = job.getOutput();
         if (currentOutput == null || currentOutput.isEmpty()) {

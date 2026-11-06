@@ -44,6 +44,13 @@ export class EasyShellClient {
     params?: Record<string, string>,
     retryOnUnauthorized = true,
   ): Promise<T> {
+    // Defence in depth: every call goes through a fixed API prefix and must not contain
+    // traversal segments, so a bad id can never rewrite the request target. Validated before
+    // any network activity so a malformed path can never trigger an authenticated request.
+    if (!path.startsWith("/api/") || path.includes("..") || path.includes("\\")) {
+      throw new EasyShellError(`Refusing to request unsupported path: ${path}`, 0, "INVALID_PATH");
+    }
+
     await this.ensureAuthenticated();
 
     const url = new URL(path, this.config.url);
@@ -186,7 +193,12 @@ export class EasyShellClient {
     try {
       return JSON.parse(text) as unknown;
     } catch {
-      return { message: text };
+      // A non-JSON body is an error page, a proxy message or a stack trace: summarise it
+      // instead of forwarding the raw text (which can contain internal details).
+      const snippet = text.slice(0, 200).replace(/\s+/g, " ").trim();
+      return {
+        message: `EasyShell returned a non-JSON response (HTTP ${response.status}): ${snippet}`,
+      };
     }
   }
 

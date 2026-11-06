@@ -1,5 +1,6 @@
 package com.easyshell.server.websocket;
 
+import com.easyshell.server.config.WebSocketAuthInterceptor;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -22,6 +23,15 @@ public class TaskLogWebSocketHandler extends TextWebSocketHandler {
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
+        if (session.getAttributes().get(WebSocketAuthInterceptor.ATTR_USER_ID) == null) {
+            log.warn("Task log WebSocket without authenticated user, closing");
+            try {
+                session.close(CloseStatus.POLICY_VIOLATION);
+            } catch (Exception ignored) {
+                // best effort
+            }
+            return;
+        }
         String taskId = extractTaskId(session);
         if (taskId != null) {
             taskSessions.computeIfAbsent(taskId, k -> new CopyOnWriteArrayList<>()).add(session);
@@ -71,11 +81,13 @@ public class TaskLogWebSocketHandler extends TextWebSocketHandler {
     }
 
     private String extractTaskId(WebSocketSession session) {
-        String uri = session.getUri() != null ? session.getUri().toString() : "";
-        String[] parts = uri.split("/");
-        if (parts.length > 0) {
-            return parts[parts.length - 1];
+        // Path only: the URI also carries the handshake token in its query string.
+        java.net.URI uri = session.getUri();
+        if (uri == null || uri.getPath() == null) {
+            return null;
         }
-        return null;
+        String path = uri.getPath();
+        String last = path.substring(path.lastIndexOf('/') + 1);
+        return last.isBlank() ? null : last;
     }
 }

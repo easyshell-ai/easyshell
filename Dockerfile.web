@@ -1,8 +1,8 @@
 FROM node:22-alpine AS builder
 
 WORKDIR /build
-COPY easyshell-web/package.json easyshell-web/package-lock.json* ./
-RUN npm install
+COPY easyshell-web/package.json easyshell-web/package-lock.json ./
+RUN npm ci
 
 COPY easyshell-web/ .
 RUN npm run build

@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { idNumberParam } from "./params.js";
 import type { EasyShellClient } from "../client.js";
 import { toMcpError } from "../errors.js";
 
@@ -24,7 +25,14 @@ export function registerInspectionTools(server: McpServer, client: EasyShellClie
     "trigger_inspection",
     "Manually trigger a scheduled inspection task to run immediately.",
     {
-      taskId: z.number().describe("Scheduled task ID"),
+      taskId: idNumberParam("Scheduled task ID"),
+    },
+    {
+      title: "Trigger inspection",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
     },
     async ({ taskId }: { taskId: number }) => {
       try {

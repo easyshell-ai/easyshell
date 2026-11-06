@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { idParam, pageParam, sizeParam } from "./params.js";
 import type { EasyShellClient } from "../client.js";
 import { toMcpError } from "../errors.js";
 
@@ -8,7 +9,7 @@ export function registerTaskTools(server: McpServer, client: EasyShellClient) {
     "get_task_detail",
     "Get detailed task execution results including per-host job status, output, and timing. Use after execute_script to check results.",
     {
-      taskId: z.string(),
+      taskId: idParam("The task ID, e.g. task_1a2b3c4d5e6f7890"),
     },
     async ({ taskId }: { taskId: string }) => {
       try {
@@ -30,8 +31,8 @@ export function registerTaskTools(server: McpServer, client: EasyShellClient) {
         .number()
         .optional()
         .describe("Filter: 0=pending, 1=running, 2=success, 3=partial, 4=failed"),
-      page: z.number().default(0).optional(),
-      size: z.number().default(20).optional(),
+      page: pageParam(),
+      size: sizeParam(),
     },
     async ({ status, page, size }: { status?: number; page?: number; size?: number }) => {
       try {

@@ -425,12 +425,17 @@ public class FeishuBotService implements BotChannelService {
     // ==================== Webhook Mode: Signature Verification ====================
 
     public boolean verifyEventSignature(String timestamp, String nonce, String signature, String rawBody) {
-        if (secret == null || secret.isBlank()) return true;
+        if (secret == null || secret.isBlank()) {
+            log.error("Feishu signature verification requested but no signing secret is configured");
+            return false;
+        }
         try {
             String source = timestamp + nonce + secret + rawBody;
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             String calculated = bytesToHex(digest.digest(source.getBytes(StandardCharsets.UTF_8)));
-            return calculated.equals(signature);
+            return MessageDigest.isEqual(
+                    calculated.getBytes(StandardCharsets.UTF_8),
+                    signature == null ? new byte[0] : signature.getBytes(StandardCharsets.UTF_8));
         } catch (Exception e) {
             log.warn("Feishu event signature verification failed: {}", e.getMessage());
             return false;

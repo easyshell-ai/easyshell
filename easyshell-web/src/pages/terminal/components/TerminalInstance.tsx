@@ -7,6 +7,7 @@ import { SearchAddon } from '@xterm/addon-search';
 import '@xterm/xterm/css/xterm.css';
 import type { ConnectionStatus } from '../types';
 import { terminalTheme } from '../types';
+import { getToken } from '../../../api/request';
 
 interface TerminalInstanceProps {
   tabId: string;
@@ -88,7 +89,11 @@ const TerminalInstance = forwardRef<TerminalInstanceRef, TerminalInstanceProps>(
       setTimeout(() => fitAddon.fit(), 100);
 
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}/ws/terminal/${agentId}`;
+      // Browsers cannot set headers on the WebSocket API, so the access token travels in the
+      // query string; the server validates it during the handshake.
+      const token = getToken();
+      const query = token ? `?token=${encodeURIComponent(token)}` : '';
+      const wsUrl = `${protocol}//${window.location.host}/ws/terminal/${encodeURIComponent(agentId)}${query}`;
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 

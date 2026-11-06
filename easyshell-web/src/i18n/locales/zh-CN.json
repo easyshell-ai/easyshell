@@ -100,7 +100,8 @@
     "submit": "登录",
     "loggingIn": "登录中...",
     "success": "登录成功",
-    "failed": "登录失败"
+    "failed": "登录失败",
+    "tooManyAttempts": "登录尝试过于频繁，请稍后再试"
   },
   "users": {
     "title": "用户管理",
@@ -449,7 +450,6 @@
       "modeWebhook": "Webhook",
       "modeStream": "Stream（免公网 IP）",
       "modeStreamFeishu": "Stream（长连接/免公网 IP）",
-      "webhookUrl": "Webhook 地址",
       "signingSecret": "签名密钥",
       "clientId": "Client ID（AppKey）",
       "clientSecret": "Client Secret（AppSecret）",
@@ -932,8 +932,7 @@
       "categoryPlaceholder": "如: deployment",
       "enabled": "启用"
     },
-    "confirmDelete": "确认删除此 SOP？"
-    ,
+    "confirmDelete": "确认删除此 SOP？",
     "embeddingWarning": "向量化模型未配置，SOP 语义匹配功能不可用。请设置 Embedding 模型以启用完整的 SOP 功能。",
     "goToSettings": "前往设置"
   },

@@ -36,11 +36,64 @@ public class FileProxyServiceImpl implements FileProxyService {
     private final Map<String, BlockingQueue<String>> downloadQueues = new ConcurrentHashMap<>();
 
     private static final long LIST_TIMEOUT_SECONDS = 10;
-    private static final long DOWNLOAD_TIMEOUT_SECONDS = 86400; // 24h — effectively unlimited
-    private static final long UPLOAD_TIMEOUT_SECONDS = 86400; // 24h — effectively unlimited
+    // Bounded so a stuck agent cannot pin a Tomcat thread indefinitely.
+    private static final long DOWNLOAD_TIMEOUT_SECONDS = 120;
+    private static final long UPLOAD_TIMEOUT_SECONDS = 120;
     private static final long OPERATION_TIMEOUT_SECONDS = 10;
     private static final int CHUNK_SIZE = 256 * 1024; // 256KB
     private static final int MAX_CHUNK_RETRIES = 3;
+
+    /**
+     * The agent reports policy failures (blacklist, traversal, symlinks, read-only) as plain
+     * strings. Surface them as 4xx instead of a generic 500 so the caller can tell a
+     * security refusal apart from an internal error.
+     */
+    private static BusinessException mapAgentError(String error) {
+        String lower = error.toLowerCase();
+        if (lower.contains("access denied") || lower.contains("blacklist") || lower.contains("security rules")) {
+            return new BusinessException(403, "Access denied by the host security policy");
+        }
+        if (lower.contains("traversal") || lower.contains("symlink") || lower.contains("unsafe path")) {
+            return new BusinessException(400, "Rejected unsafe path: " + error);
+        }
+        if (lower.contains("read-only") || lower.contains("read only")) {
+            return new BusinessException(403, "The host file system is read-only");
+        }
+        return new BusinessException(400, error);
+    }
+
+    /**
+     * Strips anything that could break out of the Content-Disposition header: quotes, CR/LF
+     * and control characters.
+     */
+    private static String sanitizeFileName(String fileName) {
+        if (fileName == null || fileName.isBlank()) {
+            return "download";
+        }
+        String cleaned = fileName.replaceAll("[\\\"/\\r\\n\\t]", "_")
+                .replaceAll("[\\p{Cntrl}]", "_")
+                .trim();
+        return cleaned.isEmpty() ? "download" : cleaned;
+    }
+
+    /**
+     * Rejects obviously hostile paths before they are forwarded to the agent: empty values,
+     * NUL bytes and traversal segments are refused here; the agent enforces the real policy.
+     */
+    private static void validateProxyPath(String path) {
+        if (path == null || path.isBlank()) {
+            throw new BusinessException(400, "path is required");
+        }
+        if (path.indexOf('\0') >= 0) {
+            throw new BusinessException(400, "invalid path");
+        }
+        String normalized = path.replace('\\', '/');
+        for (String segment : normalized.split("/")) {
+            if ("..".equals(segment)) {
+                throw new BusinessException(400, "path traversal is not allowed");
+            }
+        }
+    }
 
     @PostConstruct
     public void init() {
@@ -49,6 +102,7 @@ public class FileProxyServiceImpl implements FileProxyService {
 
     @Override
     public List<FileInfoVO> listFiles(String agentId, String path) {
+        validateProxyPath(path);
         String requestId = UUID.randomUUID().toString();
         CompletableFuture<String> future = new CompletableFuture<>();
         pendingRequests.put(requestId, future);
@@ -76,6 +130,7 @@ public class FileProxyServiceImpl implements FileProxyService {
 
     @Override
     public ResponseEntity<StreamingResponseBody> downloadFile(String agentId, String path) {
+        validateProxyPath(path);
         String requestId = UUID.randomUUID().toString();
         BlockingQueue<String> queue = new LinkedBlockingQueue<>();
         downloadQueues.put(requestId, queue);
@@ -88,7 +143,8 @@ public class FileProxyServiceImpl implements FileProxyService {
             );
             sendToAgent(agentId, msg);
 
-            String fileName = path.contains("/") ? path.substring(path.lastIndexOf('/') + 1) : path;
+            String fileName = sanitizeFileName(
+                    path.contains("/") ? path.substring(path.lastIndexOf('/') + 1) : path);
             String encodedFileName = URLEncoder.encode(fileName, StandardCharsets.UTF_8).replace("+", "%20");
 
             // Wait for the first chunk to get TotalSize for Content-Length header
@@ -100,7 +156,7 @@ public class FileProxyServiceImpl implements FileProxyService {
             JsonNode firstNode = objectMapper.readTree(firstChunkJson);
             if (firstNode.has("success") && !firstNode.get("success").asBoolean()) {
                 String error = firstNode.has("error") ? firstNode.get("error").asText() : "Download failed";
-                throw new BusinessException(error);
+                throw mapAgentError(error);
             }
 
             long totalSize = firstNode.has("totalSize") ? firstNode.get("totalSize").asLong() : -1;
@@ -180,6 +236,7 @@ public class FileProxyServiceImpl implements FileProxyService {
 
     @Override
     public void uploadFile(String agentId, String path, MultipartFile file) {
+        validateProxyPath(path);
         String requestId = UUID.randomUUID().toString();
 
         try {
@@ -266,16 +323,20 @@ public class FileProxyServiceImpl implements FileProxyService {
 
     @Override
     public void mkdir(String agentId, String path) {
+        validateProxyPath(path);
         simpleFileOperation(agentId, "file_mkdir", path, OPERATION_TIMEOUT_SECONDS);
     }
 
     @Override
     public void delete(String agentId, String path) {
+        validateProxyPath(path);
         simpleFileOperation(agentId, "file_delete", path, OPERATION_TIMEOUT_SECONDS);
     }
 
     @Override
     public void rename(String agentId, String oldPath, String newPath) {
+        validateProxyPath(oldPath);
+        validateProxyPath(newPath);
         String requestId = UUID.randomUUID().toString();
         CompletableFuture<String> future = new CompletableFuture<>();
         pendingRequests.put(requestId, future);

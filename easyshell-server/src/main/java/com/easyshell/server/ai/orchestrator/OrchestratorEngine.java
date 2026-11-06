@@ -75,7 +75,6 @@ public class OrchestratorEngine {
     private final MonitoringTool monitoringTool;
     private final AuditQueryTool auditQueryTool;
     private final ScheduledTaskTool scheduledTaskTool;
-    private final ApprovalTool approvalTool;
     private final SubAgentTool subAgentTool;
     private final DelegateTaskTool delegateTaskTool;
     private final GetTaskResultTool getTaskResultTool;
@@ -114,7 +113,6 @@ public class OrchestratorEngine {
             MonitoringTool monitoringTool,
             AuditQueryTool auditQueryTool,
             ScheduledTaskTool scheduledTaskTool,
-            ApprovalTool approvalTool,
             SubAgentTool subAgentTool,
             @Lazy DelegateTaskTool delegateTaskTool,
             GetTaskResultTool getTaskResultTool,
@@ -151,7 +149,6 @@ public class OrchestratorEngine {
         this.monitoringTool = monitoringTool;
         this.auditQueryTool = auditQueryTool;
         this.scheduledTaskTool = scheduledTaskTool;
-        this.approvalTool = approvalTool;
         this.subAgentTool = subAgentTool;
         this.delegateTaskTool = delegateTaskTool;
         this.getTaskResultTool = getTaskResultTool;
@@ -211,7 +208,6 @@ public class OrchestratorEngine {
 
             scriptExecuteTool.setContext(request.getUserId(), request.getSourceIp());
             softwareDetectTool.setContext(request.getUserId(), request.getSourceIp());
-            approvalTool.setContext(request.getUserId());
 
             ChatModel chatModel = chatModelFactory.getChatModel(request.getProvider(), request.getModel());
 
@@ -647,7 +643,7 @@ public class OrchestratorEngine {
         List<Object> tools = new java.util.ArrayList<>(List.of(
                 hostListTool, hostTagTool, scriptExecuteTool, softwareDetectTool,
                 taskManageTool, scriptManageTool, clusterManageTool,
-                monitoringTool, auditQueryTool, scheduledTaskTool, approvalTool,
+                monitoringTool, auditQueryTool, scheduledTaskTool,
                 subAgentTool, delegateTaskTool, getTaskResultTool,
                 dateTimeTool, webFetchTool, webSearchTool,
                 calculatorTool, textProcessTool, notificationTool,
@@ -948,8 +944,11 @@ public class OrchestratorEngine {
     }
 
     private ToolCallback[] filterToolsByPermissions(ToolCallback[] allCallbacks, String permissionsJson) {
+        // Fail closed: an agent without a usable permission list gets no tools at all, instead
+        // of silently receiving every tool (which made permission rules pointless).
         if (permissionsJson == null || permissionsJson.isBlank()) {
-            return allCallbacks;
+            log.warn("Agent has no permission configuration - granting no tools");
+            return new ToolCallback[0];
         }
         try {
             ObjectMapper mapper = new ObjectMapper();
@@ -980,8 +979,8 @@ public class OrchestratorEngine {
                     })
                     .toArray(ToolCallback[]::new);
         } catch (Exception e) {
-            log.warn("Failed to parse permissions JSON: {}", e.getMessage());
-            return allCallbacks;
+            log.warn("Failed to parse permissions JSON - granting no tools: {}", e.getMessage());
+            return new ToolCallback[0];
         }
     }
 }

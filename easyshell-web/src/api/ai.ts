@@ -1,4 +1,5 @@
 import request from './request';
+import { getToken, clearSession } from './request';
 import i18n from '../i18n';
 import type {
   ApiResponse,
@@ -120,7 +121,7 @@ export function sendChatStream(
   let attempt = 0;
 
   const doFetch = () => {
-    const token = localStorage.getItem('token');
+    const token = getToken();
     let receivedTerminalEvent = false;
 
     const wrappedOnEvent = (event: AgentEvent) => {
@@ -156,8 +157,8 @@ export function sendChatStream(
       .then(async (response) => {
         clearTimeout(timeoutId);
         if (!response.ok) {
-          if (response.status === 401 || response.status === 403) {
-            localStorage.removeItem('token');
+          if (response.status === 401) {
+            clearSession();
             window.location.href = '/login';
             return;
           }

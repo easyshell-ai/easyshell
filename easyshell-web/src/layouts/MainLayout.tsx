@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, type CSSProperties } from 'react';
+import { getToken, clearSession } from '../api/request';
 import { Outlet, useNavigate, useLocation, Link } from 'react-router-dom';
 import { Layout, Menu, Dropdown, Space, Avatar, Tooltip, Breadcrumb, theme, Divider, Drawer } from 'antd';
 import {
@@ -196,7 +197,7 @@ const MainLayout: React.FC = () => {
   }, [location.pathname, routeLabelMap, t]);
 
   useEffect(() => {
-    const authToken = localStorage.getItem('token');
+    const authToken = getToken();
     if (!authToken) {
       navigate('/login');
       return;
@@ -214,7 +215,7 @@ const MainLayout: React.FC = () => {
       icon: <LogoutOutlined />,
       label: t('header.logout'),
       onClick: () => {
-        localStorage.removeItem('token');
+        clearSession();
         navigate('/login');
       },
     },

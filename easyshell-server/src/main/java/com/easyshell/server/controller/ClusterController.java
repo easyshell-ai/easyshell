@@ -1,5 +1,6 @@
 package com.easyshell.server.controller;
 
+import com.easyshell.server.security.AuditUsers;
 import com.easyshell.server.common.result.R;
 import com.easyshell.server.model.dto.ClusterAgentRequest;
 import com.easyshell.server.model.dto.ClusterRequest;
@@ -28,7 +29,7 @@ public class ClusterController {
                                HttpServletRequest httpRequest) {
         Long userId = (Long) auth.getPrincipal();
         ClusterVO cluster = clusterService.create(request, userId);
-        auditLogService.log(userId, auth.getName(), "CREATE_CLUSTER", "cluster",
+        auditLogService.log(userId, AuditUsers.name(auth), "CREATE_CLUSTER", "cluster",
                 String.valueOf(cluster.getId()), request.getName(), httpRequest.getRemoteAddr(), "success");
         return R.ok(cluster);
     }
@@ -38,7 +39,7 @@ public class ClusterController {
                                Authentication auth, HttpServletRequest httpRequest) {
         Long userId = (Long) auth.getPrincipal();
         ClusterVO cluster = clusterService.update(id, request);
-        auditLogService.log(userId, auth.getName(), "UPDATE_CLUSTER", "cluster",
+        auditLogService.log(userId, AuditUsers.name(auth), "UPDATE_CLUSTER", "cluster",
                 String.valueOf(id), request.getName(), httpRequest.getRemoteAddr(), "success");
         return R.ok(cluster);
     }
@@ -47,7 +48,7 @@ public class ClusterController {
     public R<Void> delete(@PathVariable Long id, Authentication auth, HttpServletRequest httpRequest) {
         Long userId = (Long) auth.getPrincipal();
         clusterService.delete(id);
-        auditLogService.log(userId, auth.getName(), "DELETE_CLUSTER", "cluster",
+        auditLogService.log(userId, AuditUsers.name(auth), "DELETE_CLUSTER", "cluster",
                 String.valueOf(id), null, httpRequest.getRemoteAddr(), "success");
         return R.ok();
     }
@@ -67,7 +68,7 @@ public class ClusterController {
                              Authentication auth, HttpServletRequest httpRequest) {
         Long userId = (Long) auth.getPrincipal();
         clusterService.addAgents(id, request.getAgentIds());
-        auditLogService.log(userId, auth.getName(), "ADD_CLUSTER_AGENTS", "cluster",
+        auditLogService.log(userId, AuditUsers.name(auth), "ADD_CLUSTER_AGENTS", "cluster",
                 String.valueOf(id), String.join(",", request.getAgentIds()), httpRequest.getRemoteAddr(), "success");
         return R.ok();
     }
@@ -77,7 +78,7 @@ public class ClusterController {
                                Authentication auth, HttpServletRequest httpRequest) {
         Long userId = (Long) auth.getPrincipal();
         clusterService.removeAgent(id, agentId);
-        auditLogService.log(userId, auth.getName(), "REMOVE_CLUSTER_AGENT", "cluster",
+        auditLogService.log(userId, AuditUsers.name(auth), "REMOVE_CLUSTER_AGENT", "cluster",
                 String.valueOf(id), agentId, httpRequest.getRemoteAddr(), "success");
         return R.ok();
     }

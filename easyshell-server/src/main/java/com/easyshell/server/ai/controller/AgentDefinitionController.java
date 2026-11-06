@@ -12,6 +12,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.ai.support.ToolCallbacks;
 import org.springframework.ai.tool.ToolCallback;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.*;
@@ -100,6 +101,7 @@ public class AgentDefinitionController {
     }
 
     @PostMapping
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     public R<AgentDefinition> create(@Valid @RequestBody AgentDefinitionRequest request) {
         if (agentDefinitionRepository.existsByName(request.getName())) {
             return R.fail("Agent name already exists: " + request.getName());
@@ -123,6 +125,7 @@ public class AgentDefinitionController {
     }
 
     @PutMapping("/{id}")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     public R<AgentDefinition> update(@PathVariable Long id, @Valid @RequestBody AgentDefinitionRequest request) {
         return agentDefinitionRepository.findById(id)
                 .map(agent -> {
@@ -143,6 +146,7 @@ public class AgentDefinitionController {
     }
 
     @PatchMapping("/{id}/toggle")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     public R<AgentDefinition> toggle(@PathVariable Long id) {
         return agentDefinitionRepository.findById(id)
                 .map(agent -> {
@@ -155,6 +159,7 @@ public class AgentDefinitionController {
     }
 
     @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     public R<Void> delete(@PathVariable Long id) {
         return agentDefinitionRepository.findById(id)
                 .map(agent -> {

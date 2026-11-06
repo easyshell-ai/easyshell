@@ -295,7 +295,7 @@ const AiConfig: React.FC = () => {
       const providers: Record<string, { apiKey?: string; baseUrl?: string; model?: string; temperature?: number; topP?: number; maxTokens?: number }> = {};
       Object.entries(providerForms).forEach(([key, form]) => {
         providers[key] = {};
-        if (form.apiKey && !form.apiKey.includes('***')) {
+        if (form.apiKey && !/\*{3}/.test(form.apiKey)) {
           providers[key].apiKey = form.apiKey;
         }
         providers[key].baseUrl = form.baseUrl;
@@ -313,7 +313,7 @@ const AiConfig: React.FC = () => {
         embedding: {
           provider: embeddingForm.provider,
           model: embeddingForm.model,
-          apiKey: embeddingForm.apiKey && !embeddingForm.apiKey.includes('***') ? embeddingForm.apiKey : undefined,
+          apiKey: embeddingForm.apiKey && !/\*{3}/.test(embeddingForm.apiKey) ? embeddingForm.apiKey : undefined,
           baseUrl: embeddingForm.baseUrl,
         },
         orchestrator: {
@@ -346,7 +346,7 @@ const AiConfig: React.FC = () => {
     try {
       const res = await testAiConnection({
         provider,
-        apiKey: form?.apiKey && !form.apiKey.includes('***') ? form.apiKey : undefined,
+        apiKey: form?.apiKey && !/\*{3}/.test(form.apiKey) ? form.apiKey : undefined,
         baseUrl: form?.baseUrl || undefined,
         model: form?.model || undefined,
       });
@@ -409,7 +409,7 @@ const AiConfig: React.FC = () => {
       if (res.code === 200 && res.data) {
         const { deviceCode, userCode, verificationUri, interval } = res.data;
         setCopilotDeviceInfo({ userCode, verificationUri, deviceCode });
-        window.open(verificationUri, '_blank');
+        window.open(verificationUri, '_blank', 'noopener,noreferrer');
         setCopilotPolling(true);
         let currentInterval = Math.max((interval || 8) * 1000, 8000);
         const poll = async () => {
@@ -562,7 +562,7 @@ const AiConfig: React.FC = () => {
                           <Button
                             type="link"
                             style={{ padding: 0 }}
-                            onClick={() => window.open(copilotDeviceInfo.verificationUri, '_blank')}
+                            onClick={() => window.open(copilotDeviceInfo.verificationUri, '_blank', 'noopener,noreferrer')}
                           >
                             {t('aiConfig.provider.copilotReopenGithub')}
                           </Button>

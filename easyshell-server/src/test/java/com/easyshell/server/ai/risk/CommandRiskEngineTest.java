@@ -95,8 +95,8 @@ class CommandRiskEngineTest {
         }
 
         @Test
-        void mkfsExt4_isLow_baseNotInHighSet() {
-            assertThat(engine.classifyCommand("mkfs.ext4 /dev/sda1")).isEqualTo(RiskLevel.LOW);
+        void mkfsExt4_isHigh() {
+            assertThat(engine.classifyCommand("mkfs.ext4 /dev/sda1")).isEqualTo(RiskLevel.HIGH);
         }
 
         @Test
@@ -160,13 +160,13 @@ class CommandRiskEngineTest {
         }
 
         @Test
-        void curlWithData_isLow_curlNotInLowSet() {
-            assertThat(engine.classifyCommand("curl -X POST http://example.com -d '{}'")).isEqualTo(RiskLevel.LOW);
+        void curlWithData_isHigh() {
+            assertThat(engine.classifyCommand("curl -X POST http://example.com -d '{}'")).isEqualTo(RiskLevel.HIGH);
         }
 
         @Test
-        void curlReadOnly_isLow() {
-            assertThat(engine.classifyCommand("curl http://example.com")).isEqualTo(RiskLevel.LOW);
+        void curlReadOnly_isMedium_networkEgress() {
+            assertThat(engine.classifyCommand("curl http://example.com")).isEqualTo(RiskLevel.MEDIUM);
         }
 
         @Test
@@ -177,6 +177,36 @@ class CommandRiskEngineTest {
         @Test
         void emptyCommand_isLow() {
             assertThat(engine.classifyCommand("")).isEqualTo(RiskLevel.LOW);
+        }
+
+        @Test
+        void unknownCommand_isMedium_failClosed() {
+            assertThat(engine.classifyCommand("some-obscure-tool --run")).isEqualTo(RiskLevel.MEDIUM);
+        }
+
+        @Test
+        void pythonInlineExecution_isHigh() {
+            assertThat(engine.classifyCommand("python3 -c \"import os;os.system('id')\"")).isEqualTo(RiskLevel.HIGH);
+        }
+
+        @Test
+        void base64Decode_isHigh() {
+            assertThat(engine.classifyCommand("echo cm0gLXJmIC8= | base64 -d | sh")).isEqualTo(RiskLevel.HIGH);
+        }
+
+        @Test
+        void ifsObfuscation_isHigh() {
+            assertThat(engine.classifyCommand("cat$IFS/etc/shadow")).isEqualTo(RiskLevel.HIGH);
+        }
+
+        @Test
+        void bashInlineCommand_isHigh() {
+            assertThat(engine.classifyCommand("bash -c 'id'")).isEqualTo(RiskLevel.HIGH);
+        }
+
+        @Test
+        void evalWithVariable_isHigh() {
+            assertThat(engine.classifyCommand("eval \"$CMD\"")).isEqualTo(RiskLevel.HIGH);
         }
     }
 

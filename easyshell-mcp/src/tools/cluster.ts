@@ -1,5 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
+import { idNumberParam } from "./params.js";
 import type { EasyShellClient } from "../client.js";
 import { toMcpError } from "../errors.js";
 
@@ -24,7 +24,7 @@ export function registerClusterTools(server: McpServer, client: EasyShellClient)
     "get_cluster_detail",
     "Get cluster details including member hosts.",
     {
-      clusterId: z.number(),
+      clusterId: idNumberParam("The cluster ID"),
     },
     async ({ clusterId }: { clusterId: number }) => {
       try {

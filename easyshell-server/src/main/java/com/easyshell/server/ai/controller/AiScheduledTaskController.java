@@ -1,5 +1,6 @@
 package com.easyshell.server.ai.controller;
 
+import com.easyshell.server.security.AuditUsers;
 import com.easyshell.server.ai.model.dto.AiAlertRequest;
 import com.easyshell.server.ai.model.dto.AiScheduledTaskRequest;
 import com.easyshell.server.ai.model.entity.AiScheduledTask;
@@ -73,7 +74,7 @@ public class AiScheduledTaskController {
             schedulerService.scheduleTask(task);
         }
 
-        auditLogService.log(userId, auth.getName(), "CREATE_SCHEDULED_TASK", "ai_scheduled_task",
+        auditLogService.log(userId, AuditUsers.name(auth), "CREATE_SCHEDULED_TASK", "ai_scheduled_task",
                 String.valueOf(task.getId()), "创建定时任务: " + task.getName(),
                 httpRequest.getRemoteAddr(), "success");
 
@@ -111,7 +112,7 @@ public class AiScheduledTaskController {
             schedulerService.scheduleTask(task);
         }
 
-        auditLogService.log(userId, auth.getName(), "UPDATE_SCHEDULED_TASK", "ai_scheduled_task",
+        auditLogService.log(userId, AuditUsers.name(auth), "UPDATE_SCHEDULED_TASK", "ai_scheduled_task",
                 String.valueOf(task.getId()), "更新定时任务: " + task.getName(),
                 httpRequest.getRemoteAddr(), "success");
 
@@ -128,7 +129,7 @@ public class AiScheduledTaskController {
         schedulerService.cancelTask(id);
         taskRepository.deleteById(id);
 
-        auditLogService.log(userId, auth.getName(), "DELETE_SCHEDULED_TASK", "ai_scheduled_task",
+        auditLogService.log(userId, AuditUsers.name(auth), "DELETE_SCHEDULED_TASK", "ai_scheduled_task",
                 String.valueOf(id), "删除定时任务: " + task.getName(),
                 httpRequest.getRemoteAddr(), "success");
 
@@ -164,7 +165,7 @@ public class AiScheduledTaskController {
 
         schedulerService.executeScheduledTaskAsync(id);
 
-        auditLogService.log(userId, auth.getName(), "MANUAL_RUN_SCHEDULED_TASK", "ai_scheduled_task",
+        auditLogService.log(userId, AuditUsers.name(auth), "MANUAL_RUN_SCHEDULED_TASK", "ai_scheduled_task",
                 String.valueOf(id), "手动执行定时任务: " + task.getName(),
                 httpRequest.getRemoteAddr(), "success");
 

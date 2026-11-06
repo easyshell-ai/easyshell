@@ -3,6 +3,7 @@ package com.easyshell.server.ai.tool;
 import com.easyshell.server.ai.config.AgenticConfigService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.jsoup.Connection;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.springframework.ai.tool.annotation.Tool;
@@ -72,16 +73,70 @@ public class WebFetchTool {
                 return "无法解析域名：" + host;
             }
 
-            // Fetch page
+            // Fetch page. Redirects are followed manually so that every hop is re-validated
+            // against the SSRF rules (followRedirects(true) would happily walk into 169.254.169.254).
             int timeout = configService.getInt("ai.web.fetch-timeout-ms", 10000);
             int maxSize = configService.getInt("ai.web.max-body-size-bytes", 1048576);
+            int maxRedirects = configService.getInt("ai.web.max-redirects", 3);
 
-            Document doc = Jsoup.connect(url)
-                    .userAgent("EasyShell-AI/1.0")
-                    .timeout(timeout)
-                    .maxBodySize(maxSize)
-                    .followRedirects(true)
-                    .get();
+            Document doc = null;
+            String currentUrl = url;
+            for (int hop = 0; hop <= maxRedirects; hop++) {
+                Connection.Response response = Jsoup.connect(currentUrl)
+                        .userAgent("EasyShell-AI/1.0")
+                        .timeout(timeout)
+                        .maxBodySize(maxSize)
+                        .ignoreContentType(true)
+                        .followRedirects(false)
+                        .method(Connection.Method.GET)
+                        .execute();
+
+                int status = response.statusCode();
+                if (status >= 300 && status < 400 && response.hasHeader("Location")) {
+                    String location = response.header("Location");
+                    URI next;
+                    try {
+                        next = URI.create(currentUrl).resolve(location.trim());
+                    } catch (Exception e) {
+                        return "安全限制：重定向目标无效";
+                    }
+                    if (next == null || hop == maxRedirects) {
+                        return "安全限制：重定向次数过多或重定向目标无效";
+                    }
+                    String nextUrl = next.toString();
+                    if (!nextUrl.startsWith("http://") && !nextUrl.startsWith("https://")) {
+                        return "安全限制：重定向到非 HTTP(S) 地址";
+                    }
+                    String nextHost = URI.create(nextUrl).getHost();
+                    if (nextHost == null || nextHost.isBlank()) {
+                        return "安全限制：重定向目标缺少主机名";
+                    }
+                    if (isBlockedHost(nextHost)) {
+                        return "安全限制：禁止访问内网地址 " + nextHost;
+                    }
+                    try {
+                        InetAddress nextAddr = InetAddress.getByName(nextHost);
+                        if (nextAddr.isLoopbackAddress() || nextAddr.isLinkLocalAddress()
+                                || nextAddr.isSiteLocalAddress() || nextAddr.isAnyLocalAddress()) {
+                            return "安全限制：禁止访问内网地址（DNS 解析到内网 IP）";
+                        }
+                    } catch (Exception e) {
+                        return "无法解析域名：" + nextHost;
+                    }
+                    currentUrl = nextUrl;
+                    continue;
+                }
+
+                if (status >= 400) {
+                    return "网页请求失败：HTTP " + status;
+                }
+                doc = response.parse();
+                break;
+            }
+
+            if (doc == null) {
+                return "安全限制：重定向次数过多";
+            }
 
             // Remove non-content elements
             doc.select("script, style, nav, footer, header, noscript, aside, iframe, form, svg").remove();

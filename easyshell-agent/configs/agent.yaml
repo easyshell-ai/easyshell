@@ -1,8 +1,21 @@
 server:
   url: http://localhost:18080
+  # Shared secret used once to obtain the agent's own token. Can also be provided through
+  # the AGENT_REGISTER_SECRET environment variable. Leave empty if the server has no
+  # registration secret configured and an administrator registers the agent instead.
+  registration-secret: ""
 
 agent:
   id: ""
+
+  # File management scope. The default root is /var/lib/easyshell (a dedicated directory);
+  # using a system directory such as "/" requires allow-system-root: true.
+  file:
+    enabled: true
+    root: /var/lib/easyshell
+    readonly: false
+    max-size-mb: 500
+    max-list-entries: 1000
 
 heartbeat:
   interval: 30

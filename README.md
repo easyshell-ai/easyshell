@@ -137,11 +137,21 @@ Configure which operations require approval before execution. All actions are lo
 ```bash
 git clone https://github.com/easyshell-ai/easyshell.git
 cd easyshell
-cp .env.example .env      # Required: set MYSQL_PASSWORD, JWT_SECRET and ENCRYPTION_KEY
-docker compose up -d
+./scripts/deploy.sh            # one command: creates .env, starts everything, waits for health
 ```
 
-No local build required — pre-built images are pulled automatically from [Docker Hub](https://hub.docker.com/u/laolupaojiao).
+`scripts/deploy.sh` generates `.env` with random secrets on first run (database password,
+JWT secret, encryption key, agent registration secret) and then starts the stack. Useful
+options:
+
+```bash
+./scripts/deploy.sh --build    # build the images from this source tree instead of pulling
+./scripts/deploy.sh --down     # stop everything (data volumes are kept)
+```
+
+No local build required for the default path — pre-built images are pulled automatically
+from [Docker Hub](https://hub.docker.com/u/laolupaojiao). Use `--build` to run exactly this
+source tree (that is also how you pick up changes that have not been released yet).
 
 Open `http://localhost:18880` → log in as `easyshell`. On first start the server prints a randomly generated initial password in its logs (or set `EASYSHELL_ADMIN_PASSWORD` to choose your own) — change it right after signing in.
 

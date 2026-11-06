@@ -1,5 +1,7 @@
 package com.easyshell.server.ai.channel;
 
+import com.easyshell.server.ai.channel.support.WebhookVerification;
+import com.easyshell.server.ai.channel.support.WebhookVerification.Result;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -10,11 +12,16 @@ import org.springframework.web.bind.annotation.*;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 
+/**
+ * Slack event webhook. The signing signature is mandatory.
+ */
 @Slf4j
 @RestController
 @RequestMapping("/api/v1/webhook")
 @RequiredArgsConstructor
 public class SlackWebhookController {
+
+    private static final long MAX_TIMESTAMP_SKEW_MS = 5 * 60 * 1000L;
 
     private final SlackBotService slackBotService;
     private final ObjectMapper objectMapper;
@@ -34,14 +41,19 @@ public class SlackWebhookController {
                 return ResponseEntity.ok(Map.of("challenge", body.path("challenge").asText()));
             }
 
+            if (!slackBotService.isRunning()) {
+                return ResponseEntity.status(503).body("slack channel disabled");
+            }
+
             // Handle event_callback
             if ("event_callback".equals(type)) {
-                // Verify signature if provided
-                if (signature != null && timestamp != null) {
-                    if (!slackBotService.verifySlackSignature(timestamp, rawBody, signature)) {
-                        log.warn("Slack webhook signature verification failed");
-                        return ResponseEntity.status(401).body("Signature verification failed");
-                    }
+                Result verification = WebhookVerification.verify(
+                        timestamp, "", signature, MAX_TIMESTAMP_SKEW_MS,
+                        (nonce, sig) -> slackBotService.verifySlackSignature(timestamp, rawBody, sig));
+                if (verification != Result.OK) {
+                    log.warn("Rejecting Slack webhook: {}", verification);
+                    return ResponseEntity.status(verification.httpStatus())
+                            .body(verification.message());
                 }
 
                 JsonNode event = body.path("event");

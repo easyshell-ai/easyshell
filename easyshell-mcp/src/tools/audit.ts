@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { idParam, pageParam, sizeParam } from "./params.js";
 import type { EasyShellClient } from "../client.js";
 import { toMcpError } from "../errors.js";
 
@@ -19,8 +20,8 @@ export function registerAuditTools(server: McpServer, client: EasyShellClient) {
       userId: z.number().optional(),
       resourceType: z.string().optional(),
       action: z.string().optional(),
-      page: z.number().default(0).optional(),
-      size: z.number().default(20).optional(),
+      page: pageParam(),
+      size: sizeParam(),
     },
     async ({ userId, resourceType, action, page, size }: QueryAuditLogsParams) => {
       try {
@@ -56,7 +57,14 @@ export function registerAuditTools(server: McpServer, client: EasyShellClient) {
     "approve_task",
     "Approve a high-risk task that is pending approval.",
     {
-      taskId: z.string().describe("Task ID to approve"),
+      taskId: idParam("Task ID to approve"),
+    },
+    {
+      title: "Approve task",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
     },
     async ({ taskId }: { taskId: string }) => {
       try {

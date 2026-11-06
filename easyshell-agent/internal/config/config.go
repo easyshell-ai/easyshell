@@ -16,6 +16,9 @@ type Config struct {
 
 type ServerConfig struct {
 	URL string `yaml:"url"`
+	// RegistrationSecret is the shared secret used to obtain the agent's first token.
+	// It can also be supplied through the AGENT_REGISTER_SECRET environment variable.
+	RegistrationSecret string `yaml:"registration-secret"`
 }
 
 type AgentConfig struct {
@@ -27,6 +30,9 @@ type FileConfig struct {
 	Enabled        bool     `yaml:"enabled"`
 	Root           string   `yaml:"root"`
 	ReadOnly       bool     `yaml:"readonly"`
+	// AllowSystemRoot must be set to true to keep using "/" (or another system
+	// directory) as the file root. Without it the agent refuses to start.
+	AllowSystemRoot bool     `yaml:"allow-system-root"`
 	MaxSizeMB      int      `yaml:"max-size-mb"`
 	MaxListEntries int      `yaml:"max-list-entries"`
 	Blacklist      []string `yaml:"blacklist"`
@@ -45,13 +51,17 @@ type LogConfig struct {
 	Level string `yaml:"level"`
 }
 
+// DefaultFileRoot is used when no file section is configured: a dedicated directory
+// instead of the whole filesystem.
+const DefaultFileRoot = "/var/lib/easyshell"
+
 func Load(path string) (*Config, error) {
 	cfg := &Config{
 		Server: ServerConfig{URL: "http://localhost:8080"},
 		Agent: AgentConfig{
 			File: FileConfig{
 				Enabled:        true,
-				Root:           "/",
+				Root:           DefaultFileRoot,
 				ReadOnly:       false,
 				MaxSizeMB:      500,
 				MaxListEntries: 1000,
@@ -71,5 +81,35 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 
+	if cfg.Server.RegistrationSecret == "" {
+		cfg.Server.RegistrationSecret = os.Getenv("AGENT_REGISTER_SECRET")
+	}
+
+	if cfg.Agent.File.Root == "" {
+		cfg.Agent.File.Root = DefaultFileRoot
+	}
+	if cfg.Agent.File.MaxSizeMB <= 0 {
+		cfg.Agent.File.MaxSizeMB = 500
+	}
+	if cfg.Agent.File.MaxListEntries <= 0 {
+		cfg.Agent.File.MaxListEntries = 1000
+	}
+
 	return cfg, nil
+}
+
+// WarnAboutFileRoot reports configuration that weakens the file server: a system root
+// without an explicit opt-in, or a world readable config file.
+func (c *Config) WarnAboutFileRoot() string {
+	switch c.Agent.File.Root {
+	case "/", "/etc", "/root", "/home", "/var", "/usr", "/opt":
+		if !c.Agent.File.AllowSystemRoot {
+			return "agent.file.root is set to the system directory " + c.Agent.File.Root +
+				" without agent.file.allow-system-root: true — the agent will refuse to start"
+		}
+		return "agent.file.root is the system directory " + c.Agent.File.Root +
+			" (explicitly allowed); every path is still checked against the blacklist and symlink rules"
+	default:
+		return ""
+	}
 }

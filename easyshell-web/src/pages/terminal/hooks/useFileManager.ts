@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import { getToken, sanitizeErrorMessage } from '../../../api/request';
 import { message } from 'antd';
 import { useTranslation } from 'react-i18next';
 import request from '../../../api/request';
@@ -56,7 +57,7 @@ export function useFileManager(agentId: string): UseFileManagerReturn {
         setFiles(response.data || []);
         setCurrentPath(path);
       } else {
-        throw new Error(response.message || 'Failed to list files');
+        throw new Error(sanitizeErrorMessage(response.message) || 'Failed to list files');
       }
     } catch (err) {
       const errMsg = getErrorMessage(err);
@@ -98,7 +99,7 @@ export function useFileManager(agentId: string): UseFileManagerReturn {
         message.success(t('terminal.files.uploadSuccess'));
         await navigate(currentPath);
       } else {
-        throw new Error(response.message);
+        throw new Error(sanitizeErrorMessage(response.message) || t('terminal.file.opFailed'));
       }
     } catch (err) {
       message.error(t('terminal.files.operationFailed', { error: getErrorMessage(err) }));
@@ -112,7 +113,7 @@ export function useFileManager(agentId: string): UseFileManagerReturn {
     if (!agentId) return;
     setDownloadProgress(0);
     try {
-      const token = localStorage.getItem('token');
+      const token = getToken();
       const url = `/api/v1/agents/${agentId}/files/download?path=${encodeURIComponent(path)}`;
 
       const blob: Blob = await new Promise((resolve, reject) => {
@@ -171,7 +172,7 @@ export function useFileManager(agentId: string): UseFileManagerReturn {
       if (response.code === 200) {
         await navigate(currentPath);
       } else {
-        throw new Error(response.message);
+        throw new Error(sanitizeErrorMessage(response.message) || t('terminal.file.opFailed'));
       }
     } catch (err) {
       message.error(t('terminal.files.operationFailed', { error: getErrorMessage(err) }));
@@ -189,7 +190,7 @@ export function useFileManager(agentId: string): UseFileManagerReturn {
       if (response.code === 200) {
         await navigate(currentPath);
       } else {
-        throw new Error(response.message);
+        throw new Error(sanitizeErrorMessage(response.message) || t('terminal.file.opFailed'));
       }
     } catch (err) {
       message.error(t('terminal.files.operationFailed', { error: getErrorMessage(err) }));
@@ -207,7 +208,7 @@ export function useFileManager(agentId: string): UseFileManagerReturn {
       if (response.code === 200) {
         await navigate(currentPath);
       } else {
-        throw new Error(response.message);
+        throw new Error(sanitizeErrorMessage(response.message) || t('terminal.file.opFailed'));
       }
     } catch (err) {
       message.error(t('terminal.files.operationFailed', { error: getErrorMessage(err) }));

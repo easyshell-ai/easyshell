@@ -1,5 +1,7 @@
 package com.easyshell.server.controller;
 
+import com.easyshell.server.security.AuditUsers;
+import com.easyshell.server.common.exception.BusinessException;
 import com.easyshell.server.common.result.R;
 import com.easyshell.server.common.utils.ScriptParameterUtils;
 import com.easyshell.server.model.dto.ScriptRequest;
@@ -29,7 +31,7 @@ public class ScriptController {
                             HttpServletRequest httpRequest) {
         Long userId = (Long) auth.getPrincipal();
         Script script = scriptService.create(request, userId);
-        auditLogService.log(userId, auth.getName(), "CREATE_SCRIPT", "script",
+        auditLogService.log(userId, AuditUsers.name(auth), "CREATE_SCRIPT", "script",
                 String.valueOf(script.getId()), request.getName(), httpRequest.getRemoteAddr(), "success");
         return R.ok(script);
     }
@@ -38,8 +40,11 @@ public class ScriptController {
     public R<Script> update(@PathVariable Long id, @Valid @RequestBody ScriptRequest request,
                             Authentication auth, HttpServletRequest httpRequest) {
         Long userId = (Long) auth.getPrincipal();
+        Script existing = scriptService.findById(id)
+                .orElseThrow(() -> new BusinessException(404, "Script not found"));
+        requireManagePermission(auth, existing);
         Script script = scriptService.update(id, request);
-        auditLogService.log(userId, auth.getName(), "UPDATE_SCRIPT", "script",
+        auditLogService.log(userId, AuditUsers.name(auth), "UPDATE_SCRIPT", "script",
                 String.valueOf(id), request.getName(), httpRequest.getRemoteAddr(), "success");
         return R.ok(script);
     }
@@ -47,8 +52,11 @@ public class ScriptController {
     @DeleteMapping("/{id}")
     public R<Void> delete(@PathVariable Long id, Authentication auth, HttpServletRequest httpRequest) {
         Long userId = (Long) auth.getPrincipal();
+        Script existing = scriptService.findById(id)
+                .orElseThrow(() -> new BusinessException(404, "Script not found"));
+        requireManagePermission(auth, existing);
         scriptService.delete(id);
-        auditLogService.log(userId, auth.getName(), "DELETE_SCRIPT", "script",
+        auditLogService.log(userId, AuditUsers.name(auth), "DELETE_SCRIPT", "script",
                 String.valueOf(id), null, httpRequest.getRemoteAddr(), "success");
         return R.ok();
     }
@@ -89,5 +97,18 @@ public class ScriptController {
         return scriptService.findById(id)
                 .map(script -> R.ok(ScriptParameterUtils.extractParameters(script.getContent())))
                 .orElse(R.fail(404, "Script not found"));
+    }
+
+    /**
+     * Horizontal privilege control: a script may only be modified by its creator or a super admin.
+     */
+    private void requireManagePermission(Authentication auth, Script script) {
+        boolean isSuperAdmin = auth.getAuthorities().stream()
+                .anyMatch(a -> a.getAuthority().equals("ROLE_SUPER_ADMIN"));
+        Long userId = (Long) auth.getPrincipal();
+        boolean isOwner = script.getCreatedBy() != null && script.getCreatedBy().equals(userId);
+        if (!isSuperAdmin && !isOwner) {
+            throw new BusinessException(403, "Not allowed to modify this script");
+        }
     }
 }

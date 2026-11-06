@@ -72,3 +72,5 @@ package-lock.json
 
 # Compiled agent binary (root level)
 easyshell-agent/agent
+# Deepwork local progress
+.slim/deepwork/

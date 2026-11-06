@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { dirname, join } from "node:path";
@@ -46,13 +46,20 @@ function parseArgs(argv: string[]): Map<string, string | boolean> {
       continue;
     }
 
-    const key = arg.slice(2);
+    const body = arg.slice(2);
+    const eq = body.indexOf("=");
+    if (eq > 0) {
+      // --key=value form, unambiguous even when the value starts with "--"
+      parsed.set(body.slice(0, eq), body.slice(eq + 1));
+      continue;
+    }
+
     const next = argv[i + 1];
     if (next && !next.startsWith("--")) {
-      parsed.set(key, next);
+      parsed.set(body, next);
       i += 1;
     } else {
-      parsed.set(key, true);
+      parsed.set(body, true);
     }
   }
   return parsed;
@@ -90,13 +97,16 @@ function usage(): string {
     "  easyshell-mcp --version       Show version",
     "",
     "Server options:",
-    "  --port  HTTP port number (enables SSE + Streamable HTTP transport)",
-    "  --host  Bind address (default: 127.0.0.1, use 0.0.0.0 for remote access)",
+    "  --port            HTTP port number (enables SSE + Streamable HTTP transport)",
+    "  --host            Bind address (default: 127.0.0.1)",
+    "  --token           Bearer token required by HTTP clients (or MCP_AUTH_TOKEN)",
+    "  --allow-remote    Permit binding to a non-loopback address (requires --token)",
+    "  --allowed-origin  Origin allowed for browser CORS (repeatable, or MCP_ALLOWED_ORIGINS)",
     "",
     "Install options:",
     "  --url   EasyShell server URL (default: http://localhost:18080)",
     "  --user  EasyShell username (default: easyshell)",
-    "  --pass  EasyShell password (required for install)",
+    "  --pass  EasyShell password (required for install; prefer MCP_PASSWORD env)",
   ].join("\n");
 }
 
@@ -137,10 +147,13 @@ function detectInstallTarget(cwd: string): InstallTarget {
 function parseInstallArgs(args: Map<string, string | boolean>): InstallArgs {
   const url = (typeof args.get("url") === "string" ? (args.get("url") as string) : "http://localhost:18080").trim();
   const user = (typeof args.get("user") === "string" ? (args.get("user") as string) : "easyshell").trim();
-  const pass = typeof args.get("pass") === "string" ? (args.get("pass") as string) : "";
+  // Prefer the environment variable: values passed on the command line are visible in `ps`.
+  const envPass = process.env.MCP_PASSWORD?.trim() ?? "";
+  const argPass = typeof args.get("pass") === "string" ? (args.get("pass") as string).trim() : "";
+  const pass = envPass || argPass;
 
-  if (!pass.trim()) {
-    throw new Error("--pass is required for --install");
+  if (!pass) {
+    throw new Error("--pass or MCP_PASSWORD is required for --install");
   }
 
   if (!url.startsWith("http://") && !url.startsWith("https://")) {
@@ -174,7 +187,8 @@ async function readJsonFile(path: string): Promise<JsonObject> {
 
 async function writeJsonFile(path: string, data: JsonObject): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(data, null, 2)}\n`, "utf-8");
+  // The file contains the EasyShell password: keep it owner-only.
+  await writeFile(path, `${JSON.stringify(data, null, 2)}\n`, { encoding: "utf-8", mode: 0o600 });
 }
 
 async function runInstall(args: Map<string, string | boolean>): Promise<void> {
@@ -211,6 +225,11 @@ async function runInstall(args: Map<string, string | boolean>): Promise<void> {
   }
 
   await writeJsonFile(target.path, config);
+  try {
+    await chmod(target.path, 0o600);
+  } catch {
+    // best effort - the file may pre-date this change with different ownership
+  }
 
   console.log(`✅ EasyShell MCP configured for ${target.kind}.`);
   console.log(`Config file: ${target.path}`);
@@ -253,14 +272,61 @@ async function runServer(): Promise<void> {
   });
 }
 
-async function runHttpServer(port: number, host: string): Promise<void> {
+async function runHttpServer(
+  port: number,
+  host: string,
+  authToken: string,
+  allowedOrigins: string[],
+): Promise<void> {
   const transports: Record<string, Transport> = {};
+  const transportCreatedAt: Record<string, number> = {};
 
-  function setCorsHeaders(res: ServerResponse): void {
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, mcp-session-id");
-    res.setHeader("Access-Control-Expose-Headers", "mcp-session-id");
+  const MAX_BODY_BYTES = 1024 * 1024; // 1 MiB
+  const MAX_TRANSPORTS = 32;
+  const TRANSPORT_IDLE_MS = 30 * 60 * 1000;
+
+  const isLoopbackHost = host === "127.0.0.1" || host === "::1" || host === "localhost";
+  if (!isLoopbackHost && !authToken) {
+    // Binding to a non-loopback address with no authentication would expose a server that
+    // holds the operator's EasyShell credentials to the whole network.
+    throw new Error(
+      "Refusing to listen on a non-loopback address without --token: set a bearer token or bind to 127.0.0.1",
+    );
+  }
+
+  const expectedHosts = new Set<string>([host]);
+  for (const origin of allowedOrigins) {
+    try {
+      expectedHosts.add(new URL(origin).host);
+    } catch {
+      // ignore malformed entries
+    }
+  }
+
+  function pruneIdleTransports(): void {
+    const now = Date.now();
+    for (const sid of Object.keys(transports)) {
+      if (now - (transportCreatedAt[sid] ?? now) > TRANSPORT_IDLE_MS) {
+        try {
+          void transports[sid].close();
+        } catch {
+          // ignore
+        }
+        delete transports[sid];
+        delete transportCreatedAt[sid];
+      }
+    }
+  }
+
+  function setCorsHeaders(req: IncomingMessage, res: ServerResponse): void {
+    const origin = req.headers.origin;
+    if (typeof origin === "string" && allowedOrigins.includes(origin)) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, mcp-session-id, Authorization");
+      res.setHeader("Access-Control-Expose-Headers", "mcp-session-id");
+      res.setHeader("Vary", "Origin");
+    }
   }
 
   function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -269,10 +335,55 @@ async function runHttpServer(port: number, host: string): Promise<void> {
     res.end(payload);
   }
 
+  function unauthorized(res: ServerResponse): void {
+    sendJson(res, 401, { error: "Unauthorized: bearer token required" });
+  }
+
+  function isAuthorized(req: IncomingMessage): boolean {
+    if (!authToken) {
+      // Loopback-only deployment without a token: still not open to the network.
+      return true;
+    }
+    const header = req.headers.authorization;
+    if (typeof header !== "string" || !header.startsWith("Bearer ")) {
+      return false;
+    }
+    const provided = header.slice(7).trim();
+    if (provided.length !== authToken.length) {
+      return false;
+    }
+    let diff = 0;
+    for (let i = 0; i < provided.length; i += 1) {
+      diff |= provided.charCodeAt(i) ^ authToken.charCodeAt(i);
+    }
+    return diff === 0;
+  }
+
+  /**
+   * Host header validation (DNS rebinding defence). The SDK option is deprecated, so the
+   * check is done here where it cannot be bypassed by transport internals.
+   */
+  function isHostAllowed(req: IncomingMessage): boolean {
+    const hostHeader = req.headers.host;
+    if (typeof hostHeader !== "string" || hostHeader.trim().length === 0) {
+      return false;
+    }
+    return expectedHosts.has(hostHeader.trim().toLowerCase());
+  }
+
   function readBody(req: IncomingMessage): Promise<unknown> {
     return new Promise((resolve, reject) => {
       const chunks: Buffer[] = [];
-      req.on("data", (chunk: Buffer) => chunks.push(chunk));
+      let size = 0;
+      req.on("data", (chunk: Buffer) => {
+        size += chunk.length;
+        if (size > MAX_BODY_BYTES) {
+          reject(new Error("Request body too large"));
+          req.destroy();
+          return;
+        }
+        chunks.push(chunk);
+      });
       req.on("end", () => {
         const raw = Buffer.concat(chunks).toString("utf-8");
         if (!raw.trim()) {
@@ -307,17 +418,31 @@ async function runHttpServer(port: number, host: string): Promise<void> {
         return;
       }
     } else if (!sessionId && req.method === "POST" && isInitializeRequest(body)) {
+      if (Object.keys(transports).length >= MAX_TRANSPORTS) {
+        pruneIdleTransports();
+      }
+      if (Object.keys(transports).length >= MAX_TRANSPORTS) {
+        sendJson(res, 503, { error: "Too many active sessions" });
+        return;
+      }
+
       transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
         onsessioninitialized: (sid: string) => {
           transports[sid] = transport!;
+          transportCreatedAt[sid] = Date.now();
         },
+        // Belt and braces: the Host/Origin check above is the primary defence.
+        enableDnsRebindingProtection: true,
+        allowedHosts: Array.from(expectedHosts),
+        allowedOrigins,
       });
 
       transport.onclose = () => {
         const sid = transport!.sessionId;
         if (sid && transports[sid]) {
           delete transports[sid];
+          delete transportCreatedAt[sid];
         }
       };
 
@@ -337,11 +462,21 @@ async function runHttpServer(port: number, host: string): Promise<void> {
 
   // Legacy SSE transport (protocol version 2024-11-05)
   async function handleSse(_req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (Object.keys(transports).length >= MAX_TRANSPORTS) {
+      pruneIdleTransports();
+    }
+    if (Object.keys(transports).length >= MAX_TRANSPORTS) {
+      sendJson(res, 503, { error: "Too many active sessions" });
+      return;
+    }
+
     const transport = new SSEServerTransport("/messages", res);
     transports[transport.sessionId] = transport;
+    transportCreatedAt[transport.sessionId] = Date.now();
 
     res.on("close", () => {
       delete transports[transport.sessionId];
+      delete transportCreatedAt[transport.sessionId];
     });
 
     const server = await createMcpServer();
@@ -376,7 +511,7 @@ async function runHttpServer(port: number, host: string): Promise<void> {
   }
 
   const httpServer = createServer(async (req, res) => {
-    setCorsHeaders(res);
+    setCorsHeaders(req, res);
 
     if (req.method === "OPTIONS") {
       res.writeHead(204);
@@ -389,7 +524,21 @@ async function runHttpServer(port: number, host: string): Promise<void> {
     try {
       if (pathname === "/health" && req.method === "GET") {
         sendJson(res, 200, { status: "ok" });
-      } else if (pathname === "/mcp") {
+        return;
+      }
+
+      // Everything below carries EasyShell credentials, so it is authenticated and
+      // restricted to expected Host headers.
+      if (!isHostAllowed(req)) {
+        sendJson(res, 421, { error: "Misdirected Request: unexpected Host header" });
+        return;
+      }
+      if (!isAuthorized(req)) {
+        unauthorized(res);
+        return;
+      }
+
+      if (pathname === "/mcp") {
         await handleMcp(req, res);
       } else if (pathname === "/sse" && req.method === "GET") {
         await handleSse(req, res);
@@ -398,16 +547,24 @@ async function runHttpServer(port: number, host: string): Promise<void> {
       } else {
         sendJson(res, 404, { error: "Not found" });
       }
-    } catch {
+    } catch (err) {
       if (!res.headersSent) {
-        sendJson(res, 500, {
+        sendJson(res, err instanceof Error && err.message === "Request body too large" ? 413 : 500, {
           jsonrpc: "2.0",
-          error: { code: -32603, message: "Internal server error" },
+          error: {
+            code: -32603,
+            message: err instanceof Error && err.message === "Request body too large"
+              ? "Request body too large"
+              : "Internal server error",
+          },
           id: null,
         });
       }
     }
   });
+
+  const idleSweeper = setInterval(pruneIdleTransports, 60 * 1000);
+  idleSweeper.unref?.();
 
   httpServer.listen(port, host, () => {
     console.log(`EasyShell MCP server listening on http://${host}:${port}`);
@@ -420,6 +577,7 @@ async function runHttpServer(port: number, host: string): Promise<void> {
   });
 
   process.on("SIGINT", async () => {
+    clearInterval(idleSweeper);
     for (const sid of Object.keys(transports)) {
       try {
         await transports[sid].close();
@@ -462,7 +620,45 @@ async function main(): Promise<void> {
     }
     const hostValue = args.get("host");
     const host = typeof hostValue === "string" ? hostValue : "127.0.0.1";
-    await runHttpServer(port, host);
+
+    const isLoopback = host === "127.0.0.1" || host === "::1" || host === "localhost";
+    if (!isLoopback && args.get("allow-remote") !== true) {
+      console.error(
+        `Refusing to bind to ${host}: pass --allow-remote (together with --token) to expose the HTTP transport`,
+      );
+      process.exit(1);
+    }
+
+    const tokenValue = args.get("token");
+    const authToken =
+      (typeof tokenValue === "string" && tokenValue.trim()) ||
+      process.env.MCP_AUTH_TOKEN?.trim() ||
+      "";
+    if (!isLoopback && !authToken) {
+      console.error("A bearer token is required for non-loopback bindings (--token or MCP_AUTH_TOKEN)");
+      process.exit(1);
+    }
+
+    const origins = new Set<string>();
+    const originArg = args.get("allowed-origin");
+    if (typeof originArg === "string") {
+      origins.add(originArg);
+    }
+    for (const value of (process.env.MCP_ALLOWED_ORIGINS ?? "").split(",")) {
+      if (value.trim()) {
+        origins.add(value.trim());
+      }
+    }
+    const normalizedOrigins: string[] = [];
+    for (const origin of origins) {
+      try {
+        normalizedOrigins.push(new URL(origin).origin);
+      } catch {
+        console.error(`Ignoring invalid --allowed-origin value: ${origin}`);
+      }
+    }
+
+    await runHttpServer(port, host, authToken, normalizedOrigins);
     return;
   }
 

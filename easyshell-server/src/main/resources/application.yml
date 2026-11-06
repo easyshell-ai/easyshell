@@ -15,14 +15,15 @@ spring:
     name: easyshell-server
 
   datasource:
+    # Secrets have no fallback defaults: the container must provide them (see docker-compose.build.yml).
     url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:easyshell}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
     username: ${MYSQL_USER:root}
-    password: ${MYSQL_PASSWORD:18923ce29fdab04e}
+    password: ${MYSQL_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
 
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: ${JPA_DDL_AUTO:update}
     open-in-view: false
     properties:
       hibernate:
@@ -52,26 +53,49 @@ spring:
     time-zone: Asia/Shanghai
     default-property-inclusion: non_null
 
+# Interactive API documentation is a development-only affordance: it hands an attacker a
+# complete map of every endpoint. Disabled by default (see application-dev.yml).
 springdoc:
   api-docs:
+    enabled: false
     path: /v3/api-docs
   swagger-ui:
+    enabled: false
     path: /swagger-ui.html
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
 
 logging:
   level:
-    com.easyshell: ${LOG_LEVEL:debug}
+    com.easyshell: ${LOG_LEVEL:info}
     org.springframework.web: info
-    org.hibernate.SQL: debug
+    org.hibernate.SQL: info
 
 easyshell:
   version: ${EASYSHELL_VERSION:1.0}
   auth:
-    jwt-secret: ${JWT_SECRET:easyshell-jwt-secret-key-for-development-only-change-in-production-must-be-at-least-64-chars-long}
-    jwt-expire: 86400000
-    refresh-expire: 604800000
+    # No defaults on purpose - see SecretValidator.
+    jwt-secret: ${JWT_SECRET}
+    jwt-expire: ${JWT_EXPIRE:86400000}
+    refresh-expire: ${REFRESH_EXPIRE:604800000}
+    agent-token-expire: ${AGENT_TOKEN_EXPIRE:2592000000}
   security:
-    encryption-key: ${ENCRYPTION_KEY:easyshell-aes256-encryption-key!!}
+    encryption-key: ${ENCRYPTION_KEY}
+  agent:
+    # Shared secret a brand new agent must present to obtain its first token.
+    register-secret: ${AGENT_REGISTER_SECRET:}
+    # Only trust X-Forwarded-* when the server really sits behind a trusted proxy.
+    trust-proxy-headers: ${AGENT_TRUST_PROXY_HEADERS:false}
+  websocket:
+    # Comma separated list of browser origins allowed to open WebSockets. Empty = same-origin only.
+    allowed-origins: ${WEBSOCKET_ALLOWED_ORIGINS:}
   provision:
     server-url: ${PROVISION_SERVER_URL:http://127.0.0.1:18080}
     agent-binary-dir: ${AGENT_BINARY_DIR:/opt/easyshell/agent-binaries}

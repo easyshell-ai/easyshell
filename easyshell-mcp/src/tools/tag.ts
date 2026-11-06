@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { idNumberParam, idParam } from "./params.js";
 import type { EasyShellClient } from "../client.js";
 import { toMcpError } from "../errors.js";
 
@@ -14,11 +15,14 @@ export function registerTagTools(server: McpServer, client: EasyShellClient) {
         .enum(["list", "create", "delete", "assign", "unassign"])
         .describe("Tag operation to perform"),
       name: z.string().optional().describe("Tag name (for create)"),
-      color: z.string().optional().describe("Tag color hex (for create)"),
-      description: z.string().optional().describe("Tag description (for create)"),
-      tagId: z.number().optional().describe("Tag ID (for delete, assign, unassign)"),
-      agentId: z
+      color: z
         .string()
+        .regex(/^#[0-9a-fA-F]{6}$/, "must be a hex colour such as #1677ff")
+        .optional()
+        .describe("Tag color hex (for create)"),
+      description: z.string().optional().describe("Tag description (for create)"),
+      tagId: idNumberParam("Tag ID (for delete, assign, unassign)").optional(),
+      agentId: idParam("The agent/host ID")
         .optional()
         .describe("Host/agent ID (for assign, unassign, or list tags for a host)"),
     },

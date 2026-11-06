@@ -1,5 +1,6 @@
 package com.easyshell.server.ai.controller;
 
+import com.easyshell.server.security.AuditUsers;
 import com.easyshell.server.ai.config.AiConfigRefreshService;
 import com.easyshell.server.ai.channel.ChannelMessageRouter;
 import com.easyshell.server.ai.model.dto.AiConfigSaveRequest;
@@ -250,7 +251,7 @@ public class AiConfigController {
 
         aiConfigRefreshService.invalidateAllCaches();
 
-        auditLogService.log(userId, auth.getName(), "UPDATE_AI_CONFIG", "ai_config",
+        auditLogService.log(userId, AuditUsers.name(auth), "UPDATE_AI_CONFIG", "ai_config",
                 null, "AI 配置更新", httpRequest.getRemoteAddr(), "success");
 
         return R.ok();

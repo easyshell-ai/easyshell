@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { idParam } from "./params.js";
 import type { EasyShellClient } from "../client.js";
 import { toMcpError } from "../errors.js";
 
@@ -53,7 +54,7 @@ export function registerHostTools(server: McpServer, client: EasyShellClient) {
     "get_host_detail",
     "Get detailed information about a specific host including tags, metrics, and system info.",
     {
-      hostId: z.string().describe("The agent/host ID"),
+      hostId: idParam("The agent/host ID"),
     },
     async ({ hostId }: { hostId: string }) => {
       try {

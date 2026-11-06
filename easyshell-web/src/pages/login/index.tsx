@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useResponsive } from '../../hooks/useResponsive';
 import { login } from '../../api/auth';
+import { setToken } from '../../api/request';
 import type { LoginRequest } from '../../types';
 
 const Login: React.FC = () => {
@@ -19,15 +20,25 @@ const Login: React.FC = () => {
     try {
       const res = await login(values);
       if (res.code === 200 && res.data) {
-        localStorage.setItem('token', res.data.accessToken);
-        localStorage.setItem('refreshToken', res.data.refreshToken);
+        // Access token only: kept in sessionStorage so it dies with the tab, and the
+        // refresh token is never persisted in the browser (see api/request.ts).
+        setToken(res.data.accessToken);
         message.success(t('login.success'));
         navigate('/');
       } else {
         message.error(res.message || t('login.failed'));
       }
-    } catch {
-      message.error(t('login.errorCheck'));
+    } catch (error) {
+      // The API now answers with a real 401/403/429, so surface the reason instead of a
+      // generic "check your input" message.
+      const status = (error as { response?: { status?: number; data?: { message?: string } } })?.response;
+      if (status?.status === 429) {
+        message.error(t('login.tooManyAttempts'));
+      } else if (status?.data?.message) {
+        message.error(status.data.message);
+      } else {
+        message.error(t('login.errorCheck'));
+      }
     } finally {
       setLoading(false);
     }

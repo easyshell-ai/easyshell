@@ -15,9 +15,18 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 import java.util.List;
 
+/**
+ * Authenticates both user tokens (Authorization: Bearer &lt;access token&gt;) and
+ * agent tokens (subject = agentId, type = "agent").
+ *
+ * <p>Refresh tokens are deliberately rejected here: they must only ever be used
+ * against {@code /api/v1/auth/refresh}.
+ */
 @Component
 @RequiredArgsConstructor
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
+
+    public static final String ATTR_AGENT_ID = "AGENT_ID";
 
     private final JwtUtils jwtUtils;
 
@@ -27,13 +36,29 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         String token = extractToken(request);
 
         if (StringUtils.hasText(token) && jwtUtils.validateToken(token)) {
-            Long userId = jwtUtils.getUserIdFromToken(token);
-            String username = jwtUtils.getUsernameFromToken(token);
-            String role = jwtUtils.getRoleFromToken(token);
-
-            var authorities = List.of(new SimpleGrantedAuthority("ROLE_" + role.toUpperCase()));
-            var authentication = new UsernamePasswordAuthenticationToken(userId, username, authorities);
-            SecurityContextHolder.getContext().setAuthentication(authentication);
+            try {
+                String type = jwtUtils.getTokenType(token);
+                if (JwtUtils.TOKEN_TYPE_AGENT.equals(type)) {
+                    String agentId = jwtUtils.parseToken(token).getSubject();
+                    var authorities = List.of(new SimpleGrantedAuthority("ROLE_AGENT"));
+                    SecurityContextHolder.getContext().setAuthentication(
+                            new UsernamePasswordAuthenticationToken(agentId, null, authorities));
+                    request.setAttribute(ATTR_AGENT_ID, agentId);
+                } else if (type == null || JwtUtils.TOKEN_TYPE_ACCESS.equals(type)) {
+                    Long userId = jwtUtils.getUserIdFromToken(token);
+                    String username = jwtUtils.getUsernameFromToken(token);
+                    String role = jwtUtils.getRoleFromToken(token);
+                    if (role != null && userId != null) {
+                        var authorities = List.of(new SimpleGrantedAuthority("ROLE_" + role.toUpperCase()));
+                        var authentication = new UsernamePasswordAuthenticationToken(userId, username, authorities);
+                        SecurityContextHolder.getContext().setAuthentication(authentication);
+                    }
+                }
+                // refresh tokens fall through unauthenticated
+            } catch (Exception e) {
+                // Malformed subject/claims: treat as anonymous rather than 500
+                SecurityContextHolder.clearContext();
+            }
         }
 
         filterChain.doFilter(request, response);

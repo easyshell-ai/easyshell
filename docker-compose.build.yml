@@ -8,7 +8,8 @@ services:
       MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required - copy .env.example to .env and set a strong password}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-easyshell}
     ports:
-      - "${MYSQL_PORT:-13306}:3306"
+      # Bound to loopback: the database has no reason to be reachable from the network.
+      - "127.0.0.1:${MYSQL_PORT:-13306}:3306"
     volumes:
       - mysql_data:/var/lib/mysql
     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
@@ -23,7 +24,8 @@ services:
     image: redis:7-alpine
     container_name: easyshell-redis
     ports:
-      - "${REDIS_PORT:-16379}:6379"
+      # Bound to loopback: Redis has no authentication, keep it off the network.
+      - "127.0.0.1:${REDIS_PORT:-16379}:6379"
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes
@@ -52,6 +54,8 @@ services:
       REDIS_HOST: easyshell-redis
       REDIS_PORT: 6379
       EASYSHELL_ADMIN_PASSWORD: ${EASYSHELL_ADMIN_PASSWORD:-}
+      # Shared secret a new agent presents once to obtain its own token.
+      AGENT_REGISTER_SECRET: ${AGENT_REGISTER_SECRET:-}
       PROVISION_SERVER_URL: ${PROVISION_SERVER_URL:-http://easyshell-server:18080}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required - generate a random secret of at least 64 characters}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required - generate a random AES-256 key}
