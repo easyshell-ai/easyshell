@@ -42,12 +42,6 @@ export default function ScriptWorkbench() {
   const editorDraggingRef = useRef(false);
   const editorContainerRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (isEdit) {
-      loadScript();
-    }
-  }, [id, isEdit]);
-
   const loadScript = async () => {
     try {
       setLoading(true);
@@ -62,12 +56,18 @@ export default function ScriptWorkbench() {
       } else {
         message.error(res.message || t('script.workbench.loadFailed'));
       }
-    } catch (e) {
+    } catch {
       message.error(t('script.workbench.loadFailed'));
     } finally {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (isEdit) {
+      loadScript();
+    }
+  }, [id, isEdit]);
 
   const handleSave = async () => {
     if (!name.trim()) {
@@ -102,7 +102,7 @@ export default function ScriptWorkbench() {
       } else {
         message.error(res.message || t('common.operationFailed'));
       }
-    } catch (e) {
+    } catch {
       message.error(t('common.operationFailed'));
     } finally {
       setSaving(false);

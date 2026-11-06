@@ -24,7 +24,7 @@ interface ChatInputProps {
   targetTreeData: TreeNode[];
   selectedTargetIds: string[];
   loadingTargets: boolean;
-  inputRef: React.RefObject<any>;
+  inputRef: React.RefObject<React.ComponentRef<typeof TextArea> | null>;
   onProviderChange: (val: string) => void;
   onModelChange: (val: string) => void;
   onEnableToolsChange: (val: boolean) => void;

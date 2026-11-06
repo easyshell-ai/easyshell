@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Button, Space, Typography, theme, Tooltip } from 'antd';
 import { ArrowLeftOutlined, CodeOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
+import type { SearchAddon } from '@xterm/addon-search';
 import { useResponsive } from '../../hooks/useResponsive';
 import TerminalInstance from './components/TerminalInstance';
 import type { TerminalInstanceRef } from './components/TerminalInstance';
@@ -50,7 +51,10 @@ const TerminalPage: React.FC = () => {
     }
   }, []);
 
-  const activeInstance = activeTabId ? instanceRefs.current.get(activeTabId) : null;
+  const getActiveSearchAddon = useCallback((): SearchAddon | null => {
+    if (!activeTabId) return null;
+    return instanceRefs.current.get(activeTabId)?.searchAddon ?? null;
+  }, [activeTabId]);
 
   // Tab management
   const handleAddTab = useCallback(() => {
@@ -119,12 +123,14 @@ const TerminalPage: React.FC = () => {
 
   // Toolbar handlers
   const handleCopy = useCallback(() => {
-    activeInstance?.copySelection();
-  }, [activeInstance]);
+    const instance = activeTabId ? instanceRefs.current.get(activeTabId) : null;
+    instance?.copySelection();
+  }, [activeTabId]);
 
   const handlePaste = useCallback(() => {
-    activeInstance?.pasteFromClipboard();
-  }, [activeInstance]);
+    const instance = activeTabId ? instanceRefs.current.get(activeTabId) : null;
+    instance?.pasteFromClipboard();
+  }, [activeTabId]);
 
   const handleToggleSearch = useCallback(() => {
     setSearchVisible(v => !v);
@@ -251,7 +257,7 @@ const TerminalPage: React.FC = () => {
           ))}
           {/* Search overlay */}
           <SearchBar
-            searchAddon={activeInstance?.searchAddon || null}
+            getSearchAddon={getActiveSearchAddon}
             visible={searchVisible}
             onClose={() => setSearchVisible(false)}
           />

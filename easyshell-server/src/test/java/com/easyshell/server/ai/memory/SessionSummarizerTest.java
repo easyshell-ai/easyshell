@@ -31,7 +31,6 @@ class SessionSummarizerTest {
     @Mock private AiChatSessionRepository sessionRepository;
     @Mock private ChatModelFactory chatModelFactory;
     @Mock private AgenticConfigService configService;
-    @Mock private VectorStore vectorStore;
     @Mock private SopExtractor sopExtractor;
 
     private SessionSummarizer summarizer;
@@ -40,7 +39,7 @@ class SessionSummarizerTest {
     void setUp() {
         summarizer = new SessionSummarizer(
                 messageRepository, summaryRepository, sessionRepository,
-                chatModelFactory, configService, vectorStore, sopExtractor);
+                chatModelFactory, configService, sopExtractor);
     }
 
     @Test

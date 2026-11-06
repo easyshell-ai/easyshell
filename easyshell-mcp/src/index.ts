@@ -398,7 +398,7 @@ async function runHttpServer(port: number, host: string): Promise<void> {
       } else {
         sendJson(res, 404, { error: "Not found" });
       }
-    } catch (error) {
+    } catch {
       if (!res.headersSent) {
         sendJson(res, 500, {
           jsonrpc: "2.0",

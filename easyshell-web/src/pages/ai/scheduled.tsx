@@ -365,6 +365,7 @@ const AiScheduled: React.FC = () => {
         message.error(res.message || t('scheduled.deleteError'));
       }
     } catch {
+      message.error(t('scheduled.saveError'));
     } finally {
       setSubmitting(false);
     }

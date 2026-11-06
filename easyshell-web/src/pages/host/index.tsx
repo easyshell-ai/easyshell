@@ -181,6 +181,23 @@ const Host: React.FC = () => {
     pollingTimers.current[id] = timer;
   }, []);
 
+  const loadProvisionHistory = useCallback(async () => {
+    try {
+      const res = await getProvisionList();
+      if (res.code === 200) {
+        setProvisionRecords(res.data || []);
+        (res.data || []).forEach((r) => {
+          const s = r.provisionStatus;
+          if (s !== 'SUCCESS' && s !== 'FAILED' && r.id && !pollingTimers.current[r.id]) {
+            pollStatus(r.id);
+          }
+        });
+      }
+    } catch {
+      message.error(t('host.loadHistoryFailed'));
+    }
+  }, [pollStatus]);
+
   const handleAddServer = useCallback(async () => {
     try {
       const values = await form.validateFields();
@@ -217,23 +234,6 @@ const Host: React.FC = () => {
       setSubmitting(false);
     }
   }, [form, pollStatus]);
-
-  const loadProvisionHistory = useCallback(async () => {
-    try {
-      const res = await getProvisionList();
-      if (res.code === 200) {
-        setProvisionRecords(res.data || []);
-        (res.data || []).forEach((r) => {
-          const s = r.provisionStatus;
-          if (s !== 'SUCCESS' && s !== 'FAILED' && r.id && !pollingTimers.current[r.id]) {
-            pollStatus(r.id);
-          }
-        });
-      }
-    } catch {
-      message.error(t('host.loadHistoryFailed'));
-    }
-  }, [pollStatus]);
 
   const handleRetry = useCallback(async (id: number) => {
     try {

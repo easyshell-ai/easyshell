@@ -28,10 +28,7 @@ export function useVersion() {
   const [version, setVersion] = useState<VersionInfo | null>(cachedVersion);
 
   useEffect(() => {
-    if (cachedVersion) {
-      setVersion(cachedVersion);
-      return;
-    }
+    if (cachedVersion) return;
     fetchVersion().then((v) => {
       if (v) setVersion(v);
     });

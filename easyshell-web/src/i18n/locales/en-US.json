@@ -525,6 +525,7 @@
     "createTask": "New Task",
     "editTask": "Edit Scheduled Task",
     "fetchError": "Failed to fetch scheduled tasks",
+    "saveError": "Failed to save task",
     "createSuccess": "Task created",
     "updateSuccess": "Task updated",
     "deleteSuccess": "Task deleted",

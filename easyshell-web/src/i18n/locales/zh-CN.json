@@ -525,6 +525,7 @@
     "createTask": "新建任务",
     "editTask": "编辑定时任务",
     "fetchError": "获取定时任务列表失败",
+    "saveError": "保存任务失败",
     "createSuccess": "任务已创建",
     "updateSuccess": "任务已更新",
     "deleteSuccess": "任务已删除",

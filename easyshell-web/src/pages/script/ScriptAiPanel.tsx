@@ -103,7 +103,7 @@ const ScriptAiPanel: React.FC<ScriptAiPanelProps> = ({ scriptType, currentScript
   const [activeTab, setActiveTab] = useState('code');
   const [applied, setApplied] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
-  const originalScriptRef = useRef<string>('');
+  const [originalScript, setOriginalScript] = useState('');
   const codeEditorViewRef = useRef<EditorView | null>(null);
   const [codeEditorHeight, setCodeEditorHeight] = useState<number | null>(null);
   const codeEditorContainerRef = useRef<HTMLDivElement>(null);
@@ -180,7 +180,7 @@ const ScriptAiPanel: React.FC<ScriptAiPanelProps> = ({ scriptType, currentScript
     if (!prompt.trim()) return;
 
     // Save the original script for diff comparison
-    originalScriptRef.current = currentScript?.trim() || '';
+    setOriginalScript(currentScript?.trim() || '');
     setGenerating(true);
     setRawStream('');
     setApplied(false);
@@ -344,7 +344,7 @@ const ScriptAiPanel: React.FC<ScriptAiPanelProps> = ({ scriptType, currentScript
 
   // Render the Diff tab — side-by-side comparison using CodeMirrorMerge
   const renderDiffTab = () => {
-    const original = originalScriptRef.current;
+    const original = originalScript;
     const modified = sections.content || '';
 
     if (!original && !modified) {
@@ -460,7 +460,7 @@ const ScriptAiPanel: React.FC<ScriptAiPanelProps> = ({ scriptType, currentScript
     ];
 
     // Only show diff tab when there's an original script (modification mode)
-    if (isModification || originalScriptRef.current) {
+    if (isModification || originalScript) {
       items.push({
         key: 'diff',
         label: (

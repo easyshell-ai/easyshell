@@ -4,7 +4,6 @@ import type { EasyShellClient } from "../client.js";
 import { toMcpError } from "../errors.js";
 
 type CreateTagParams = { name: string; color?: string; description?: string };
-type AssignTagParams = { tagId: number; agentId: string };
 
 export function registerTagTools(server: McpServer, client: EasyShellClient) {
   server.tool(

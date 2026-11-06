@@ -1,14 +1,5 @@
-import { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
-
-interface ThemeContextType {
-  isDark: boolean;
-  toggleTheme: () => void;
-}
-
-const ThemeContext = createContext<ThemeContextType>({
-  isDark: false,
-  toggleTheme: () => {},
-});
+import { useEffect, useState, type ReactNode } from 'react';
+import ThemeContext from './themeContext';
 
 const THEME_STORAGE_KEY = 'easyshell-theme';
 
@@ -32,10 +23,3 @@ export const ThemeProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     </ThemeContext.Provider>
   );
 };
-
-export const useTheme = (): ThemeContextType => {
-  const context = useContext(ThemeContext);
-  return context;
-};
-
-export default ThemeContext;

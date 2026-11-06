@@ -1,7 +1,9 @@
 package com.easyshell.server.ai.controller;
 
 import com.easyshell.server.ai.model.entity.AiSessionSummary;
+import com.easyshell.server.ai.repository.AiChatSessionRepository;
 import com.easyshell.server.ai.repository.AiSessionSummaryRepository;
+import com.easyshell.server.ai.service.AiChatService;
 import com.easyshell.server.common.result.R;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -21,12 +23,16 @@ class MemoryControllerTest {
 
     @Mock
     private AiSessionSummaryRepository sessionSummaryRepository;
+    @Mock
+    private AiChatSessionRepository chatSessionRepository;
+    @Mock
+    private AiChatService aiChatService;
 
     private MemoryController controller;
 
     @BeforeEach
     void setUp() {
-        controller = new MemoryController(sessionSummaryRepository);
+        controller = new MemoryController(sessionSummaryRepository, chatSessionRepository, aiChatService);
     }
 
     @Test
@@ -51,7 +57,11 @@ class MemoryControllerTest {
 
     @Test
     void delete_existingMemory() {
-        when(sessionSummaryRepository.existsById(1L)).thenReturn(true);
+        AiSessionSummary summary = new AiSessionSummary();
+        summary.setId(1L);
+        summary.setSessionId("session-abc");
+        summary.setSummary("test summary");
+        when(sessionSummaryRepository.findById(1L)).thenReturn(Optional.of(summary));
         R<Void> result = controller.delete(1L);
         assertThat(result.getCode()).isEqualTo(200);
         verify(sessionSummaryRepository).deleteById(1L);
@@ -59,7 +69,7 @@ class MemoryControllerTest {
 
     @Test
     void delete_notFound() {
-        when(sessionSummaryRepository.existsById(99L)).thenReturn(false);
+        when(sessionSummaryRepository.findById(99L)).thenReturn(Optional.empty());
         R<Void> result = controller.delete(99L);
         assertThat(result.getCode()).isNotEqualTo(200);
     }

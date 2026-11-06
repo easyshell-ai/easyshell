@@ -37,7 +37,7 @@ public class TaskClassifier {
         PATTERNS = new LinkedHashMap<>();
         // 1. EXECUTE - highest priority for action commands
         PATTERNS.put(TaskType.EXECUTE, List.of(
-                Pattern.compile("执行|运行|启动|停止|重启|安装|卸载|创建|删除|修改|清理|脚本"),
+                Pattern.compile("执行|运行|启动|停止|重启|安装|卸载|创建|删除|修改|清理"),
                 Pattern.compile("(?i)execute|run|start|stop|restart|install|remove|create|delete|clean|script")
         ));
         // 2. DEPLOY - deployment actions
@@ -58,7 +58,7 @@ public class TaskClassifier {
         // 5. QUERY - read-only queries (lowest priority, only matches if nothing else does)
         PATTERNS.put(TaskType.QUERY, List.of(
                 Pattern.compile("查看|查询|列出|显示|多少|哪些|状态|版本|列表|看看"),
-                Pattern.compile("(?i)show|list|get|status|how many|which|look")
+                Pattern.compile("(?i)show|list|get|status|check|view|display|how many|which|look")
         ));
     }
 

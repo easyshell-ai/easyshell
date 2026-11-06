@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { message, theme } from 'antd';
+import { Input, message, theme } from 'antd';
 import { useTranslation } from 'react-i18next';
 import { getChatSessions, getChatMessages, deleteChatSession, sendChatStream, approveExecution, rejectExecution, saveProcessData, confirmPlan, rejectPlan, approveCheckpoint, rejectCheckpoint } from '../api/ai';
 import { getClusterList, getClusterDetail } from '../api/cluster';
@@ -61,7 +61,7 @@ export function useAiChat() {
   const streamingToolCallsRef = useRef<Array<{ toolName: string; toolArgs: string; toolResult?: string }>>([]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<any>(null);
+  const inputRef = useRef<React.ComponentRef<typeof Input.TextArea>>(null);
   const userScrolledUpRef = useRef(false);
   const [userScrolledUp, setUserScrolledUp] = useState(false);
 
@@ -104,6 +104,41 @@ export function useAiChat() {
     }, 300);
     return () => clearInterval(id);
   }, [isStreaming]);
+
+  const attachToActiveStream = useCallback(() => {
+    if (!activeStream) return;
+    setStreamingContent(activeStream.content);
+    setStreamingPlan(activeStream.plan);
+    setStreamingStepIndex(activeStream.stepIndex);
+    setStreamingThinkingLog([...activeStream.thinkingLog]);
+    setStreamingAgent(activeStream.agent);
+    setStreamingStepDescription(activeStream.stepDescription);
+    setStreamingToolCalls([...activeStream.toolCalls]);
+    setIsStreaming(true);
+    setLoading(true);
+    setPendingApprovals([...activeStream.pendingApprovals]);
+    setPlanConfirmationStatus(activeStream.planConfirmationStatus);
+    setReviewResult(activeStream.reviewResult);
+    setParallelProgress(activeStream.parallelProgress || []);
+    if (activeStream.messages.length > 0) {
+      setMessages([...activeStream.messages]);
+    }
+    abortRef.current = activeStream.controller;
+    activeStream.onStateChange = () => {
+      if (!activeStream) return;
+      setStreamingContent(activeStream.content);
+      setStreamingPlan(activeStream.plan);
+      setStreamingStepIndex(activeStream.stepIndex);
+      setStreamingThinkingLog([...activeStream.thinkingLog]);
+      setStreamingAgent(activeStream.agent);
+      setStreamingStepDescription(activeStream.stepDescription);
+      setStreamingToolCalls([...activeStream.toolCalls]);
+      setPendingApprovals([...activeStream.pendingApprovals]);
+      setPlanConfirmationStatus(activeStream.planConfirmationStatus);
+      setReviewResult(activeStream.reviewResult);
+      setParallelProgress(activeStream.parallelProgress || []);
+    };
+  }, []);
 
   useEffect(() => {
     if (activeStream && activeStream.isStreaming) {
@@ -254,41 +289,6 @@ export function useAiChat() {
     setPlanConfirmLoading(false);
     setCheckpointSteps(new Set());
     setCheckpointLoading(null);
-  }, []);
-
-  const attachToActiveStream = useCallback(() => {
-    if (!activeStream) return;
-    setStreamingContent(activeStream.content);
-    setStreamingPlan(activeStream.plan);
-    setStreamingStepIndex(activeStream.stepIndex);
-    setStreamingThinkingLog([...activeStream.thinkingLog]);
-    setStreamingAgent(activeStream.agent);
-    setStreamingStepDescription(activeStream.stepDescription);
-    setStreamingToolCalls([...activeStream.toolCalls]);
-    setIsStreaming(true);
-    setLoading(true);
-    setPendingApprovals([...activeStream.pendingApprovals]);
-    setPlanConfirmationStatus(activeStream.planConfirmationStatus);
-    setReviewResult(activeStream.reviewResult);
-    setParallelProgress(activeStream.parallelProgress || []);
-    if (activeStream.messages.length > 0) {
-      setMessages([...activeStream.messages]);
-    }
-    abortRef.current = activeStream.controller;
-    activeStream.onStateChange = () => {
-      if (!activeStream) return;
-      setStreamingContent(activeStream.content);
-      setStreamingPlan(activeStream.plan);
-      setStreamingStepIndex(activeStream.stepIndex);
-      setStreamingThinkingLog([...activeStream.thinkingLog]);
-      setStreamingAgent(activeStream.agent);
-      setStreamingStepDescription(activeStream.stepDescription);
-      setStreamingToolCalls([...activeStream.toolCalls]);
-      setPendingApprovals([...activeStream.pendingApprovals]);
-      setPlanConfirmationStatus(activeStream.planConfirmationStatus);
-      setReviewResult(activeStream.reviewResult);
-      setParallelProgress(activeStream.parallelProgress || []);
-    };
   }, []);
 
   const handleSelectSession = useCallback((sessionId: string) => {

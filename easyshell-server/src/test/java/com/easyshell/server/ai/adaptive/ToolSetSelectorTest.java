@@ -41,10 +41,10 @@ class ToolSetSelectorTest {
 
     private ToolCallback[] allTools() {
         return new ToolCallback[]{
-                mockTool("hostList"),
+                mockTool("listHosts"),
                 mockTool("executeScript"),
-                mockTool("monitorOverview"),
-                mockTool("taskList"),
+                mockTool("getDashboardStats"),
+                mockTool("getTaskDetail"),
                 mockTool("customTool")
         };
     }

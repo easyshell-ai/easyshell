@@ -1,7 +1,7 @@
-import { lazy, Suspense } from 'react';
+import { lazy } from 'react';
 import { createBrowserRouter } from 'react-router-dom';
-import { Spin } from 'antd';
 import MainLayout from '../layouts/MainLayout';
+import LazyLoad from './LazyLoad';
 
 const Login = lazy(() => import('../pages/login'));
 const Dashboard = lazy(() => import('../pages/dashboard'));
@@ -25,18 +25,6 @@ const AiChat = lazy(() => import('../pages/ai/chat'));
 const AiScheduled = lazy(() => import('../pages/ai/scheduled'));
 const AiReports = lazy(() => import('../pages/ai/reports'));
 const AiApproval = lazy(() => import('../pages/ai/approval'));
-
-const LazyLoad = ({ children }: { children: React.ReactNode }) => (
-  <Suspense
-    fallback={
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', minHeight: 200 }}>
-        <Spin size="large" />
-      </div>
-    }
-  >
-    {children}
-  </Suspense>
-);
 
 const router = createBrowserRouter([
   {

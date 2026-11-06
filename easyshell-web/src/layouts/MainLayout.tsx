@@ -34,7 +34,7 @@ import {
   ApiOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
-import { useTheme } from '../contexts/ThemeContext';
+import { useTheme } from '../contexts/themeContext';
 import { useTranslation } from 'react-i18next';
 import { getMe } from '../api/auth';
 import { useResponsive } from '../hooks/useResponsive';
@@ -67,6 +67,12 @@ const MainLayout: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [openKeys, setOpenKeys] = useState<string[]>(getOpenKeys(location.pathname));
+  const [prevPathname, setPrevPathname] = useState(location.pathname);
+
+  if (location.pathname !== prevPathname) {
+    setPrevPathname(location.pathname);
+    setOpenKeys(getOpenKeys(location.pathname));
+  }
   const { isDark, toggleTheme } = useTheme();
   const { token } = theme.useToken();
   const { t, i18n } = useTranslation();
@@ -201,10 +207,6 @@ const MainLayout: React.FC = () => {
       }
     }).catch(() => {});
   }, [navigate]);
-
-  useEffect(() => {
-    setOpenKeys(getOpenKeys(location.pathname));
-  }, [location.pathname]);
 
   const userMenuItems: MenuProps['items'] = useMemo(() => [
     {

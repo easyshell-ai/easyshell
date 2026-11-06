@@ -10,12 +10,12 @@ import { useTranslation } from 'react-i18next';
 import type { SearchAddon } from '@xterm/addon-search';
 
 interface SearchBarProps {
-  searchAddon: SearchAddon | null;
+  getSearchAddon: () => SearchAddon | null;
   visible: boolean;
   onClose: () => void;
 }
 
-const SearchBar: React.FC<SearchBarProps> = ({ searchAddon, visible, onClose }) => {
+const SearchBar: React.FC<SearchBarProps> = ({ getSearchAddon, visible, onClose }) => {
   const { t } = useTranslation();
   const { token } = theme.useToken();
   const inputRef = useRef<InputRef>(null);
@@ -32,16 +32,18 @@ const SearchBar: React.FC<SearchBarProps> = ({ searchAddon, visible, onClose }) 
   const searchOptions = { caseSensitive, regex };
 
   const findNext = useCallback(() => {
+    const searchAddon = getSearchAddon();
     if (searchAddon && searchTerm) {
       searchAddon.findNext(searchTerm, searchOptions);
     }
-  }, [searchAddon, searchTerm, searchOptions]);
+  }, [getSearchAddon, searchTerm, searchOptions]);
 
   const findPrevious = useCallback(() => {
+    const searchAddon = getSearchAddon();
     if (searchAddon && searchTerm) {
       searchAddon.findPrevious(searchTerm, searchOptions);
     }
-  }, [searchAddon, searchTerm, searchOptions]);
+  }, [getSearchAddon, searchTerm, searchOptions]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Escape') {

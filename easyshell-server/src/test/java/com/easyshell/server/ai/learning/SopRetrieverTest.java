@@ -14,6 +14,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 import java.util.Map;
@@ -38,7 +39,8 @@ class SopRetrieverTest {
 
     @BeforeEach
     void setUp() {
-        retriever = new SopRetriever(vectorStore, sopTemplateRepository, configService);
+        retriever = new SopRetriever(sopTemplateRepository, configService);
+        ReflectionTestUtils.setField(retriever, "vectorStore", vectorStore);
     }
 
     @Nested

@@ -61,7 +61,7 @@ const ChatMessages: React.FC<ChatMessagesProps> = ({
   messages, loading,
   processDataMap, streamingContent, streamingPlan, streamingStepIndex,
   streamingThinkingLog, streamingAgent, streamingStepDescription,
-  streamingToolCalls, isStreaming: _isStreaming, pendingApprovals, approvalLoading,
+  streamingToolCalls, pendingApprovals, approvalLoading,
   planConfirmationStatus, reviewResult, parallelProgress, planConfirmLoading,
   currentSessionId,
   messagesEndRef, userScrolledUp, onMessagesScroll, onForceScrollToBottom,

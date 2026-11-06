@@ -8,7 +8,7 @@ interface ApiEnvelope<T> {
 }
 
 interface LoginResponse {
-  token: string;
+  accessToken: string;
   refreshToken: string;
 }
 
@@ -136,7 +136,7 @@ export class EasyShellClient {
       throw new EasyShellError("Invalid login response from EasyShell API.", response.status, "INVALID_AUTH_RESPONSE");
     }
 
-    this.token = body.data.token;
+    this.token = body.data.accessToken;
     this.refreshToken = body.data.refreshToken;
   }
 
@@ -173,7 +173,7 @@ export class EasyShellClient {
       return;
     }
 
-    this.token = body.data.token;
+    this.token = body.data.accessToken;
     this.refreshToken = body.data.refreshToken;
   }
 
@@ -208,7 +208,13 @@ export class EasyShellClient {
       return false;
     }
 
-    const candidate = value as Partial<LoginResponse>;
-    return typeof candidate.token === "string" && typeof candidate.refreshToken === "string";
+    const candidate = value as Partial<LoginResponse> & { token?: unknown };
+    const accessToken =
+      typeof candidate.accessToken === "string"
+        ? candidate.accessToken
+        : typeof candidate.token === "string"
+          ? candidate.token
+          : null;
+    return accessToken !== null && typeof candidate.refreshToken === "string";
   }
 }

@@ -25,10 +25,15 @@ class PermissionFilterTest {
     private OrchestratorEngine createMinimalEngine() {
         return new OrchestratorEngine(
                 null, null, null, null,
-                null, null, null, null, null, null, null,
-                null, null, null, null, null, null, null,
-                null, null, null, null, null, null,
-                null, null, null
+                null, null, null, null,
+                null, null, null, null,
+                null, null, null, null,
+                null, null, null, null,
+                null, null, null, null,
+                null, null, null, null,
+                null, null, null, null,
+                null, null, null, null,
+                null
         );
     }
 

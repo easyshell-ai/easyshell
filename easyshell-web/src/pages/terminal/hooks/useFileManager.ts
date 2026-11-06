@@ -29,6 +29,10 @@ interface UseFileManagerReturn {
   goUp: () => Promise<void>;
 }
 
+function getErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : 'Unknown error';
+}
+
 export function useFileManager(agentId: string): UseFileManagerReturn {
   const { t } = useTranslation();
   const [files, setFiles] = useState<FileInfo[]>([]);
@@ -44,7 +48,7 @@ export function useFileManager(agentId: string): UseFileManagerReturn {
     setLoading(true);
     setError(null);
     try {
-      const response = await request.get<any, { code: number, data: FileInfo[], message: string }>(
+      const response = await request.get<unknown, { code: number, data: FileInfo[], message: string }>(
         `/v1/agents/${agentId}/files`,
         { params: { path } }
       );
@@ -54,8 +58,8 @@ export function useFileManager(agentId: string): UseFileManagerReturn {
       } else {
         throw new Error(response.message || 'Failed to list files');
       }
-    } catch (err: any) {
-      const errMsg = err.message || 'Unknown error';
+    } catch (err) {
+      const errMsg = getErrorMessage(err);
       setError(errMsg);
       message.error(t('terminal.files.operationFailed', { error: errMsg }));
     } finally {
@@ -71,7 +75,7 @@ export function useFileManager(agentId: string): UseFileManagerReturn {
       const formData = new FormData();
       formData.append('file', file);
       
-      const response = await request.post<any, { code: number, message: string }>(
+      const response = await request.post<unknown, { code: number, message: string }>(
         `/v1/agents/${agentId}/files/upload`,
         formData,
         {
@@ -96,8 +100,8 @@ export function useFileManager(agentId: string): UseFileManagerReturn {
       } else {
         throw new Error(response.message);
       }
-    } catch (err: any) {
-      message.error(t('terminal.files.operationFailed', { error: err.message }));
+    } catch (err) {
+      message.error(t('terminal.files.operationFailed', { error: getErrorMessage(err) }));
     } finally {
       setUploadProgress(null);
       setUploadPhase(null);
@@ -147,8 +151,8 @@ export function useFileManager(agentId: string): UseFileManagerReturn {
       document.body.removeChild(a);
       window.URL.revokeObjectURL(blobUrl);
       message.success(t('terminal.files.downloadSuccess', 'Download completed'));
-    } catch (err: any) {
-      message.error(t('terminal.files.operationFailed', { error: err.message }));
+    } catch (err) {
+      message.error(t('terminal.files.operationFailed', { error: getErrorMessage(err) }));
     } finally {
       setDownloadProgress(null);
     }
@@ -158,7 +162,7 @@ export function useFileManager(agentId: string): UseFileManagerReturn {
     if (!agentId) return;
     try {
       const fullPath = currentPath.endsWith('/') ? `${currentPath}${name}` : `${currentPath}/${name}`;
-      const response = await request.post<any, { code: number, message: string }>(
+      const response = await request.post<unknown, { code: number, message: string }>(
         `/v1/agents/${agentId}/files/mkdir`,
         null,
         { params: { path: fullPath } }
@@ -169,15 +173,15 @@ export function useFileManager(agentId: string): UseFileManagerReturn {
       } else {
         throw new Error(response.message);
       }
-    } catch (err: any) {
-      message.error(t('terminal.files.operationFailed', { error: err.message }));
+    } catch (err) {
+      message.error(t('terminal.files.operationFailed', { error: getErrorMessage(err) }));
     }
   }, [agentId, currentPath, navigate, t]);
 
   const remove = useCallback(async (path: string) => {
     if (!agentId) return;
     try {
-      const response = await request.delete<any, { code: number, message: string }>(
+      const response = await request.delete<unknown, { code: number, message: string }>(
         `/v1/agents/${agentId}/files`,
         { params: { path } }
       );
@@ -187,15 +191,15 @@ export function useFileManager(agentId: string): UseFileManagerReturn {
       } else {
         throw new Error(response.message);
       }
-    } catch (err: any) {
-      message.error(t('terminal.files.operationFailed', { error: err.message }));
+    } catch (err) {
+      message.error(t('terminal.files.operationFailed', { error: getErrorMessage(err) }));
     }
   }, [agentId, currentPath, navigate, t]);
 
   const rename = useCallback(async (oldPath: string, newPath: string) => {
     if (!agentId) return;
     try {
-      const response = await request.put<any, { code: number, message: string }>(
+      const response = await request.put<unknown, { code: number, message: string }>(
         `/v1/agents/${agentId}/files/rename`,
         { oldPath, newPath }
       );
@@ -205,8 +209,8 @@ export function useFileManager(agentId: string): UseFileManagerReturn {
       } else {
         throw new Error(response.message);
       }
-    } catch (err: any) {
-      message.error(t('terminal.files.operationFailed', { error: err.message }));
+    } catch (err) {
+      message.error(t('terminal.files.operationFailed', { error: getErrorMessage(err) }));
     }
   }, [agentId, currentPath, navigate, t]);
 

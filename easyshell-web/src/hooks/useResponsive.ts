@@ -61,14 +61,12 @@ export function useResponsive(): ResponsiveState {
   }, []);
 
   useEffect(() => {
-    handleResize();
-    
     let timeoutId: number;
     const debouncedResize = () => {
       clearTimeout(timeoutId);
       timeoutId = window.setTimeout(handleResize, 100);
     };
-    
+
     window.addEventListener('resize', debouncedResize);
     return () => {
       window.removeEventListener('resize', debouncedResize);
@@ -84,12 +82,17 @@ export function useMediaQuery(query: string): boolean {
     if (typeof window === 'undefined') return false;
     return window.matchMedia(query).matches;
   });
+  const [prevQuery, setPrevQuery] = useState(query);
+
+  if (query !== prevQuery) {
+    setPrevQuery(query);
+    setMatches(typeof window === 'undefined' ? false : window.matchMedia(query).matches);
+  }
 
   useEffect(() => {
     const mediaQuery = window.matchMedia(query);
     const handler = (e: MediaQueryListEvent) => setMatches(e.matches);
-    
-    setMatches(mediaQuery.matches);
+
     mediaQuery.addEventListener('change', handler);
     return () => mediaQuery.removeEventListener('change', handler);
   }, [query]);
