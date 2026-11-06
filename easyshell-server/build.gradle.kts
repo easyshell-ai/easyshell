@@ -75,7 +75,7 @@ dependencies {
     // Utils
     compileOnly("org.projectlombok:lombok")
     annotationProcessor("org.projectlombok:lombok")
-    implementation("cn.hutool:hutool-all:5.8.34")
+    implementation("cn.hutool:hutool-all:5.8.48")
     implementation("org.jsoup:jsoup:1.18.3")
     implementation("net.objecthunter:exp4j:0.4.8")
     implementation("io.github.java-diff-utils:java-diff-utils:4.12")
