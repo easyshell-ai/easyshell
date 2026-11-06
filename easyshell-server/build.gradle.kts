@@ -24,7 +24,7 @@ repositories {
 }
 
 val queryDslVersion = "5.1.0"
-val springAiVersion = "1.1.2"
+val springAiVersion = "2.0.2"
 
 dependencyManagement {
     imports {
