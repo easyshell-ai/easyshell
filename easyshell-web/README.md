@@ -1,5 +1,10 @@
 # React + TypeScript + Vite
 
+## Development Requirements
+
+- Node.js `^20.19.0 || >=22.12.0`
+- npm with the checked-in `package-lock.json`
+
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
 Currently, two official plugins are available:

@@ -117,6 +117,8 @@ npx @easyshell/mcp-server --install
 
 ## Development
 
+The published MCP runtime supports Node.js `>=18`. Development and test tooling use Vitest/Vite and require Node.js `^20.19.0 || >=22.12.0`.
+
 ```bash
 npm ci
 npm run build

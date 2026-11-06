@@ -143,7 +143,7 @@ docker compose up -d
 
 无需本地构建 —— 预构建镜像将自动从 [Docker Hub](https://hub.docker.com/u/laolupaojiao) 拉取。
 
-访问 `http://localhost:18880` → 使用 `easyshell` / `easyshell@changeme` 登录。
+访问 `http://localhost:18880` → 使用 `easyshell` 登录。首次启动时服务端会在日志中打印随机生成的初始密码（也可通过设置 `EASYSHELL_ADMIN_PASSWORD` 自行指定），登录后请立即修改。
 
 > **想使用 GHCR？** 在 `.env` 中设置：
 > ```

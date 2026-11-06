@@ -143,7 +143,7 @@ docker compose up -d
 
 로컬 빌드가 필요 없습니다 — 사전 빌드된 이미지가 [Docker Hub](https://hub.docker.com/u/laolupaojiao)에서 자동으로 풀링됩니다.
 
-`http://localhost:18880` 접속 → `easyshell` / `easyshell@changeme`로 로그인하세요.
+`http://localhost:18880` 접속 → `easyshell`로 로그인하세요. 첫 시작 시 서버 로그에 무작위로 생성된 초기 비밀번호가 출력됩니다(`EASYSHELL_ADMIN_PASSWORD`로 직접 지정할 수도 있습니다). 로그인 후 즉시 변경하세요.
 
 > **GHCR을 대신 사용하고 싶으신가요?** `.env`에서 설정하세요:
 > ```

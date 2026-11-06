@@ -15,6 +15,7 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
+import java.security.SecureRandom;
 import java.util.Optional;
 
 @Slf4j
@@ -43,15 +44,37 @@ public class DataInitializer implements CommandLineRunner {
 
     private void initAdmin() {
         if (!userRepository.existsByUsername("easyshell")) {
+            String initialPassword = resolveInitialAdminPassword();
             User admin = new User();
             admin.setUsername("easyshell");
-            admin.setPassword(passwordEncoder.encode("easyshell@changeme"));
+            admin.setPassword(passwordEncoder.encode(initialPassword));
             admin.setEmail("admin@easyshell.com");
             admin.setRole("super_admin");
             admin.setStatus(1);
             userRepository.save(admin);
-            log.info("Default admin user created: easyshell / easyshell@changeme");
+            log.info("Default admin user created: easyshell");
         }
+    }
+
+    private String resolveInitialAdminPassword() {
+        String configured = System.getenv("EASYSHELL_ADMIN_PASSWORD");
+        if (configured != null && !configured.isBlank()) {
+            return configured;
+        }
+        String generated = generatePassword();
+        log.warn("EASYSHELL_ADMIN_PASSWORD is not set. Generated one-time initial admin password for user 'easyshell': {}", generated);
+        log.warn("Sign in with this password and change it immediately.");
+        return generated;
+    }
+
+    private String generatePassword() {
+        String chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+        SecureRandom random = new SecureRandom();
+        StringBuilder sb = new StringBuilder(20);
+        for (int i = 0; i < 20; i++) {
+            sb.append(chars.charAt(random.nextInt(chars.length())));
+        }
+        return sb.toString();
     }
 
     private void initScriptTemplates() {

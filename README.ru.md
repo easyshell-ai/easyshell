@@ -143,7 +143,7 @@ docker compose up -d
 
 Локальная сборка не требуется — готовые образы автоматически загружаются из [Docker Hub](https://hub.docker.com/u/laolupaojiao).
 
-Откройте `http://localhost:18880` → войдите с логином `easyshell` / `easyshell@changeme`.
+Откройте `http://localhost:18880` → войдите как `easyshell`. При первом запуске сервер выводит сгенерированный начальный пароль в лог (или задайте его через `EASYSHELL_ADMIN_PASSWORD`) — смените его сразу после входа.
 
 > **Хотите использовать GHCR?** Укажите в `.env`:
 > ```

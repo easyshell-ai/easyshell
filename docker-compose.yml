@@ -3,7 +3,7 @@ services:
     image: mysql:8.0
     container_name: easyshell-mysql
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:-18923ce29fdab04e}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required - copy .env.example to .env and set a strong password}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-easyshell}
     ports:
       - "${MYSQL_PORT:-13306}:3306"
@@ -42,12 +42,13 @@ services:
       MYSQL_PORT: 3306
       MYSQL_DATABASE: ${MYSQL_DATABASE:-easyshell}
       MYSQL_USER: root
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-18923ce29fdab04e}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required - copy .env.example to .env and set a strong password}
       REDIS_HOST: easyshell-redis
       REDIS_PORT: 6379
+      EASYSHELL_ADMIN_PASSWORD: ${EASYSHELL_ADMIN_PASSWORD:-}
       PROVISION_SERVER_URL: ${PROVISION_SERVER_URL:-http://easyshell-server:18080}
-      JWT_SECRET: ${JWT_SECRET:-easyshell-jwt-secret-key-for-development-only-change-in-production-must-be-at-least-64-chars-long}
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-easyshell-aes256-encryption-key!!}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required - generate a random secret of at least 64 characters}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required - generate a random AES-256 key}
       JAVA_OPTS: ${JAVA_OPTS:--Xms256m -Xmx512m}
     depends_on:
       easyshell-mysql:

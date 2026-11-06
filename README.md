@@ -137,13 +137,13 @@ Configure which operations require approval before execution. All actions are lo
 ```bash
 git clone https://github.com/easyshell-ai/easyshell.git
 cd easyshell
-cp .env.example .env      # Edit .env if needed
+cp .env.example .env      # Required: set MYSQL_PASSWORD, JWT_SECRET and ENCRYPTION_KEY
 docker compose up -d
 ```
 
 No local build required — pre-built images are pulled automatically from [Docker Hub](https://hub.docker.com/u/laolupaojiao).
 
-Open `http://localhost:18880` → login with `easyshell` / `easyshell@changeme`.
+Open `http://localhost:18880` → log in as `easyshell`. On first start the server prints a randomly generated initial password in its logs (or set `EASYSHELL_ADMIN_PASSWORD` to choose your own) — change it right after signing in.
 
 > **Want to use GHCR instead?** Set in `.env`:
 > ```
@@ -155,6 +155,8 @@ Open `http://localhost:18880` → login with `easyshell` / `easyshell@changeme`.
 > ```bash
 > docker compose -f docker-compose.build.yml up -d
 > ```
+
+Local web development and dependency checks require Node.js `^20.19.0 || >=22.12.0`, matching the Vite 8 toolchain. `Dockerfile.web` uses the Node 22 image line for web builds.
 
 ---
 
@@ -191,7 +193,7 @@ Open `http://localhost:18880` → login with `easyshell` / `easyshell@changeme`.
 |-----------|-----------|
 | Server | Java 17, Spring Boot 3.5, Gradle, JPA/Hibernate, Spring AI, Spring Security |
 | Agent | Go 1.24, single binary, zero runtime dependencies |
-| Web | React 19, TypeScript, Vite 7, Ant Design 6 |
+| Web | React 19, TypeScript, Vite 8, Ant Design 6 |
 | Database | MySQL 8.0 |
 | Cache | Redis 7 |
 
