@@ -1,16 +1,37 @@
 # Development: local build from source
 # Usage: docker compose -f docker-compose.build.yml up -d
+#
+# Same zero-configuration behaviour as docker-compose.yml: secrets are generated on first
+# boot by the easyshell-secrets one-shot container and kept in the easyshell_secrets volume.
 services:
+  easyshell-secrets:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+      args:
+        VERSION: ${VERSION:-1.0}
+    container_name: easyshell-secrets
+    entrypoint: ["/opt/easyshell/scripts/init-secrets.sh"]
+    environment:
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-}
+      JWT_SECRET: ${JWT_SECRET:-}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      AGENT_REGISTER_SECRET: ${AGENT_REGISTER_SECRET:-}
+    volumes:
+      - easyshell_secrets:/secrets
+    restart: "no"
+
   easyshell-mysql:
     image: mysql:8.0
     container_name: easyshell-mysql
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required - copy .env.example to .env and set a strong password}
+      MYSQL_ROOT_PASSWORD_FILE: /secrets/db_password
       MYSQL_DATABASE: ${MYSQL_DATABASE:-easyshell}
     ports:
-      # Bound to loopback: the database has no reason to be reachable from the network.
+      # Loopback only: the database needs no network exposure.
       - "127.0.0.1:${MYSQL_PORT:-13306}:3306"
     volumes:
+      - easyshell_secrets:/secrets:ro
       - mysql_data:/var/lib/mysql
     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
     healthcheck:
@@ -18,13 +39,16 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    depends_on:
+      easyshell-secrets:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   easyshell-redis:
     image: redis:7-alpine
     container_name: easyshell-redis
     ports:
-      # Bound to loopback: Redis has no authentication, keep it off the network.
+      # Loopback only: Redis runs without authentication.
       - "127.0.0.1:${REDIS_PORT:-16379}:6379"
     volumes:
       - redis_data:/data
@@ -50,16 +74,16 @@ services:
       MYSQL_PORT: 3306
       MYSQL_DATABASE: ${MYSQL_DATABASE:-easyshell}
       MYSQL_USER: root
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required - copy .env.example to .env and set a strong password}
+      # MYSQL_PASSWORD / JWT_SECRET / ENCRYPTION_KEY / AGENT_REGISTER_SECRET are filled in
+      # by the entrypoint from the generated secrets volume when not set explicitly here.
       REDIS_HOST: easyshell-redis
       REDIS_PORT: 6379
       EASYSHELL_ADMIN_PASSWORD: ${EASYSHELL_ADMIN_PASSWORD:-}
-      # Shared secret a new agent presents once to obtain its own token.
       AGENT_REGISTER_SECRET: ${AGENT_REGISTER_SECRET:-}
       PROVISION_SERVER_URL: ${PROVISION_SERVER_URL:-http://easyshell-server:18080}
-      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required - generate a random secret of at least 64 characters}
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required - generate a random AES-256 key}
       JAVA_OPTS: ${JAVA_OPTS:--Xms256m -Xmx512m}
+    volumes:
+      - easyshell_secrets:/secrets:ro
     depends_on:
       easyshell-mysql:
         condition: service_healthy
@@ -80,5 +104,6 @@ services:
     restart: unless-stopped
 
 volumes:
+  easyshell_secrets:
   mysql_data:
   redis_data:

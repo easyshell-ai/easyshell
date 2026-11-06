@@ -31,10 +31,13 @@ WORKDIR /opt/easyshell
 
 COPY --from=server-builder /build/build/libs/easyshell-server-0.1.0-SNAPSHOT.jar app.jar
 
-RUN mkdir -p agent-binaries
+RUN mkdir -p agent-binaries scripts
 COPY --from=agent-builder /build/easyshell-agent-linux-amd64 agent-binaries/
 COPY --from=agent-builder /build/easyshell-agent-linux-arm64 agent-binaries/
 COPY easyshell-agent/configs/agent.yaml agent-binaries/agent.yaml
+# One-shot secret generation + the entrypoint that consumes them (zero-config deployment)
+COPY scripts/init-secrets.sh scripts/server-entrypoint.sh scripts/
+RUN chmod 700 scripts/init-secrets.sh scripts/server-entrypoint.sh
 
 ARG VERSION
 ENV EASYSHELL_VERSION=${VERSION:-1.0} \
@@ -53,4 +56,4 @@ EXPOSE 18080
 HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=3 \
     CMD curl -sf http://localhost:18080/actuator/health || exit 1
 
-ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]
+ENTRYPOINT ["/opt/easyshell/scripts/server-entrypoint.sh"]

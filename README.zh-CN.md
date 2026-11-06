@@ -137,13 +137,16 @@ AI 对话界面允许你下达高层级的运维目标。AI 会将其拆解为�
 ```bash
 git clone https://github.com/easyshell-ai/easyshell.git
 cd easyshell
-./scripts/deploy.sh       # 一条命令：首次运行自动生成 .env（随机密钥），随后启动全部组件并等待健康检查通过
+docker compose up -d
 ```
 
-`scripts/deploy.sh` 会在首次运行时生成含随机密钥的 `.env`（数据库密码、JWT 密钥、加密密钥、
-agent 注册密钥），然后启动整个栈。常用参数：
+以上就是全部步骤 —— **不需要 `.env`、不需要生成密钥、不需要任何手动配置**。首次启动时一个一次性容器会
+生成数据库密码、JWT 密钥、加密密钥和 agent 注册密钥，存入 `easyshell_secrets` 数据卷，之后每次启动都复用同一份。
+
+`scripts/deploy.sh` 是可选封装，额外等待健康检查通过并打印登录信息：
 
 ```bash
+./scripts/deploy.sh            # docker compose up -d + 等待就绪 + 显示登录方式
 ./scripts/deploy.sh --build    # 用当前源码构建镜像后启动（而非拉取预构建镜像）
 ./scripts/deploy.sh --down     # 停止全部组件（保留数据卷）
 ```
@@ -151,7 +154,12 @@ agent 注册密钥），然后启动整个栈。常用参数：
 默认路径无需本地构建 —— 预构建镜像将自动从 [Docker Hub](https://hub.docker.com/u/laolupaojiao) 拉取；
 如需运行当前源码（包含尚未发布的安全修复），请使用 `--build`。
 
-访问 `http://localhost:18880` → 使用 `easyshell` 登录。首次启动时服务端会在日志中打印随机生成的初始密码（也可通过设置 `EASYSHELL_ADMIN_PASSWORD` 自行指定），登录后请立即修改。
+访问 `http://localhost:18880` → 使用 `easyshell` 登录。初始密码在首次启动时随机生成，并在服务端日志中打印一次
+（`docker logs easyshell-server | grep 'initial admin password'`），登录后请立即修改；也可在 `.env` 中设置
+`EASYSHELL_ADMIN_PASSWORD` 自行指定。
+
+部署到其他机器上的 agent 需要一个可达的服务器地址：在 `.env` 中设置 `PROVISION_SERVER_URL`，
+或在 UI 的「系统管理 → 系统配置」中设置 `server.external-url`。
 
 > **想使用 GHCR？** 在 `.env` 中设置：
 > ```

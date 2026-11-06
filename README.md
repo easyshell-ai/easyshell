@@ -137,23 +137,34 @@ Configure which operations require approval before execution. All actions are lo
 ```bash
 git clone https://github.com/easyshell-ai/easyshell.git
 cd easyshell
-./scripts/deploy.sh            # one command: creates .env, starts everything, waits for health
+docker compose up -d
 ```
 
-`scripts/deploy.sh` generates `.env` with random secrets on first run (database password,
-JWT secret, encryption key, agent registration secret) and then starts the stack. Useful
-options:
+That is the whole setup — **no `.env`, no secret generation, no manual steps**. On first
+boot a one-shot container creates the database password, JWT secret, encryption key and
+agent registration secret, stores them in the `easyshell_secrets` Docker volume and every
+later start reuses them.
+
+`scripts/deploy.sh` is a convenience wrapper that also waits for the health check and prints
+the sign-in details:
 
 ```bash
+./scripts/deploy.sh            # docker compose up -d + wait + show credentials
 ./scripts/deploy.sh --build    # build the images from this source tree instead of pulling
 ./scripts/deploy.sh --down     # stop everything (data volumes are kept)
 ```
 
-No local build required for the default path — pre-built images are pulled automatically
+No local build is required for the default path — pre-built images are pulled automatically
 from [Docker Hub](https://hub.docker.com/u/laolupaojiao). Use `--build` to run exactly this
 source tree (that is also how you pick up changes that have not been released yet).
 
-Open `http://localhost:18880` → log in as `easyshell`. On first start the server prints a randomly generated initial password in its logs (or set `EASYSHELL_ADMIN_PASSWORD` to choose your own) — change it right after signing in.
+Open `http://localhost:18880` → log in as `easyshell`. The initial password is generated
+randomly on first start and printed once in the server logs
+(`docker logs easyshell-server | grep 'initial admin password'`) — change it right after
+signing in. To choose it yourself, set `EASYSHELL_ADMIN_PASSWORD` in `.env`.
+
+Agents installed on other machines need a reachable server URL: set `PROVISION_SERVER_URL`
+in `.env`, or **System config → server.external-url** in the UI.
 
 > **Want to use GHCR instead?** Set in `.env`:
 > ```
