@@ -79,7 +79,7 @@ logging:
     org.hibernate.SQL: info
 
 easyshell:
-  version: ${EASYSHELL_VERSION:1.1.0}
+  version: ${EASYSHELL_VERSION:1.1.1}
   auth:
     # No defaults on purpose - see SecretValidator.
     jwt-secret: ${JWT_SECRET}

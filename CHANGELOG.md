@@ -6,6 +6,8 @@ web UI and is served by `GET /api/v1/system/version`.
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-11-07
+
 ### Fixed
 - **Server — task counters could stall or undercount.** `updateTaskStatus` was a
   read-modify-write over the job list: when several agents reported at the same
