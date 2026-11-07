@@ -1,7 +1,7 @@
 ARG VERSION=1.1.0
 
 # ---- Stage 1: Build Go Agent binaries (always cross-compile both) ----
-FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS agent-builder
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS agent-builder
 
 ARG VERSION
 
@@ -20,7 +20,7 @@ COPY easyshell-server/ .
 RUN gradle test bootJar --no-daemon
 
 # ---- Stage 3: Production runtime ----
-FROM eclipse-temurin:17-jre-jammy
+FROM eclipse-temurin:25-jre-jammy
 
 RUN apt-get update && apt-get install -y --no-install-recommends curl tzdata && \
     rm -rf /var/lib/apt/lists/* && \

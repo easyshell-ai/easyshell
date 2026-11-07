@@ -53,9 +53,9 @@ dependencies {
     annotationProcessor("jakarta.persistence:jakarta.persistence-api")
 
     // JWT
-    implementation("io.jsonwebtoken:jjwt-api:0.12.6")
-    runtimeOnly("io.jsonwebtoken:jjwt-impl:0.12.6")
-    runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.12.6")
+    implementation("io.jsonwebtoken:jjwt-api:0.13.0")
+    runtimeOnly("io.jsonwebtoken:jjwt-impl:0.13.0")
+    runtimeOnly("io.jsonwebtoken:jjwt-jackson:0.13.0")
 
     // Spring AI Provider Starters
     // Gemini 通过 OpenAI 兼容协议接入，复用 openai starter + 自定义 baseUrl
@@ -67,15 +67,15 @@ dependencies {
     implementation("org.springframework.ai:spring-ai-vector-store")
 
     // SSH
-    implementation("com.github.mwiede:jsch:0.2.21")
+    implementation("com.github.mwiede:jsch:2.28.8")
 
     // API Docs
-    implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.15")
+    implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.10.0")
 
     // Utils
     compileOnly("org.projectlombok:lombok")
     annotationProcessor("org.projectlombok:lombok")
-    implementation("cn.hutool:hutool-all:5.8.34")
+    implementation("cn.hutool:hutool-all:5.8.48")
     implementation("org.jsoup:jsoup:1.18.3")
     implementation("net.objecthunter:exp4j:0.4.8")
     implementation("io.github.java-diff-utils:java-diff-utils:4.12")
