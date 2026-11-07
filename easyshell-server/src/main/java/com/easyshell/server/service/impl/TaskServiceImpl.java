@@ -38,10 +38,20 @@ import java.util.UUID;
 @Service
 public class TaskServiceImpl implements TaskService {
 
+    /**
+     * job output 单列的最大保留字符数。
+     * output 列是 MEDIUMTEXT（MySQL 约 16MB），取 256K 字符（utf8mb4 最坏约 1MB 字节）
+     * 既足够留住长任务的尾部日志，又远离列上限，保证不会把列写溢出。
+     */
+    private static final int MAX_JOB_OUTPUT_LENGTH = 256 * 1024;
+
+    private static final String NEWLINE = "\n";
+
     private final TaskRepository taskRepository;
     private final JobRepository jobRepository;
     private final ScriptRepository scriptRepository;
     private final AgentRepository agentRepository;
+    private final TaskCounterService taskCounterService;
     private final TaskLogWebSocketHandler logWebSocketHandler;
     private final AgentWebSocketHandler agentWebSocketHandler;
     private final ClusterService clusterService;
@@ -52,6 +62,7 @@ public class TaskServiceImpl implements TaskService {
             JobRepository jobRepository,
             ScriptRepository scriptRepository,
             AgentRepository agentRepository,
+            TaskCounterService taskCounterService,
             TaskLogWebSocketHandler logWebSocketHandler,
             @Lazy AgentWebSocketHandler agentWebSocketHandler,
             @Lazy ClusterService clusterService,
@@ -60,6 +71,7 @@ public class TaskServiceImpl implements TaskService {
         this.jobRepository = jobRepository;
         this.scriptRepository = scriptRepository;
         this.agentRepository = agentRepository;
+        this.taskCounterService = taskCounterService;
         this.logWebSocketHandler = logWebSocketHandler;
         this.agentWebSocketHandler = agentWebSocketHandler;
         this.clusterService = clusterService;
@@ -139,6 +151,7 @@ public class TaskServiceImpl implements TaskService {
                 failedJob.setOutput("Agent not found");
                 failedJob.setFinishedAt(LocalDateTime.now());
                 jobRepository.save(failedJob);
+                taskCounterService.applyJobResult(task.getId(), 3);
                 continue;
             }
             // Check both DB status AND WebSocket connectivity.
@@ -153,6 +166,7 @@ public class TaskServiceImpl implements TaskService {
                 failedJob.setOutput("Agent is offline or not found");
                 failedJob.setFinishedAt(LocalDateTime.now());
                 jobRepository.save(failedJob);
+                taskCounterService.applyJobResult(task.getId(), 3);
                 continue;
             }
 
@@ -178,15 +192,17 @@ public class TaskServiceImpl implements TaskService {
                     capturedJob.setStatus(3); // failed
                     capturedJob.setOutput("Agent not connected via WebSocket, unable to dispatch");
                     capturedJob.setFinishedAt(LocalDateTime.now());
-                    jobRepository.save(capturedJob);
-                    updateTaskStatus(capturedJob.getTaskId());
+                    // afterCommit 里外层事务已提交、线程上只剩一个用完的 EntityManager：
+                    // 直接调仓库要么抛 "no transaction is in progress"（@Modifying），
+                    // 要么 save 了却不 flush 静默丢失。必须走 REQUIRES_NEW 的独立事务落库。
+                    taskCounterService.applyJobResultInNewTransaction(capturedJob, 3);
                 }
             });
             dispatchedCount++;
         }
 
-        // Update task status if no jobs were dispatched
-        updateTaskStatus(task.getId());
+        // 这里不再统一 recalibrate 任务状态：上面每个失败 job 都已原子累加计数，
+        // 最后一个失败 job 会把任务推到终态；有 job 正常派发时任务保持 running 等回传。
 
         // Register post-commit hook: dispatch WebSocket messages only AFTER
         // the transaction commits, so agent results can find the job rows in DB
@@ -254,16 +270,29 @@ public class TaskServiceImpl implements TaskService {
             return;
         }
 
-        job.setStatus(request.getStatus());
-        job.setExitCode(request.getExitCode());
-        job.setOutput(request.getOutput());
-        job.setFinishedAt(LocalDateTime.now());
-        jobRepository.save(job);
+        // 没有状态的结果没有意义：原子 UPDATE 需要明确的终态，否则无法决定计数归属，
+        // 直接忽略，让 job 保持非终态交给超时看门狗收尾。
+        if (request.getStatus() == null) {
+            log.warn("Ignoring result for job {} without status", job.getId());
+            return;
+        }
 
-        updateTaskStatus(job.getTaskId());
+        // 原子终态化 job：status < 2 是竞争条件，同一 job 被并发回传两次时只有第一个线程
+        // 能改写该行（返回 1），后到的线程按返回值放弃，避免同一 job 被重复计数。
+        int finalized = jobRepository.finalizeJobAtomically(
+                job.getId(), request.getStatus(), request.getExitCode(), request.getOutput(),
+                LocalDateTime.now());
+        if (finalized == 0) {
+            log.info("Ignoring result for job {} which was already finalized by a concurrent report",
+                    job.getId());
+            return;
+        }
+
+        taskCounterService.applyJobResult(job.getTaskId(), request.getStatus());
     }
 
     @Override
+    @Transactional
     public void appendJobLog(String jobId, String logLine, String agentId) {
         Job job = jobRepository.findById(jobId).orElse(null);
         if (job == null) return;
@@ -274,13 +303,14 @@ public class TaskServiceImpl implements TaskService {
             return;
         }
 
-        String currentOutput = job.getOutput();
-        if (currentOutput == null || currentOutput.isEmpty()) {
-            job.setOutput(logLine);
-        } else {
-            job.setOutput(currentOutput + "\n" + logLine);
+        // 原子追加：把"读旧 output → 拼接 → 写回"压成一条 UPDATE，由数据库行锁串行化，
+        // 同一 job 的并发日志行不会再互相覆盖丢失；超过 MAX_JOB_OUTPUT_LENGTH 时只保留尾部，
+        // 保证 MEDIUMTEXT 列不会被写溢出。@Transactional 保证与后续 WebSocket 推送边界一致。
+        int appended = jobRepository.appendOutputAtomically(jobId, logLine, NEWLINE, MAX_JOB_OUTPUT_LENGTH);
+        if (appended == 0) {
+            log.warn("Job {} disappeared while appending log, dropping line", jobId);
+            return;
         }
-        jobRepository.save(job);
 
         logWebSocketHandler.sendLog(job.getTaskId(), jobId, logLine);
     }
@@ -288,33 +318,6 @@ public class TaskServiceImpl implements TaskService {
     @Override
     public List<Job> getAgentJobs(String agentId) {
         return jobRepository.findByAgentIdOrderByCreatedAtDesc(agentId);
-    }
-
-    private void updateTaskStatus(String taskId) {
-        List<Job> jobs = jobRepository.findByTaskId(taskId);
-        long total = jobs.size();
-        long success = jobs.stream().filter(j -> j.getStatus() == 2).count();
-        long failed = jobs.stream().filter(j -> j.getStatus() == 3 || j.getStatus() == 4).count();
-        long completed = success + failed;
-
-        Task task = taskRepository.findById(taskId).orElse(null);
-        if (task == null) return;
-
-        task.setSuccessCount((int) success);
-        task.setFailedCount((int) failed);
-
-        if (completed == total) {
-            if (failed == 0) {
-                task.setStatus(2);
-            } else if (success == 0) {
-                task.setStatus(4);
-            } else {
-                task.setStatus(3);
-            }
-            task.setFinishedAt(LocalDateTime.now());
-        }
-
-        taskRepository.save(task);
     }
 
     @Override
@@ -345,7 +348,7 @@ public class TaskServiceImpl implements TaskService {
                 log.warn("Job {} on agent {} timed out (started={}, timeout={}s)",
                         job.getId(), job.getAgentId(), job.getStartedAt(), timeoutSeconds);
 
-                updateTaskStatus(job.getTaskId());
+                taskCounterService.applyJobResult(job.getTaskId(), 4);
             }
         }
 
@@ -369,6 +372,7 @@ public class TaskServiceImpl implements TaskService {
                     "[SYSTEM] " + reason);
             job.setFinishedAt(now);
             jobRepository.save(job);
+            taskCounterService.applyJobResult(job.getTaskId(), 3);
             affectedTaskIds.add(job.getTaskId());
             log.warn("Job {} failed due to agent {} disconnect", job.getId(), agentId);
         }
@@ -378,13 +382,12 @@ public class TaskServiceImpl implements TaskService {
             job.setOutput("[SYSTEM] " + reason);
             job.setFinishedAt(now);
             jobRepository.save(job);
+            taskCounterService.applyJobResult(job.getTaskId(), 3);
             affectedTaskIds.add(job.getTaskId());
             log.warn("Pending job {} failed due to agent {} disconnect", job.getId(), agentId);
         }
 
-        for (String taskId : affectedTaskIds) {
-            updateTaskStatus(taskId);
-        }
+        // 上面每个失败 job 都已原子累加计数，最后一个会把任务推到终态，无需再统一 recalibrate
 
         if (!affectedTaskIds.isEmpty()) {
             log.info("Agent {} disconnected: failed {} running + {} pending jobs across {} tasks",
