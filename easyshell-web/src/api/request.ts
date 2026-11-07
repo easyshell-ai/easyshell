@@ -56,20 +56,36 @@ request.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
+/**
+ * Auth endpoints (login/refresh) must never trigger the session-expiry redirect:
+ * they authenticate the request itself, so a 401/403/429 coming back from them is a
+ * business outcome the login page renders as a toast. Redirecting would reload the
+ * page and throw that toast (and the filled-in form) away.
+ */
+function isAuthRequest(url: unknown): boolean {
+  return typeof url === 'string' && url.includes('/auth/');
+}
+
 request.interceptors.response.use(
   (response) => response.data,
   (error) => {
     const status = error.response?.status;
-    if (status === 401) {
-      // Session really expired: drop the token and go back to the login screen.
+    const body = error.response?.data;
+    // Business failures arrive as a proper 4xx status together with the API envelope
+    // ({code, message, data}). Re-surface them as a normal response so callers can
+    // keep showing res.message, instead of every error collapsing into a generic
+    // "operation failed".
+    const hasEnvelope =
+      typeof body === 'object' && body !== null && (body.code !== undefined || body.data !== undefined);
+    if (status && status >= 400 && status < 500 && hasEnvelope) {
+      return Promise.resolve(body);
+    }
+    // A 401 without an envelope is not a business decision: it comes from the security
+    // filter chain (expired/missing token), i.e. the session really is dead. Only then
+    // drop the token and go back to the login screen.
+    if (status === 401 && !hasEnvelope && !isAuthRequest(error.config?.url)) {
       clearSession();
       window.location.href = '/login';
-    }
-    // Business failures arrive as a proper 4xx status together with the API envelope.
-    // Re-surface them as a normal response so callers can keep showing res.message,
-    // instead of every error collapsing into a generic "operation failed".
-    if (status && status >= 400 && status < 500 && error.response?.data?.code !== undefined) {
-      return Promise.resolve(error.response.data);
     }
     return Promise.reject(error);
   }

@@ -11,12 +11,21 @@ import CodeMirror from '@uiw/react-codemirror';
 import { StreamLanguage } from '@codemirror/language';
 import { shell } from '@codemirror/legacy-modes/mode/shell';
 import { createTask, getTaskList, getTaskDetail, submitTaskForApproval } from '../../api/task';
+import { getToken } from '../../api/request';
+import { buildTaskLogWsUrl } from '../../utils/ws';
 import { getScriptList, getScriptParameters } from '../../api/script';
 import { getHostList } from '../../api/host';
 import { getClusterList } from '../../api/cluster';
 import { getTagList } from '../../api/tag';
 import type { Task, TaskDetail, Script, Agent, Job, TaskCreateRequest, ClusterVO, TagVO, RiskAssessment } from '../../types';
 import { taskStatusMap, jobStatusMap } from '../../utils/status';
+
+/**
+ * Cap on the real-time log buffer: a long-running task can stream tens of thousands
+ * of lines, and an unbounded array grows browser memory until the tab dies. Only the
+ * tail is kept, which is also the only part the log pane ever shows.
+ */
+const MAX_TASK_LOG_LINES = 5000;
 
 const TaskPage: React.FC = () => {
   const { t } = useTranslation();
@@ -193,8 +202,9 @@ const TaskPage: React.FC = () => {
     setHasRealLogs(false);
     setWsStatus('idle');
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws/task/log/${taskId}`;
+    // Browsers cannot set headers on the WebSocket API, so the access token travels in the
+    // query string; the server validates it during the handshake (see utils/ws.ts).
+    const wsUrl = buildTaskLogWsUrl(taskId, getToken(), window.location);
     const ws = new WebSocket(wsUrl);
 
     ws.onopen = () => setWsStatus('connected');
@@ -203,10 +213,10 @@ const TaskPage: React.FC = () => {
         const data = JSON.parse(event.data);
         const line = `[${data.jobId?.slice(0, 8) || 'unknown'}] ${data.log}`;
         setHasRealLogs(true);
-        setLogs((prev) => [...prev, line]);
+        setLogs((prev) => [...prev, line].slice(-MAX_TASK_LOG_LINES));
       } catch {
         setHasRealLogs(true);
-        setLogs((prev) => [...prev, event.data]);
+        setLogs((prev) => [...prev, event.data].slice(-MAX_TASK_LOG_LINES));
       }
     };
     ws.onclose = () => setWsStatus('disconnected');
