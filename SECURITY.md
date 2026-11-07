@@ -2,25 +2,41 @@
 
 ## Supported Versions
 
-| Version | Supported          |
-|---------|--------------------|
-| 1.0.x   | :white_check_mark: |
-| < 1.0   | :x:                |
+Security fixes are released for the current minor series and the one immediately
+before it. Upgrade to a supported version before reporting a bug that may already
+be fixed.
+
+| Version | Supported          | Notes |
+|---------|--------------------|-------|
+| 1.1.x   | :white_check_mark: | Current series — security fixes are backported here |
+| 1.0.x   | :warning:          | Critical fixes only, until 1.2.0 ships |
+| < 1.0   | :x:                | No longer supported — please upgrade |
+
+The running version is shown in the bottom-left corner of the web UI and is served
+by `GET /api/v1/system/version`.
 
 ## Reporting a Vulnerability
 
 **Please do NOT open a public GitHub issue for security vulnerabilities.**
 
-If you discover a security vulnerability in EasyShell, please report it responsibly:
+Report privately through GitHub Security Advisories — the report is visible to
+maintainers only until it is published:
 
-- **Email**: [laolupaojiao@foxmail.com](mailto:laolupaojiao@foxmail.com)
-- **Subject**: `[SECURITY] EasyShell - Brief description`
+**[https://github.com/easyshell-ai/easyshell/security/advisories/new](https://github.com/easyshell-ai/easyshell/security/advisories/new)**
+
+> Prefer not to use GitHub? Open a **private** discussion thread on our
+> [Discord](https://discord.gg/akQqRgNB6t) and ask a maintainer for a private
+> channel. Do not post vulnerability details in public channels.
+
+- **Title**: `[SECURITY] EasyShell - Brief description`
+- **Language**: English or 简体中文
 
 ### What to Include
 
 - Description of the vulnerability
 - Steps to reproduce
-- Affected version(s)
+- Affected version(s) (see *Supported Versions* above)
+- Affected component (`easyshell-server` / `easyshell-web` / `easyshell-agent` / `easyshell-mcp`)
 - Potential impact
 - Suggested fix (if any)
 
@@ -32,6 +48,38 @@ If you discover a security vulnerability in EasyShell, please report it responsi
 | Initial assessment | Within 7 days |
 | Fix release (critical) | Within 14 days |
 | Fix release (non-critical) | Next scheduled release |
+
+### Coordinated Disclosure
+
+We follow coordinated disclosure with a **90-day disclosure window**: a
+vulnerability may be published once a fix is available, or 90 days after the
+report, whichever comes first. Reporters get an acknowledgment in the advisory and
+in the release notes (unless they prefer to remain anonymous). If you plan to
+publish earlier, please tell us first so we can warn users.
+
+## Security Hardening in 1.1.0
+
+Release 1.1.0 was a dedicated security-hardening release: a full scan of the
+server, web console, MCP server and agent (black-box against a running deployment
+plus white-box source review) was carried out and its findings remediated, with no
+functional regressions. Summary of what was addressed:
+
+- **Authentication & authorization** — WebSocket and agent endpoints now require
+  credentials, method-level authorization is enforced, and resource ownership is
+  verified.
+- **Secret management** — no hardcoded fallback secrets remain, secrets are
+  generated at deployment time, and refresh tokens are rotated, replay-detected
+  and revocable.
+- **Transport & headers** — restrictive security headers, CORS and origin
+  allowlists, DNS-rebinding protection, mandatory webhook signature verification.
+- **Input validation** — identifier format checks, path traversal and symlink
+  defences, SSRF redirect validation, bounded request sizes and pagination.
+- **Data protection** — authenticated encryption for stored credentials, minimal
+  environments for spawned shells, sanitised error messages.
+- **Regression tests** added for the authentication, risk-classification and
+  path-validation layers.
+
+See [`CHANGELOG.md`](./CHANGELOG.md) for the full 1.1.0 notes.
 
 ## Security Architecture
 
@@ -63,6 +111,19 @@ If you discover a security vulnerability in EasyShell, please report it responsi
 - Agent registration requires a valid server address and port
 - Script execution is sandboxed to the agent's host OS user permissions
 
+### MCP Server (`easyshell-mcp`)
+
+- The MCP server authenticates to the EasyShell API with `EASYSHELL_USER` /
+  `EASYSHELL_PASS`; every tool call runs through the same risk assessment,
+  approval workflow and audit logging as the web console.
+- The generated client config file is written with `0600` permissions because it
+  contains the EasyShell password.
+- The HTTP transport refuses to bind a non-loopback address without a bearer token
+  (`--token` / `MCP_AUTH_TOKEN`), validates the `Host` header against DNS
+  rebinding, restricts CORS to explicit origins (`--allowed-origin` /
+  `MCP_ALLOWED_ORIGINS`), and caps body size and concurrent sessions.
+- Prefer `MCP_PASSWORD` over `--pass`: command-line arguments are visible in `ps`.
+
 ## Best Practices for Deployment
 
 1. **Change default credentials** — Update `easyshell` / `easyshell@changeme` immediately after first login
@@ -82,6 +143,7 @@ The following are **in scope** for security reports:
 - Sensitive data exposure (credentials, API keys)
 - AI prompt injection leading to unauthorized operations
 - Agent impersonation or unauthorized registration
+- MCP server transport, authentication or credential-handling flaws
 
 The following are **out of scope**:
 
@@ -92,4 +154,6 @@ The following are **out of scope**:
 
 ## Acknowledgments
 
-We appreciate the security research community. Reporters of valid vulnerabilities will be credited in release notes (unless they prefer to remain anonymous).
+We appreciate the security research community. Reporters of valid vulnerabilities
+will be credited in release notes and in the published GitHub Security Advisory
+(unless they prefer to remain anonymous).

@@ -130,6 +130,17 @@ AI Script Workbench — это редактор с разделенной пан
   <img src="docs/images/security-controls.png" alt="Контроль безопасности — workflow согласования и журнал аудита" width="90%" />
 </p>
 
+### 8. MCP-сервер и AI-навыки
+
+> Позвольте AI-клиенту управлять инфраструктурой — с тем же движком оценки рисков, согласованиями и журналом аудита, что и в веб-консоли.
+
+EasyShell поставляется с двумя дополнительными компонентами, которые встраивают платформу в ваш AI-ассистент.
+
+- **`easyshell-mcp`** — сервер [Model Context Protocol](https://modelcontextprotocol.io), который предоставляет хосты, скрипты, задачи и проверки EasyShell как MCP **инструменты**, поэтому Claude Desktop, Claude Code, Cursor, Cherry Studio и другие MCP-клиенты могут управлять EasyShell напрямую. Публикуется в npm как [`@easyshell/mcp-server`](https://www.npmjs.com/package/@easyshell/mcp-server), целевой сервер задаётся тремя переменными `EASYSHELL_URL` / `EASYSHELL_USER` / `EASYSHELL_PASS`. Для локальных клиентов — `npx -y @easyshell/mcp-server` (stdio), для удалённого доступа — `npx -y @easyshell/mcp-server --port 3000` (SSE + Streamable HTTP; при привязке к не-loopback адресу `--token` обязателен). Всего 20 инструментов в 3 уровнях (core 6 / management 9 / advanced 5).
+- **`easyshell-skill`** — определение `SKILL.md`, которое объясняет ассистенту, **когда** и **как** использовать EasyShell (рабочие сценарии, каталог инструментов, модель безопасности). Устанавливается командой `npx mdskills install easyshell`; для OpenCode путь `.opencode/skills/easyshell/SKILL.md`, для Claude Code — `.claude/skills/easyshell/SKILL.md`.
+
+**Текущие границы:** `easyshell-mcp` — это **исходящий** мост: он делает EasyShell *вызываемым* из AI-клиента. Использование **внешних** MCP-серверов (Prometheus, Elasticsearch или вашего собственного) *внутри* платформы EasyShell находится в роадмапе и в 1.1.0 не реализовано. Обсуждение — в [issue #6](https://github.com/easyshell-ai/easyshell/issues/6). Полный список инструментов и примеры конфигурации — в [easyshell-mcp/README.md](./easyshell-mcp/README.md).
+
 ---
 
 ## Быстрый старт

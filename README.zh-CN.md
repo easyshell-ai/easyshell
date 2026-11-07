@@ -130,6 +130,129 @@ AI 对话界面允许你下达高层级的运维目标。AI 会将其拆解为�
   <img src="docs/images/security-controls.png" alt="安全控制 —— 审批流程与审计日志" width="90%" />
 </p>
 
+### 8. MCP 服务器与 AI 技能
+
+> 让 AI 客户端直接运维你的基础设施 —— 与 Web 控制台共用同一套风险引擎、审批流程与审计日志。
+
+EasyShell 提供两个配套组件，把平台能力装进你的 AI 助手：
+
+- **`easyshell-mcp`** —— 一个 [Model Context Protocol](https://modelcontextprotocol.io) 服务器，把 EasyShell 的主机、脚本、任务与巡检能力以 MCP **工具**形式暴露出来，让 Claude Desktop、Claude Code、Cursor、Cherry Studio 等 MCP 客户端可以直接驱动 EasyShell。
+- **`easyshell-skill`** —— 一份 `SKILL.md` 定义，告诉 AI 助手**何时**以及**如何**使用 EasyShell（核心工作流、完整工具目录、安全模型），适用于支持技能（skills）的助手。
+
+#### `easyshell-mcp` —— 把 EasyShell 变成 MCP 工具
+
+发布在 npm 上：[`@easyshell/mcp-server`](https://www.npmjs.com/package/@easyshell/mcp-server)，并已收录至 [MCP Registry](https://registry.modelcontextprotocol.io/servers/io.github.easyshell/mcp-server) 与 [Smithery](https://smithery.ai/server/@easyshell/mcp-server)。它通过 EasyShell REST API 通信，只需三个环境变量：
+
+| 变量 | 必填 | 说明 |
+|---|---|---|
+| `EASYSHELL_URL` | 是 | EasyShell 服务器 API 地址（例如 `http://localhost:18080`）。 |
+| `EASYSHELL_USER` | 是 | EasyShell 用户名。 |
+| `EASYSHELL_PASS` | 是 | EasyShell 密码。 |
+
+**工作流程：**
+1. **运行** —— `npx -y @easyshell/mcp-server`，Node.js `>=18` 即可，无需构建
+2. **连接** —— 用上面三个变量指向你的 EasyShell 服务器
+3. **认证** —— 它会登录 EasyShell API，并在后续所有工具调用中复用该会话
+4. **操作** —— AI 客户端调用 EasyShell 工具；风险分级、审批流程与审计日志依然全部生效
+
+**stdio（默认）—— Claude Desktop / Claude Code / Cursor / Cherry Studio**
+
+```json
+{
+  "mcpServers": {
+    "easyshell": {
+      "command": "npx",
+      "args": ["-y", "@easyshell/mcp-server"],
+      "env": {
+        "EASYSHELL_URL": "http://localhost:18080",
+        "EASYSHELL_USER": "easyshell",
+        "EASYSHELL_PASS": "easyshell@changeme"
+      }
+    }
+  }
+}
+```
+
+> 请替换为你自己的账号。采用零配置 Docker 部署时，初始管理员密码为随机生成，并只在服务端日志中打印一次（`docker logs easyshell-server | grep 'initial admin password'`）。
+
+不想手动改配置文件？自动安装器会识别 OpenCode、Cursor 或 Claude Desktop 并代为写入配置块 —— 由于文件包含密码，生成时会设置为 `0600` 权限：
+
+```bash
+MCP_PASSWORD='your-password' npx @easyshell/mcp-server --install
+# 可选：--url http://your-server:18080 --user easyshell
+```
+
+> 推荐使用 `MCP_PASSWORD` 而非 `--pass`：命令行参数会出现在 `ps` 输出中。
+
+**HTTP（SSE + Streamable HTTP）—— 远程或共享部署**
+
+```bash
+# 仅监听本机回环，无需令牌
+npx -y @easyshell/mcp-server --port 3000
+
+# 需要被其他机器访问时，必须提供 bearer 令牌
+MCP_AUTH_TOKEN='choose-a-strong-token' \
+  npx -y @easyshell/mcp-server --port 3000 --host 0.0.0.0 --allow-remote
+```
+
+| 端点 | 方法 | 协议 |
+|---|---|---|
+| `/mcp` | POST / GET / DELETE | Streamable HTTP (2025-03-26) |
+| `/sse` | GET | 旧版 SSE (2024-11-05) |
+| `/messages?sessionId=<id>` | POST | 旧版 SSE 消息处理 |
+| `/health` | GET | 健康检查 |
+
+支持 HTTP transport 的客户端指向 `http://<host>:3000/mcp`，并在请求头携带 `Authorization: Bearer <MCP_AUTH_TOKEN>`（具体配置字段名因客户端而异）：
+
+```json
+{
+  "mcpServers": {
+    "easyshell": {
+      "type": "http",
+      "url": "http://your-server:3000/mcp",
+      "headers": { "Authorization": "Bearer <MCP_AUTH_TOKEN>" }
+    }
+  }
+}
+```
+
+HTTP 模式会校验 `Host` 头以防御 DNS 重绑定攻击，CORS 仅放行 `--allowed-origin` 指定的来源，并对会话数与请求体大小做了上限限制。
+
+**工具能力 —— 3 个层级共 20 个工具**
+
+| 层级 | 工具 | 用途 |
+|---|---|---|
+| 核心层（6） | `list_hosts`、`get_host_detail`、`execute_script`、`get_task_detail`、`list_scripts`、`ai_chat` | 查找主机、执行脚本、读取结果、驱动 AI 编排 |
+| 管理层（9） | `list_recent_tasks`、`create_script`、`list_clusters`、`get_cluster_detail`、`get_dashboard_stats`、`get_host_metrics`、`list_scheduled_tasks`、`trigger_inspection`、`get_inspect_reports` | 日常运维、监控与定时巡检 |
+| 高级层（5） | `manage_tags`、`query_audit_logs`、`approve_task`、`send_notification`、`search_knowledge` | 治理能力：标签、审计、审批、通知、知识库 |
+
+> [`easyshell-mcp/README.md`](./easyshell-mcp/README.md) 的工具表标注为 19 个，而源码实际注册了 20 个 —— `get_cluster_detail` 遗漏在该表中。上表与 `easyshell-mcp/src/tools/` 保持一致。
+
+#### `easyshell-skill` —— 教会助手 EasyShell 的工作流
+
+`easyshell-skill/SKILL.md` 是一份与助手无关的技能定义（含 name、description、compatibility、tags 等元信息），告诉 AI 助手何时启用 EasyShell 以及应遵循哪些工作流 —— 在多机执行脚本、AI 任务编排、安排巡检、监控基础设施 —— 以及绝不可绕过的安全模型。
+
+手动安装或使用 `mdskills` CLI：
+
+```bash
+npx mdskills install easyshell
+```
+
+| 助手 | 技能路径 |
+|---|---|
+| OpenCode | `.opencode/skills/easyshell/SKILL.md` |
+| Claude Code | `.claude/skills/easyshell/SKILL.md` |
+| Cursor | `.cursor/skills/easyshell/SKILL.md` |
+| VS Code Copilot | `.github/skills/easyshell/SKILL.md` |
+
+该技能附带 `resources/tool-catalog.md`（每个工具的参数与示例）、`resources/deployment-guide.md` 与 `resources/troubleshooting.md`。技能可单独使用，但**技能 + MCP 服务器**才是预期组合：技能决定*做什么*，MCP 服务器提供*做事的工具*。
+
+#### 当前边界 —— 规划方案前请先读这段
+
+`easyshell-mcp` 是一个**出口**：它让 EasyShell 能被 AI 客户端*调用*。而在 EasyShell 平台**内部消费外部 MCP 服务器**（Prometheus、Elasticsearch 或你自建的 MCP）**仍在路线图上，1.1.0 尚未实现**。目前没有内置 MCP 客户端、没有外部工具注册表、也没有外部工具审批流，本节内容不应被理解为对此的任何承诺。
+
+如果这正是你的场景，欢迎到 [issue #6](https://github.com/easyshell-ai/easyshell/issues/6)（「mcp 和skill模块是怎么玩的呢？」）补充讨论，或提交功能建议。
+
 ---
 
 ## 快速开始
@@ -218,6 +341,8 @@ easyshell/
 ├── easyshell-server/           # 中央管理服务器 (Java / Spring Boot)
 ├── easyshell-agent/            # Agent 客户端 (Go, 单一二进制文件)
 ├── easyshell-web/              # Web 前端 (React + Ant Design)
+├── easyshell-mcp/              # MCP 服务器 —— 把 EasyShell 暴露为 AI 客户端工具 (npm: @easyshell/mcp-server)
+├── easyshell-skill/            # 面向 AI 助手的 SKILL.md 定义
 ├── docker-compose.yml          # 生产环境部署 (拉取预构建镜像)
 ├── docker-compose.build.yml    # 开发环境部署 (从源码本地构建)
 ├── Dockerfile.server           # Server + Agent 多阶段构建

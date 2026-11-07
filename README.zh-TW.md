@@ -130,6 +130,17 @@ AI 對話介面讓您能下達高層級的運維目標。AI 會將目標分解�
   <img src="docs/images/security-controls.png" alt="安全控制 —— 審批流程與稽核日誌" width="90%" />
 </p>
 
+### 8. MCP 伺服器與 AI 技能
+
+> 讓 AI 客戶端直接維運你的基礎設施 —— 與 Web 控制台共用同一套風險引擎、審批流程與稽核日誌。
+
+EasyShell 提供兩個配套元件，把平台能力放進你的 AI 助手：
+
+- **`easyshell-mcp`** —— 一個 [Model Context Protocol](https://modelcontextprotocol.io) 伺服器，把 EasyShell 的主機、腳本、任務與巡檢能力以 MCP **工具**形式開放，讓 Claude Desktop、Claude Code、Cursor、Cherry Studio 等 MCP 客戶端可以直接驅動 EasyShell。發布於 npm 的 [`@easyshell/mcp-server`](https://www.npmjs.com/package/@easyshell/mcp-server)，透過 `EASYSHELL_URL` / `EASYSHELL_USER` / `EASYSHELL_PASS` 三個環境變數指定目標。本地客戶端使用 `npx -y @easyshell/mcp-server`（stdio），遠端共用則使用 `npx -y @easyshell/mcp-server --port 3000`（SSE + Streamable HTTP，綁定非迴環位址時必須提供 `--token`）。工具共 3 層 20 個（核心 6／管理 9／進階 5）。
+- **`easyshell-skill`** —— 一份 `SKILL.md` 定義，告訴 AI 助手**何時**以及**如何**使用 EasyShell（工作流、工具目錄、安全模型）。使用 `npx mdskills install easyshell` 安裝，OpenCode 路徑為 `.opencode/skills/easyshell/SKILL.md`，Claude Code 為 `.claude/skills/easyshell/SKILL.md`。
+
+**目前邊界：** `easyshell-mcp` 是**出口**：它讓 EasyShell 能被 AI 客戶端*呼叫*。而在 EasyShell 平台*內部消費外部* MCP 伺服器（Prometheus、Elasticsearch 或你自建的 MCP）仍在路線圖上，1.1.0 尚未實作。相關討論見 [issue #6](https://github.com/easyshell-ai/easyshell/issues/6)。完整工具清單與設定範例請見 [easyshell-mcp/README.md](./easyshell-mcp/README.md)。
+
 ---
 
 ## 快速開始

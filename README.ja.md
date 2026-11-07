@@ -130,6 +130,17 @@ cron 式で点検タスクをスケジュールし、組み込みスクリプト
   <img src="docs/images/security-controls.png" alt="セキュリティ管理 — 承認ワークフローと監査ログ" width="90%" />
 </p>
 
+### 8. MCP サーバーと AI スキル
+
+> AI クライアントからインフラを直接操作 — Web コンソールと同じリスクエンジン、承認フロー、監査証跡で。
+
+EasyShell は、プラットフォームを AI アシスタントの内側に置くための 2 つのコンポーネントを同梱しています。
+
+- **`easyshell-mcp`** — [Model Context Protocol](https://modelcontextprotocol.io) サーバー。ホスト、スクリプト、タスク、点検を MCP **ツール**として公開するため、Claude Desktop、Claude Code、Cursor、Cherry Studio などの MCP クライアントから EasyShell を直接操作できます。npm の [`@easyshell/mcp-server`](https://www.npmjs.com/package/@easyshell/mcp-server) として公開されており、`EASYSHELL_URL` / `EASYSHELL_USER` / `EASYSHELL_PASS` の 3 つの環境変数で接続先を指定します。ローカルクライアントでは `npx -y @easyshell/mcp-server`（stdio）、リモート共有では `npx -y @easyshell/mcp-server --port 3000`（SSE + Streamable HTTP、非ループバック bind 時は `--token` が必須）を使います。ツールは 3 階層 20 個（コア 6 / 管理 9 /  advanced 5）です。
+- **`easyshell-skill`** — `SKILL.md` 定義。AI アシスタントに EasyShell を**いつ****どう**使うか（ワークフロー、ツールカタログ、セキュリティモデル）を教えます。`npx mdskills install easyshell` でインストールでき、OpenCode は `.opencode/skills/easyshell/SKILL.md`、Claude Code は `.claude/skills/easyshell/SKILL.md` に配置されます。
+
+**現在の境界:** `easyshell-mcp` は**外向き**のブリッジであり、EasyShell を AI クライアントから*呼べる*ようにするものです。Prometheus、Elasticsearch、自社 MCP など**外部** MCP サーバーを EasyShell プラットフォーム*内部で*利用する機能はロードマップ上にあり、1.1.0 では未実装です。詳細は [issue #6](https://github.com/easyshell-ai/easyshell/issues/6) で議論しています。完全なツール一覧と設定例は [easyshell-mcp/README.md](./easyshell-mcp/README.md) を参照してください。
+
 ---
 
 ## クイックスタート

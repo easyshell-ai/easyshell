@@ -1,0 +1,117 @@
+name: Bug 报告 / Bug Report
+description: 报告一个可复现的问题 / Report a reproducible problem
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提交前请搜索 [已有 issue](https://github.com/easyshell-ai/easyshell/issues)，避免重复。
+
+        安全问题**不要**在此提交，请参阅 [SECURITY.md](../../blob/main/SECURITY.md) 使用 GitHub Security Advisory 私密报告。
+
+        > Before filing, please search [existing issues](https://github.com/easyshell-ai/easyshell/issues).
+        > **Do not report security problems here** — see [SECURITY.md](../../blob/main/SECURITY.md) for private disclosure.
+
+  - type: input
+    id: version
+    attributes:
+      label: EasyShell 版本 / Version
+      description: |
+        查看方式（二选一）：
+        1. Web UI 左下角显示的版本号
+        2. 请求 `GET /api/v1/system/version`
+      placeholder: 例如 1.1.0 / e.g. 1.1.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: 部署方式 / Deployment method
+      options:
+        - Docker Compose（预构建镜像 / prebuilt images）
+        - Docker Compose（源码构建 / docker-compose.build.yml）
+        - 源码运行 / Run from source
+        - 其他 / Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: 受影响组件 / Affected component
+      multiple: true
+      options:
+        - easyshell-server
+        - easyshell-web
+        - easyshell-agent
+        - easyshell-mcp
+        - easyshell-skill
+        - 部署 / 文档 / Deployment & docs
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤 / Steps to reproduce
+      description: 尽量具体，包含使用的 AI 模型与配置（如相关）/ Be specific; include the AI model and settings if relevant.
+      placeholder: |
+        1. 部署 EasyShell 1.1.0（docker compose up -d）
+        2. 添加主机 ……
+        3. 执行脚本 ……
+        4. 出现 ……
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为 / Expected behavior
+      placeholder: 我期望 ……
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为 / Actual behavior
+      placeholder: 实际发生了 ……
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志与截图 / Logs & screenshots
+      description: |
+        **请先脱敏**：删除密码、API Key、Token、内网 IP、主机名等敏感信息后再粘贴。
+        服务端日志：`docker logs easyshell-server`
+      placeholder: |
+        （脱敏后的日志 / redacted logs）
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境信息 / Environment
+      description: 服务器 OS 与版本、Agent 版本、浏览器、Docker 版本等 / Host OS, agent version, browser, Docker version, etc.
+      placeholder: |
+        - OS: Ubuntu 24.04
+        - Docker: 27.3.1
+        - Browser: Chrome 131
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 提交前确认 / Before submitting
+      options:
+        - label: 我已搜索现有 issue，未发现重复 / I searched existing issues and found no duplicate
+          required: true
+        - label: 日志已脱敏，不含密码、Token 或内网地址 / Logs are redacted (no passwords, tokens or internal addresses)
+          required: true

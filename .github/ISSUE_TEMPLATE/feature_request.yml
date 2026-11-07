@@ -1,0 +1,73 @@
+name: 功能建议 / Feature Request
+description: 提出一个新功能或改进想法 / Suggest a new feature or improvement
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        建议先到 [Discord 讨论区](https://discord.gg/akQqRgNB6t) 聊聊想法，成形后再提交 issue。
+
+        > Discuss the idea in our [Discord](https://discord.gg/akQqRgNB6t) first, then open an issue once it is concrete.
+
+  - type: textarea
+    id: scenario
+    attributes:
+      label: 使用场景 / Scenario
+      description: 你在什么环境下、想完成什么事情？/ In what setup do you want to get something done?
+      placeholder: 我有 30 台生产主机，想 ……
+    validations:
+      required: true
+
+  - type: textarea
+    id: pain
+    attributes:
+      label: 当前痛点 / Current pain point
+      description: 现在是怎么做的？为什么不顺手？/ How do you do it today, and why is it awkward?
+      placeholder: 目前只能 ……
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 期望方案 / Proposed solution
+      description: 你期望的行为或界面；有替代方案也欢迎说明 / The behaviour or UI you expect; alternatives welcome.
+      placeholder: 希望增加 ……
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: 相关组件 / Related component
+      multiple: true
+      options:
+        - easyshell-server
+        - easyshell-web
+        - easyshell-agent
+        - easyshell-mcp
+        - easyshell-skill
+        - 部署 / 文档 / Deployment & docs
+    validations:
+      required: false
+
+  - type: dropdown
+    id: pr
+    attributes:
+      label: 是否愿意提交 PR / Would you submit a PR?
+      description: 愿意贡献代码会显著加快落地 / Offering a PR speeds things up a lot.
+      options:
+        - 愿意，我可以自己实现 / Yes, I can implement it
+        - 愿意，但需要指导 / Yes, with some guidance
+        - 暂时不方便 / Not right now
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: 补充信息 / Additional context
+      description: 截图、参考项目、日志等 / Screenshots, references, logs, etc.
+    validations:
+      required: false

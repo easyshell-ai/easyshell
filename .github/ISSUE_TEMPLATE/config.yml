@@ -1,0 +1,22 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 讨论区 / Discussions & support
+    url: https://github.com/easyshell-ai/easyshell/discussions
+    about: |
+      使用问题、想法交流、方案调研请先到这里讨论。
+      Usage questions, ideas and design talk — start here.
+  - name: Discord 社区 / Discord community
+    url: https://discord.gg/akQqRgNB6t
+    about: |
+      加入 Discord 与维护者及其他用户实时交流。
+      Chat with maintainers and other users in real time.
+  - name: 文档 / Documentation
+    url: https://docs.easyshell.ai
+    about: |
+      安装部署、配置参考与使用指南。
+      Installation, configuration reference and usage guides.
+  - name: 安全问题 / Security vulnerabilities
+    url: https://github.com/easyshell-ai/easyshell/security/advisories/new
+    about: |
+      安全漏洞请勿公开发布，请通过 GitHub Security Advisory 私密报告（见 SECURITY.md）。
+      Do not report security issues publicly — use a private GitHub Security Advisory (see SECURITY.md).
