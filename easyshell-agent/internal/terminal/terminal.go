@@ -40,8 +40,11 @@ type TerminalOutput struct {
 // OutputCallback is called when the PTY produces output
 type OutputCallback func(data []byte)
 
-// NewSession creates a new PTY terminal session
-func NewSession(id string, onOutput OutputCallback) (*Session, error) {
+// NewSession creates a new PTY terminal session. onExit, when non-nil, runs
+// after the shell process is gone so the owner can drop the session from its
+// registry instead of letting dead shells occupy a slot. It receives the
+// session so the caller never has to hand back a half-built value.
+func NewSession(id string, onOutput OutputCallback, onExit func(*Session)) (*Session, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	shell := getShell()
@@ -88,6 +91,9 @@ func NewSession(id string, onOutput OutputCallback) (*Session, error) {
 	go func() {
 		_ = cmd.Wait()
 		session.Close()
+		if onExit != nil {
+			onExit(session)
+		}
 	}()
 
 	_ = ctx // keep linter happy
@@ -164,6 +170,8 @@ func (m *Manager) Create(id string, onOutput OutputCallback) (*Session, error) {
 
 	session, err := NewSession(id, func(data []byte) {
 		onOutput(data)
+	}, func(ended *Session) {
+		m.unregister(id, ended)
 	})
 	if err != nil {
 		return nil, err
@@ -171,6 +179,19 @@ func (m *Manager) Create(id string, onOutput OutputCallback) (*Session, error) {
 
 	m.sessions[id] = session
 	return session, nil
+}
+
+// unregister drops a session whose shell exited on its own. Without this the
+// manager keeps counting dead shells against MaxSessions until the WebSocket
+// reconnects and CloseAll runs. The identity check keeps a dying predecessor
+// from evicting the session that later reused the same ID.
+func (m *Manager) unregister(id string, session *Session) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if current, ok := m.sessions[id]; ok && current == session {
+		delete(m.sessions, id)
+		slog.Info("terminal session unregistered", "session", id)
+	}
 }
 
 // Get returns an existing session

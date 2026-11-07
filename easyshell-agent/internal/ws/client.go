@@ -26,6 +26,8 @@ const (
 	readDeadline      = 90 * time.Second
 	maxMessageBytes   = 4 * 1024 * 1024
 	maxConcurrentJobs = 8
+	pingInterval      = 30 * time.Second
+	pingWriteTimeout  = 10 * time.Second
 )
 
 type Client struct {
@@ -134,30 +136,13 @@ func (c *Client) connectAndListen(ctx context.Context) error {
 	})
 	_ = conn.SetReadDeadline(time.Now().Add(readDeadline))
 
-	// Start ping goroutine to keep connection alive
+	// Start ping goroutine to keep connection alive. pingDone is closed when the
+	// read loop below returns, which is the only reliable signal that this
+	// connection is over: without it a flapping connection strands one goroutine
+	// per attempt, spinning on an empty ticker until the process shuts down.
 	pingDone := make(chan struct{})
-	go func() {
-		defer close(pingDone)
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				c.mu.Lock()
-				if c.conn != nil {
-					if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-						slog.Warn("ping send failed", "error", err)
-						c.mu.Unlock()
-						return
-					}
-					slog.Debug("ping sent")
-				}
-				c.mu.Unlock()
-			}
-		}
-	}()
+	defer close(pingDone)
+	go pingLoop(ctx, conn, pingDone, pingInterval)
 
 	for {
 		select {
@@ -169,6 +154,30 @@ func (c *Client) connectAndListen(ctx context.Context) error {
 				return fmt.Errorf("read: %w", err)
 			}
 			c.handleMessage(ctx, message)
+		}
+	}
+}
+
+// pingLoop heartbeats one connection every interval until its read loop
+// finishes (done), the context is cancelled, or a write fails. conn is the
+// connection owned by the caller, so a loop belonging to a dead connection can
+// never ping its successor. WriteControl is the one writer that is safe to run
+// concurrently with sendJSON, so the heartbeat needs no lock.
+func pingLoop(ctx context.Context, conn *websocket.Conn, done <-chan struct{}, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(pingWriteTimeout)); err != nil {
+				slog.Warn("ping send failed", "error", err)
+				return
+			}
+			slog.Debug("ping sent")
 		}
 	}
 }
