@@ -58,6 +58,19 @@ public class CommandRiskEngine {
     private static final Set<String> RISK_MODIFIERS_CURL = Set.of("-X", "--request", "-d", "--data", "--upload-file");
 
     /**
+     * find 的写操作选项：删除/执行/写文件。与 {@link #isReadOnlySimpleCommand} 的 find
+     * 分支保持同一份名单——解释器 -c 降级路径早已禁掉这些用法，但 classifyCommand 主
+     * 路径此前只查 sed/curl/wget 的风险修饰符，于是裸 {@code find ... -delete} 直接判
+     * LOW 免审（MF-1：直接执行比包一层 bash -c 更危险，后者被判 HIGH）。
+     */
+    private static final Set<String> FIND_WRITE_FLAGS =
+            Set.of("-delete", "-exec", "-execdir", "-fprint", "-fprintf", "-ok", "-okdir");
+
+    /** 词边界匹配：-delete 不得误伤 --help 或文件名参数里的 "deleted" */
+    private static final Pattern FIND_WRITE_FLAG_PATTERN = Pattern.compile(
+            "(?<![\\w-])(-delete|-exec|-execdir|-fprint|-fprintf|-ok|-okdir)(?![\\w-])");
+
+    /**
      * 参与“解释器 -c 只读降级”的 shell 解释器。python/perl/node 等属于代码执行而非命令组合，
      * 无法用命令白名单判定其副作用，一律不放行（保持 HIGH）。
      */
@@ -232,6 +245,13 @@ public class CommandRiskEngine {
         }
 
         String baseCommand = extractBaseCommand(trimmed);
+
+        // MF-1：find 的写操作（删除/执行/写文件）不是只读用法，排除出 LOW 白名单，
+        // 与解释器 -c 降级路径（isReadOnlySimpleCommand 的 find 分支）同一份名单。
+        // 只读用法（-print/-mtime/-newer/-iname/-type 等）不受影响。
+        if ("find".equals(baseCommand) && FIND_WRITE_FLAG_PATTERN.matcher(trimmed).find()) {
+            return RiskLevel.MEDIUM;
+        }
 
         for (String compound : getAllLowCompoundCommands()) {
             if (trimmed.startsWith(compound)) {
@@ -410,14 +430,15 @@ public class CommandRiskEngine {
         }
         List<String> args = tokens.subList(1, tokens.size());
         return switch (base) {
-            case "find" -> !containsAnyToken(args,
-                    "-delete", "-exec", "-execdir", "-fprint", "-fprintf", "-ok", "-okdir");
+            case "find" -> !containsAnyToken(args, FIND_WRITE_FLAGS.toArray(String[]::new));
             case "sed" -> containsToken(args, "-n") && !containsInPlaceFlag(args);
             case "awk", "gawk" -> isReadOnlyAwkProgram(segment);
             case "sort" -> !containsAnyToken(args, "-o", "--output", "--compress-program")
                     && !args.stream().anyMatch(a -> a.startsWith("--output="));
             case "top" -> containsToken(args, "-b");
             case "mount" -> args.isEmpty();
+            // hostname 带参数即修改主机名（与 date -s 同类的系统状态修改）
+            case "hostname" -> args.isEmpty();
             case "crontab" -> isReadOnlyCrontab(args);
             case "systemctl" -> isReadOnlySubcommand(args, "status", "is-active", "is-enabled");
             case "docker" -> isReadOnlySubcommand(args,
@@ -718,7 +739,27 @@ public class CommandRiskEngine {
         if ("wget".equals(baseCommand) && (command.contains("-O") || command.contains("--output-document"))) {
             return true;
         }
-        return false;
+        // 与 isReadOnlySimpleCommand（解释器 -c 降级路径）同口径的只读用法校验。
+        // 下列命令外表是信息采集，但带写参数时会改文件/改系统状态；主路径此前只查
+        // sed/curl/wget，导致同一用法直接执行判 LOW、包一层 bash -c 反而 HIGH
+        // （MF-1 的 find 写操作只是其中最重的一个，实测还发现了 awk system()/
+        // print > file、sort -o、date -s、ping -f、ip set、ifconfig up、
+        // env <cmd>、hostname <新名> 同类漏洞）。
+        List<String> tokens = tokenizeCommand(command);
+        List<String> args = tokens.size() > 1 ? tokens.subList(1, tokens.size()) : List.of();
+        return switch (baseCommand) {
+            // awk 程序里不允许 system()/getline 以及向文件或管道输出（与降级路径同一判定）
+            case "awk", "gawk" -> !isReadOnlyAwkProgram(command);
+            case "sort" -> containsAnyToken(args, "-o", "--output", "--compress-program")
+                    || args.stream().anyMatch(a -> a.startsWith("--output="));
+            case "date" -> hasShortFlagLetter(args, 's') || containsToken(args, "--set");
+            case "ping" -> hasShortFlagLetter(args, 'f');
+            case "ip" -> containsAnyToken(args, "set", "add", "del", "change", "replace", "flush");
+            case "ifconfig" -> containsAnyToken(args, "up", "down");
+            case "env" -> args.stream().anyMatch(a -> !a.startsWith("-"));
+            case "hostname" -> !args.isEmpty();
+            default -> false;
+        };
     }
 
     private boolean containsAny(String text, Set<String> tokens) {

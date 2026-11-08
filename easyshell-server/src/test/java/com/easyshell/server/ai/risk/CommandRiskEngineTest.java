@@ -614,4 +614,263 @@ class CommandRiskEngineTest {
             assertBlocked("bash -c \"env FOO=1 rm -rf /tmp/x\"");
         }
     }
+
+    @Nested
+    @DisplayName("find 写操作不再免审（MF-1：修复前全部误判 LOW）")
+    class FindWriteOperations {
+
+        private void assertMedium(String command) {
+            assertThat(engine.classifyCommand(command)).as(command).isEqualTo(RiskLevel.MEDIUM);
+            assertThat(engine.assessScript(command).getOverallRisk()).as(command).isEqualTo(RiskLevel.MEDIUM);
+            assertThat(engine.assessScript(command).isAutoExecutable()).as(command).isFalse();
+        }
+
+        private void assertLow(String command) {
+            assertThat(engine.assessScript(command).getOverallRisk()).as(command).isEqualTo(RiskLevel.LOW);
+            assertThat(engine.assessScript(command).isAutoExecutable()).as(command).isTrue();
+        }
+
+        @Test
+        void findDelete_isMedium() {
+            assertMedium("find /var/log -name '*.log' -mtime +7 -delete");
+        }
+
+        @Test
+        void findExec_isMedium() {
+            assertMedium("find /var/log -name '*.log' -exec rm -f {} \\;");
+        }
+
+        @Test
+        void findExecdir_isMedium() {
+            assertMedium("find /var/log -execdir rm -rf {} +");
+        }
+
+        @Test
+        void findOk_isMedium() {
+            assertMedium("find /var/log -name '*.log' -ok rm {} \\;");
+        }
+
+        @Test
+        void findOkdir_isMedium() {
+            assertMedium("find /var/log -name '*.log' -okdir rm {} \\;");
+        }
+
+        @Test
+        void findFprint_isMedium() {
+            assertMedium("find /var/log -fprint /tmp/list");
+        }
+
+        @Test
+        void findFprintf_isMedium() {
+            assertMedium("find /var/log -fprintf /tmp/list '%h\\n'");
+        }
+
+        @Test
+        void findDeleteBare_isMedium() {
+            assertMedium("find /var/log -delete");
+        }
+
+        @Test
+        void findDeleteCombinedWithPrint_isMedium() {
+            assertMedium("find / -name '*.log' -delete -print");
+        }
+
+        @Test
+        void findDeleteWithNewermt_isMedium() {
+            assertMedium("find / -newermt '2020-01-01' -delete");
+        }
+
+        @Test
+        void sudoFindDelete_isMedium() {
+            assertMedium("sudo find /var/log -name '*.log' -delete");
+        }
+
+        @Test
+        void findReadOnlyMtime_staysLow() {
+            assertLow("find /var/log -name '*.log' -mtime +7");
+        }
+
+        @Test
+        void findReadOnlyPrint_staysLow() {
+            assertLow("find /var/log -name '*.log' -mtime +7 -type f -print");
+        }
+
+        @Test
+        void findCoreTypeF_staysLow() {
+            assertLow("find / -name core -type f 2>/dev/null");
+        }
+
+        @Test
+        void findHelp_staysLow() {
+            assertLow("find --help");
+        }
+
+        @Test
+        void findInameDeletedPattern_staysLow() {
+            assertLow("find /x -iname '*deleted*'");
+        }
+
+        @Test
+        void findNewerMarker_staysLow() {
+            assertLow("find /var/log -newer /tmp/marker");
+        }
+
+        @Test
+        void readOnlyInterpreterDowngrade_stillWorks_noRegression() {
+            // 1.1.1 只读降级特性零位移：bash -c "df -h" 仍 LOW
+            assertLow("bash -c \"df -h\"");
+            assertLow("bash -c \"find /var/log -name '*.log' -type f -print\"");
+        }
+
+        @Test
+        void bashCFindDelete_staysHigh() {
+            assertThat(engine.assessScript("bash -c \"find /var/log -name '*.log' -delete\"")
+                    .getOverallRisk()).isEqualTo(RiskLevel.HIGH);
+        }
+    }
+
+    @Nested
+    @DisplayName("只读外表、写操作内核的同类漏洞（MF-1 延伸，修复前全部误判 LOW）")
+    class ReadOnlyLookingWriteOperations {
+
+        private void assertMedium(String command) {
+            assertThat(engine.classifyCommand(command)).as(command).isEqualTo(RiskLevel.MEDIUM);
+            assertThat(engine.assessScript(command).getOverallRisk()).as(command).isEqualTo(RiskLevel.MEDIUM);
+        }
+
+        private void assertLow(String command) {
+            assertThat(engine.assessScript(command).getOverallRisk()).as(command).isEqualTo(RiskLevel.LOW);
+        }
+
+        @Test
+        void awkSystemCall_isMedium() {
+            assertMedium("awk 'BEGIN{system(\"id\")}'");
+        }
+
+        @Test
+        void awkPrintToFile_isMedium() {
+            assertMedium("awk '{print > \"/tmp/o\"}' /etc/passwd");
+        }
+
+        @Test
+        void awkGetline_isMedium() {
+            assertMedium("awk 'BEGIN{getline x}'");
+        }
+
+        @Test
+        void awkPipeToCommand_isMedium() {
+            assertMedium("awk '{print $1 | \"sort\"}' /etc/passwd");
+        }
+
+        @Test
+        void awkReadOnly_staysLow() {
+            assertLow("awk '{print $1}' /etc/passwd");
+        }
+
+        @Test
+        void sortOutputFile_isMedium() {
+            assertMedium("sort -o /tmp/o /tmp/f");
+        }
+
+        @Test
+        void sortLongOutput_isMedium() {
+            assertMedium("sort --output=/tmp/o /tmp/f");
+        }
+
+        @Test
+        void sortReadOnly_staysLow() {
+            assertLow("sort /tmp/f");
+            assertLow("sort -rh");
+        }
+
+        @Test
+        void dateSet_isMedium() {
+            assertMedium("date -s '2026-01-01'");
+        }
+
+        @Test
+        void dateReadOnly_staysLow() {
+            assertLow("date");
+            assertLow("date -u");
+        }
+
+        @Test
+        void pingFlood_isMedium() {
+            assertMedium("ping -f 10.0.0.1");
+        }
+
+        @Test
+        void pingCount_staysLow() {
+            assertLow("ping -c 3 10.0.0.1");
+        }
+
+        @Test
+        void ipLinkSet_isMedium() {
+            assertMedium("ip link set eth0 up");
+        }
+
+        @Test
+        void ipAddrAdd_isMedium() {
+            assertMedium("ip addr add 10.0.0.1/24 dev eth0");
+        }
+
+        @Test
+        void ipReadOnly_staysLow() {
+            assertLow("ip addr");
+            assertLow("ip route");
+        }
+
+        @Test
+        void ifconfigUp_isMedium() {
+            assertMedium("ifconfig eth0 up");
+        }
+
+        @Test
+        void ifconfigReadOnly_staysLow() {
+            assertLow("ifconfig -a");
+        }
+
+        @Test
+        void envExecutesCommand_isMedium() {
+            assertMedium("env FOO=1 reboot");
+        }
+
+        @Test
+        void envReadOnly_staysLow() {
+            assertLow("env");
+            assertLow("env -i");
+        }
+
+        @Test
+        void hostnameSet_isMedium() {
+            assertMedium("hostname evil");
+        }
+
+        @Test
+        void hostnameReadOnly_staysLow() {
+            assertLow("hostname");
+        }
+
+        @Test
+        void bashCHostnameSet_isBlocked() {
+            // 解释器 -c 降级路径同步收窄：hostname 带参数不再是只读命令
+            RiskAssessment result = engine.assessScript("bash -c \"hostname evil\"");
+            assertThat(result.getOverallRisk().getLevel())
+                    .isGreaterThanOrEqualTo(RiskLevel.HIGH.getLevel());
+        }
+
+        @Test
+        void bashCHostnameReadOnly_staysLow() {
+            assertLow("bash -c \"hostname\"");
+        }
+
+        @Test
+        void everydayPipelines_stayLow_noRegression() {
+            assertLow("ps aux | awk '$8==\"Z\"' | head -10");
+            assertLow("du -sh /var/log/* | sort -rh | head -10");
+            assertLow("top -bn1 | head -5");
+            assertLow("sed -n '1,20p' /var/log/syslog");
+            assertLow("bash -c \"awk '{print $1}' /etc/passwd\"");
+        }
+    }
 }
