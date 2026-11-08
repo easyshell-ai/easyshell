@@ -27,6 +27,19 @@ public class TaskManageTool {
     private final AgentRepository agentRepository;
     private final SystemConfigRepository systemConfigRepository;
 
+    /**
+     * 当前会话的发起用户。与 ScriptExecuteTool/SoftwareDetectTool 同一套约定：
+     * 由 AiChatService / OrchestratorEngine 在工具回调前 setContext 注入。
+     * 缺失时必须拒绝创建——审计里不能把任务记到臆造的用户头上（B1-a）。
+     */
+    private Long currentUserId;
+    private String currentSourceIp;
+
+    public void setContext(Long userId, String sourceIp) {
+        this.currentUserId = userId;
+        this.currentSourceIp = sourceIp;
+    }
+
     /** Track poll attempts per taskId for exponential backoff: 5s, 10s, 20s, 40s... cap at 60s */
     private final ConcurrentHashMap<String, AtomicInteger> pollCounts = new ConcurrentHashMap<>();
     private static final long BASE_DELAY_MS = 5_000L;
@@ -34,7 +47,11 @@ public class TaskManageTool {
 
     @Tool(description = "查询最近的任务列表，包括任务名称、状态、创建时间等信息")
     public String listRecentTasks() {
-        List<Task> tasks = taskService.listTasks();
+        if (currentUserId == null) {
+            return "错误：无法确定当前用户身份，已拒绝查询。";
+        }
+        // 归属过滤：AI 只能看到当前用户自己的任务（与 /task/list 的所有权语义一致）
+        List<Task> tasks = taskService.listTasks(currentUserId);
         if (tasks.isEmpty()) {
             return "当前没有任何任务记录";
         }
@@ -58,8 +75,17 @@ public class TaskManageTool {
     @Tool(description = "查询指定任务的详细信息，包括任务下发到各主机的执行结果和输出")
     public String getTaskDetail(@ToolParam(description = "任务 ID") String taskId) {
         try {
+            if (currentUserId == null) {
+                return "错误：无法确定当前用户身份，已拒绝查询。";
+            }
             TaskDetailVO detail = taskService.getTaskDetail(taskId);
             Task task = detail.getTask();
+
+            // 归属校验（与 GET /task/{taskId} 的 requireAccess 同标准）：
+            // 只能查看自己创建的任务，防止遍历 taskId 读取他人作业输出。
+            if (!currentUserId.equals(task.getCreatedBy())) {
+                return "错误：无权查看该任务（任务 " + taskId + " 不属于当前用户）。";
+            }
 
             // Exponential backoff when task is still running or pending
             if (task.getStatus() != null && (task.getStatus() == 0 || task.getStatus() == 1)) {
@@ -114,6 +140,9 @@ public class TaskManageTool {
             @ToolParam(description = "任务名称") String name,
             @ToolParam(description = "超时秒数，默认 3600") int timeoutSeconds) {
         try {
+            if (currentUserId == null) {
+                return "错误：无法确定当前用户身份，已拒绝创建任务。";
+            }
             List<String> agentIdList = List.of(agentIds.split(",")).stream()
                     .map(String::trim).filter(s -> !s.isEmpty()).toList();
             if (agentIdList.isEmpty()) {
@@ -132,7 +161,7 @@ public class TaskManageTool {
             request.setAgentIds(agentIdList);
             request.setTimeoutSeconds(timeoutSeconds > 0 ? timeoutSeconds : 3600);
 
-            Task task = taskService.createAndDispatch(request, 1L);
+            Task task = taskService.createAndDispatch(request, currentUserId);
             return String.format("任务创建成功！任务ID: %s, 名称: %s, 目标主机数: %d",
                     task.getId(), task.getName(), request.getAgentIds().size());
         } catch (Exception e) {

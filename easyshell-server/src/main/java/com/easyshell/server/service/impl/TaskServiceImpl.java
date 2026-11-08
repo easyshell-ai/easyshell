@@ -1,5 +1,8 @@
 package com.easyshell.server.service.impl;
 
+import com.easyshell.server.ai.model.vo.RiskAssessment;
+import com.easyshell.server.ai.risk.CommandRiskEngine;
+import com.easyshell.server.ai.risk.RiskLevel;
 import com.easyshell.server.common.exception.BusinessException;
 import com.easyshell.server.common.utils.ScriptParameterUtils;
 import com.easyshell.server.model.dto.JobResultRequest;
@@ -56,6 +59,7 @@ public class TaskServiceImpl implements TaskService {
     private final AgentWebSocketHandler agentWebSocketHandler;
     private final ClusterService clusterService;
     private final TagService tagService;
+    private final CommandRiskEngine riskEngine;
 
     public TaskServiceImpl(
             TaskRepository taskRepository,
@@ -66,7 +70,8 @@ public class TaskServiceImpl implements TaskService {
             TaskLogWebSocketHandler logWebSocketHandler,
             @Lazy AgentWebSocketHandler agentWebSocketHandler,
             @Lazy ClusterService clusterService,
-            @Lazy TagService tagService) {
+            @Lazy TagService tagService,
+            CommandRiskEngine riskEngine) {
         this.taskRepository = taskRepository;
         this.jobRepository = jobRepository;
         this.scriptRepository = scriptRepository;
@@ -76,6 +81,7 @@ public class TaskServiceImpl implements TaskService {
         this.agentWebSocketHandler = agentWebSocketHandler;
         this.clusterService = clusterService;
         this.tagService = tagService;
+        this.riskEngine = riskEngine;
     }
 
     @Override
@@ -101,6 +107,20 @@ public class TaskServiceImpl implements TaskService {
                 throw new BusinessException(400, "Missing parameter values: " + String.join(", ", missing));
             }
             scriptContent = ScriptParameterUtils.substituteParameters(scriptContent, request.getParameters());
+        }
+
+        // 风险门禁下沉到唯一咽喉要道（B1-b）：无论调用方是 Controller、AI 工具、
+        // 定时巡检还是未来的工作流，只要没显式带上"上游已授权"标记，替换后的完整
+        // 脚本都要在这里过 CommandRiskEngine，非 LOW 一律拒绝派发。
+        // 与 TaskController 的事前校验使用同一引擎、同一份（替换后）脚本，结果一致，
+        // 已放行的 LOW 脚本二次校验不会行为变化（幂等）。
+        if (!request.isRiskCleared()) {
+            RiskAssessment risk = riskEngine.assessScript(scriptContent);
+            if (risk.getOverallRisk() != RiskLevel.LOW) {
+                log.warn("Blocked dispatch at chokepoint: risk={}, reason={}",
+                        risk.getOverallRisk(), risk.getExplanation());
+                throw new BusinessException(449, risk.getExplanation());
+            }
         }
 
         Set<String> resolvedAgentIds = new LinkedHashSet<>();
@@ -240,11 +260,26 @@ public class TaskServiceImpl implements TaskService {
     }
 
     @Override
+    public List<Task> listTasks(Long createdBy) {
+        return taskRepository.findByCreatedByOrderByCreatedAtDesc(createdBy);
+    }
+
+    @Override
     public Page<Task> listTasks(Integer status, Pageable pageable) {
         if (status != null) {
             return taskRepository.findByStatusOrderByCreatedAtDesc(status, pageable);
         }
         return taskRepository.findAllByOrderByCreatedAtDesc(pageable);
+    }
+
+    @Override
+    public Page<Task> listTasksByUser(Long createdBy, Pageable pageable) {
+        return taskRepository.findByCreatedByOrderByCreatedAtDesc(createdBy, pageable);
+    }
+
+    @Override
+    public Page<Task> listTasksByUser(Integer status, Long createdBy, Pageable pageable) {
+        return taskRepository.findByStatusAndCreatedByOrderByCreatedAtDesc(status, createdBy, pageable);
     }
 
     @Override

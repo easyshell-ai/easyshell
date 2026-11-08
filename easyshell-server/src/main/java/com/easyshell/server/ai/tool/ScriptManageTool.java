@@ -16,6 +16,16 @@ public class ScriptManageTool {
 
     private final ScriptService scriptService;
 
+    /**
+     * 当前会话的发起用户，由 AiChatService / OrchestratorEngine 在工具回调前注入。
+     * 缺失时拒绝创建：脚本库记录不能落到臆造的用户头上（B1-a）。
+     */
+    private Long currentUserId;
+
+    public void setContext(Long userId, String sourceIp) {
+        this.currentUserId = userId;
+    }
+
     @Tool(description = "查询脚本库中的所有脚本列表，包括名称、类型、描述等信息")
     public String listScripts() {
         List<Script> scripts = scriptService.findAll();
@@ -52,6 +62,9 @@ public class ScriptManageTool {
             @ToolParam(description = "脚本内容") String content,
             @ToolParam(description = "脚本描述") String description) {
         try {
+            if (currentUserId == null) {
+                return "错误：无法确定当前用户身份，已拒绝创建脚本。";
+            }
             ScriptRequest request = new ScriptRequest();
             request.setName(name);
             request.setContent(content);
@@ -59,7 +72,7 @@ public class ScriptManageTool {
             request.setScriptType("shell");
             request.setIsPublic(true);
 
-            Script script = scriptService.create(request, 1L);
+            Script script = scriptService.create(request, currentUserId);
             return String.format("脚本创建成功！ID: %d, 名称: %s", script.getId(), script.getName());
         } catch (Exception e) {
             return "创建脚本失败: " + e.getMessage();

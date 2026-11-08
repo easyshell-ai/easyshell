@@ -208,6 +208,8 @@ public class OrchestratorEngine {
 
             scriptExecuteTool.setContext(request.getUserId(), request.getSourceIp());
             softwareDetectTool.setContext(request.getUserId(), request.getSourceIp());
+            taskManageTool.setContext(request.getUserId(), request.getSourceIp());
+            scriptManageTool.setContext(request.getUserId(), request.getSourceIp());
 
             ChatModel chatModel = chatModelFactory.getChatModel(request.getProvider(), request.getModel());
 

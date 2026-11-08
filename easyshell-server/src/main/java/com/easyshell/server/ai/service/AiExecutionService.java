@@ -103,11 +103,14 @@ public class AiExecutionService {
         taskRepository.save(task);
 
         // Actually dispatch the task to agents
+        // riskCleared: 该脚本已经过人工审批（本方法的前置校验），咽喉要道的风险门禁
+        // 必须放行，否则审批通过的任务永远无法真正执行。
         TaskCreateRequest dispatchReq = new TaskCreateRequest();
         dispatchReq.setName(task.getName());
         dispatchReq.setScriptContent(task.getScriptContent());
         dispatchReq.setTimeoutSeconds(task.getTimeoutSeconds());
         dispatchReq.setAgentIds(parseAgentIds(task.getTargetAgentIds()));
+        dispatchReq.setRiskCleared(true);
 
         Task executedTask = taskService.createAndDispatch(dispatchReq, userId);
         log.info("Approved AI task {} -> dispatched as {} by user {}", taskId, executedTask.getId(), userId);

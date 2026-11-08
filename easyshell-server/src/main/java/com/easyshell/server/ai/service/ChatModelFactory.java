@@ -225,7 +225,7 @@ public class ChatModelFactory {
         headers.add("Editor-Version", "vscode/1.80.1");
         headers.add("Editor-Plugin-Version", "copilot.vim/1.16.0");
         headers.add("Copilot-Integration-Id", "vscode-chat");
-        headers.add("User-Agent", "EasyShell/1.1.1");
+        headers.add("User-Agent", "EasyShell/1.1.2");
         return headers;
     }
 

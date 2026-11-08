@@ -81,6 +81,41 @@ functional regressions. Summary of what was addressed:
 
 See [`CHANGELOG.md`](./CHANGELOG.md) for the full 1.1.0 notes.
 
+## Security Hardening in 1.1.2
+
+Release 1.1.2 is a security patch on top of 1.1.1. Three pre-existing defects
+were verified and fixed; no functional behaviour changed. Summary:
+
+- **WebSocket authorization** — the task-log and terminal WebSocket channels
+  authenticated the handshake but did not authorize the resource: any logged-in
+  user could subscribe to another user's task logs or open an interactive shell
+  on any host. The task-log channel now verifies task ownership (owner or
+  administrator, fail-closed on unknown tasks and lookup failures), and the
+  terminal channel is restricted to the `operator`/`admin`/`super_admin` roles.
+- **Task list authorization** — `GET /task/list` and `GET /task/page` returned
+  every user's tasks (script content included) to any authenticated user; they
+  now filter by owner for non-administrators, matching the detail endpoint.
+- **Auditability of AI-created work** — the AI task and script tools attributed
+  created records to a hardcoded user id; they now use the acting user from the
+  session context and refuse to act without one.
+- **Risk gate at the dispatch chokepoint** — the command risk assessment now
+  runs inside `TaskServiceImpl.createAndDispatch` (the single dispatch path) in
+  addition to the controller, so scheduled inspections, AI tools and any future
+  caller cannot bypass it. Upstream-authorized paths (human-approved tasks,
+  user-created scheduled tasks, the built-in detection script) carry an explicit
+  approval flag.
+
+### Known limitation (1.1.2)
+
+Job output is stored and streamed verbatim to the subscribers of that task: if a
+script you run prints secrets (for example `env`, `printenv` or reading a
+credentials file), the output is persisted in the job record and pushed over the
+task-log WebSocket to the task owner and administrators. Do not place secrets in
+scripts; treat script output as sensitive data and restrict who can create tasks
+accordingly. Redacting arbitrary output server-side is not feasible without
+corrupting legitimate results, so this is tracked as a known limitation rather
+than a silent filter.
+
 ## Security Architecture
 
 ### Authentication & Access Control

@@ -24,6 +24,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
@@ -160,18 +161,32 @@ public class TaskController {
     }
 
     @GetMapping("/list")
-    public R<List<Task>> list() {
-        return R.ok(taskService.listTasks());
+    public R<List<Task>> list(Authentication auth) {
+        // 归属过滤（B2）：管理员看全部，其余角色只能看自己创建的任务，
+        // 与 agentJobs / detail 端点的所有权语义保持一致。
+        if (isAdmin(auth)) {
+            return R.ok(taskService.listTasks());
+        }
+        return R.ok(taskService.listTasks((Long) auth.getPrincipal()));
     }
 
     @GetMapping("/page")
     public R<Page<Task>> page(
             @RequestParam(required = false) Integer status,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
+            @RequestParam(defaultValue = "20") int size,
+            Authentication auth) {
         int safePage = Math.max(page, 0);
         int safeSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
-        return R.ok(taskService.listTasks(status, PageRequest.of(safePage, safeSize)));
+        Pageable pageable = PageRequest.of(safePage, safeSize);
+        if (!isAdmin(auth)) {
+            Long userId = (Long) auth.getPrincipal();
+            Page<Task> tasks = status != null
+                    ? taskService.listTasksByUser(status, userId, pageable)
+                    : taskService.listTasksByUser(userId, pageable);
+            return R.ok(tasks);
+        }
+        return R.ok(taskService.listTasks(status, pageable));
     }
 
     @GetMapping("/{taskId}")
@@ -183,10 +198,7 @@ public class TaskController {
 
     @GetMapping("/agent/{agentId}/jobs")
     public R<List<Job>> agentJobs(@PathVariable String agentId, Authentication auth) {
-        boolean isAdmin = auth.getAuthorities().stream()
-                .anyMatch(a -> a.getAuthority().equals("ROLE_SUPER_ADMIN")
-                        || a.getAuthority().equals("ROLE_ADMIN"));
-        if (!isAdmin) {
+        if (!isAdmin(auth)) {
             // Non-administrators only see jobs belonging to their own tasks
             Long userId = (Long) auth.getPrincipal();
             List<Job> jobs = taskService.getAgentJobs(agentId).stream()
@@ -201,12 +213,14 @@ public class TaskController {
     }
 
     private void requireAccess(Authentication auth, Long createdBy) {
-        boolean isAdmin = auth.getAuthorities().stream()
-                .anyMatch(a -> a.getAuthority().equals("ROLE_SUPER_ADMIN")
-                        || a.getAuthority().equals("ROLE_ADMIN"));
-        Long userId = (Long) auth.getPrincipal();
-        if (!isAdmin && !userId.equals(createdBy)) {
+        if (!isAdmin(auth) && !((Long) auth.getPrincipal()).equals(createdBy)) {
             throw new BusinessException(403, "Not allowed to access this task");
         }
+    }
+
+    private boolean isAdmin(Authentication auth) {
+        return auth.getAuthorities().stream()
+                .anyMatch(a -> a.getAuthority().equals("ROLE_SUPER_ADMIN")
+                        || a.getAuthority().equals("ROLE_ADMIN"));
     }
 }

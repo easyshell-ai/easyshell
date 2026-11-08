@@ -12,12 +12,21 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 import java.io.IOException;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @Component
 public class TerminalWebSocketHandler extends TextWebSocketHandler {
+
+    /**
+     * 交互式 shell 是最高权限的交互操作，只放行具备操作角色的用户。
+     * viewer（只读角色）一律拒绝；角色缺失/未知同样拒绝（fail-closed）。
+     * agent 是全局资源、没有属主字段，无法按资源归属授权，只能用 RBAC 兜底。
+     */
+    private static final Set<String> TERMINAL_ALLOWED_ROLES =
+            Set.of("operator", "admin", "super_admin");
 
     private final AgentWebSocketHandler agentHandler;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -34,6 +43,14 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler {
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
         if (session.getAttributes().get(WebSocketAuthInterceptor.ATTR_USER_ID) == null) {
             log.warn("Terminal WebSocket without authenticated user, closing");
+            session.close(CloseStatus.POLICY_VIOLATION);
+            return;
+        }
+
+        // 认证不等于授权：登录用户还要有操作角色才能拿到主机 shell（B4 存量越权）。
+        String role = roleOf(session);
+        if (role == null || !TERMINAL_ALLOWED_ROLES.contains(role)) {
+            log.warn("Rejected terminal WebSocket: role {} is not allowed to open a host shell", role);
             session.close(CloseStatus.POLICY_VIOLATION);
             return;
         }
@@ -191,6 +208,11 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler {
     private void cleanup(String sessionId) {
         sessionMap.remove(sessionId);
         sessionToAgent.remove(sessionId);
+    }
+
+    private static String roleOf(WebSocketSession session) {
+        Object role = session.getAttributes().get(WebSocketAuthInterceptor.ATTR_ROLE);
+        return role != null ? role.toString() : null;
     }
 
     private String extractAgentId(WebSocketSession session) {

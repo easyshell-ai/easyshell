@@ -12,7 +12,7 @@ import java.util.Map;
 @RequestMapping("/api/v1/system/version")
 public class VersionController {
 
-    @Value("${easyshell.version:1.1.1}")
+    @Value("${easyshell.version:1.1.2}")
     private String version;
 
     @GetMapping

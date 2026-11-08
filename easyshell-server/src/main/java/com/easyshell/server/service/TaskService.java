@@ -18,7 +18,16 @@ public interface TaskService {
 
     List<Task> listTasks();
 
+    /** 归属过滤（B2）：只返回指定用户创建的任务。 */
+    List<Task> listTasks(Long createdBy);
+
     Page<Task> listTasks(Integer status, Pageable pageable);
+
+    /** 归属过滤（B2）：只返回指定用户创建的任务（分页）。 */
+    Page<Task> listTasksByUser(Long createdBy, Pageable pageable);
+
+    /** 归属过滤（B2）：只返回指定用户创建的指定状态任务（分页）。 */
+    Page<Task> listTasksByUser(Integer status, Long createdBy, Pageable pageable);
 
     /**
      * @param agentId the agent credential subject that submitted the result; must own the job.

@@ -1,4 +1,4 @@
-ARG VERSION=1.1.1
+ARG VERSION=1.1.2
 
 # ---- Stage 1: Build Go Agent binaries (always cross-compile both) ----
 FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS agent-builder
@@ -40,7 +40,7 @@ COPY scripts/init-secrets.sh scripts/server-entrypoint.sh scripts/
 RUN chmod 700 scripts/init-secrets.sh scripts/server-entrypoint.sh
 
 ARG VERSION
-ENV EASYSHELL_VERSION=${VERSION:-1.1.1} \
+ENV EASYSHELL_VERSION=${VERSION:-1.1.2} \
     MYSQL_HOST=easyshell-mysql \
     MYSQL_PORT=3306 \
     MYSQL_DATABASE=easyshell \

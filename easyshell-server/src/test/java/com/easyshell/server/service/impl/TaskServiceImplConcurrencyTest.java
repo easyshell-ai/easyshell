@@ -1,5 +1,8 @@
 package com.easyshell.server.service.impl;
 
+import com.easyshell.server.ai.model.vo.RiskAssessment;
+import com.easyshell.server.ai.risk.CommandRiskEngine;
+import com.easyshell.server.ai.risk.RiskLevel;
 import com.easyshell.server.model.dto.JobResultRequest;
 import com.easyshell.server.model.dto.TaskCreateRequest;
 import com.easyshell.server.model.entity.Agent;
@@ -40,6 +43,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 /**
@@ -84,6 +88,14 @@ class TaskServiceImplConcurrencyTest {
     @MockitoBean
     private TagService tagService;
 
+    /**
+     * 咽喉要道的风险门禁引擎（B1-b 下沉后 TaskServiceImpl 的新依赖）。
+     * 本测试关注计数/日志/派发的并发语义，脚本统一为 echo hi（LOW），
+     * 因此 mock 恒返回 LOW，不改变任何既有断言。
+     */
+    @MockitoBean
+    private CommandRiskEngine riskEngine;
+
     @Autowired
     private TaskServiceImpl taskService;
 
@@ -92,6 +104,8 @@ class TaskServiceImplConcurrencyTest {
         jobRepository.deleteAll();
         taskRepository.deleteAll();
         agentRepository.deleteAll();
+        lenient().when(riskEngine.assessScript(anyString()))
+                .thenReturn(RiskAssessment.of(RiskLevel.LOW, List.of()));
     }
 
     @Test

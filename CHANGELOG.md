@@ -6,6 +6,58 @@ web UI and is served by `GET /api/v1/system/version`.
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-11-08
+
+Security patch release. Three pre-existing authorization/auditability defects were
+verified against the 1.1.1 code base and fixed at their root cause, with regression
+tests that fail on the old code. No migration steps are required.
+
+### Security
+- **Server — WebSocket channels authenticated but did not authorize.** The task-log
+  channel (`/ws/task/log/{taskId}`) accepted any handshake with a valid user token
+  and never checked who owned the task, so any logged-in user could subscribe to
+  the live job logs of any other user's task (script output included). The
+  handshake now performs a resource-level ownership check — task owner or an
+  administrator role, anything else is closed with a policy-violation status and a
+  warning log; unknown task ids and lookup failures are denied (fail-closed), so
+  the channel no longer confirms whether a task id exists.
+- **Server — the terminal channel had the same gap.** `/ws/terminal/{agentId}`
+  opened an interactive host shell for any authenticated user. Hosts are shared
+  infrastructure without an owner field, so the channel is now gated by RBAC:
+  only `operator`, `admin` and `super_admin` may open a shell, `viewer` and
+  unknown/missing roles are rejected.
+- **Server — task list and page endpoints leaked every user's tasks.**
+  `GET /task/list` and `GET /task/page` returned all tasks regardless of owner,
+  including script content; the detail endpoint was already owner-checked. Both
+  list endpoints now filter by `createdBy` for non-administrators, matching the
+  existing detail/agent-jobs semantics (administrators still see everything).
+- **Server — the AI task tool attributed work to a phantom user.** The AI tool
+  that creates tasks hardcoded `userId = 1`, so every AI-created task was audited
+  as "user 1"; the AI script-library tool did the same. Both now take the acting
+  user from the session context (the same mechanism the script-execution tool
+  already used) and refuse to create anything when no user context is present.
+  The AI task tool's read paths (list/detail) are now scoped to the calling user
+  as well.
+- **Server — the command risk gate moved to the dispatch chokepoint.**
+  `TaskServiceImpl.createAndDispatch` is the single path every script execution
+  goes through, but it performed no risk check of its own: the check lived only
+  in the task controller, and the scheduled-inspection and AI-tool callers
+  bypassed it entirely. The (post-substitution) script is now assessed by
+  `CommandRiskEngine` inside `createAndDispatch` and anything above LOW is
+  rejected with 449 before any row is written. Paths that were authorized
+  upstream (a human-approved task, a user-created scheduled inspection, the
+  built-in read-only detection script) carry an explicit `riskCleared` flag;
+  every other caller — including future ones — is gated by default.
+  Controller-level behaviour is unchanged (LOW scripts still dispatch
+  immediately, and the second assessment of an already-approved script is
+  idempotent).
+
+### Documentation
+- `SECURITY.md` records the known limitation that job output produced by a
+  user's own script (for example a command that prints environment variables) is
+  stored and streamed back to that task's owner and administrators; secrets
+  should not be placed in scripts.
+
 ## [1.1.1] - 2026-11-07
 
 ### Fixed

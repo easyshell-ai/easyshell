@@ -165,6 +165,8 @@ public class AiChatService {
 
         scriptExecuteTool.setContext(userId, sourceIp);
         softwareDetectTool.setContext(userId, sourceIp);
+        taskManageTool.setContext(userId, sourceIp);
+        scriptManageTool.setContext(userId, sourceIp);
 
         final String sid;
         AiChatSession session;

@@ -134,6 +134,9 @@ public class AiSchedulerService {
             request.setScriptContent(script);
             request.setAgentIds(agentIds);
             request.setTimeoutSeconds(120);
+            // riskCleared: 定时任务是用户显式创建/启用并自己提供的脚本（含内置巡检
+            // 模板），属于上游已授权路径；门禁在咽喉要道默认拒绝未授权调用方。
+            request.setRiskCleared(true);
 
             runningReport = saveReport(scheduledTask, null, null, "running");
 

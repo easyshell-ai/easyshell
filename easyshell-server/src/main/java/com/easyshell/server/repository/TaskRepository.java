@@ -28,6 +28,14 @@ public interface TaskRepository extends JpaRepository<Task, String> {
 
     Page<Task> findByStatusOrderByCreatedAtDesc(Integer status, Pageable pageable);
 
+    /**
+     * 归属过滤的分页查询（B2）：非管理员用户只能看到自己创建的任务，
+     * 与 GET /task/{taskId} 的 requireAccess 语义保持一致。
+     */
+    Page<Task> findByCreatedByOrderByCreatedAtDesc(Long createdBy, Pageable pageable);
+
+    Page<Task> findByStatusAndCreatedByOrderByCreatedAtDesc(Integer status, Long createdBy, Pageable pageable);
+
     long countByCreatedAtAfter(LocalDateTime time);
 
     long countByStatusAndCreatedAtAfter(Integer status, LocalDateTime time);
