@@ -16,7 +16,7 @@ async function bootstrapSession(page: Page, theme: 'dark' | 'light'): Promise<vo
   await page.addInitScript((t) => {
     sessionStorage.setItem('token', 'stub-token');
     localStorage.setItem('locale', 'zh-CN');
-    localStorage.setItem('easyshell-theme', t);
+    localStorage.setItem('easyshell-theme-mode', t);
   }, theme);
   // 防误报：钉死 prefers-reduced-motion，避免运行环境（操作系统"减少动态效果"）泄漏进截图。
   // config 的 use 里没有这个键（1.49 的 UseOptions 不含 reducedMotion），只能在页面级 emulate。
@@ -51,8 +51,8 @@ export async function bootstrapApiOnly(page: Page, theme: 'dark' | 'light' = 'da
 
 /**
  * 完整 stub：会话 + HTTP API + WebSocket。
- * 主题键说明：当前版本 ThemeContext.tsx:4 用的是 `easyshell-theme`（值 'dark'/'light'）；
- * 设计文档 §8.2-W1 会把键名换成 `easyshell-theme-mode`，W1 落地时这里要同步改。
+ * 主题键说明：ThemeContext.tsx 用 `easyshell-theme-mode`（值 'dark'/'light'，设计文档 §8.2-W1
+ * 起替换旧键 `easyshell-theme`；旧键由 ThemeProvider 一次性迁移清除，不再读取）。
  */
 export async function bootstrap(page: Page, theme: 'dark' | 'light', hooks: BootstrapHooks = {}): Promise<void> {
   await bootstrapSession(page, theme);

@@ -1,12 +1,10 @@
 :root,
 [data-theme='dark'] {
   /* ─── Layout Dimensions ─── */
-  --sidebar-width: 240px;
-  --sidebar-collapsed-width: 80px;
   --header-height: 64px;
   --content-padding: 24px;
   --chat-sidebar-width: 280px;
-  
+
   /* ─── Responsive Breakpoints (for JS reference) ─── */
   --breakpoint-xs: 480px;
   --breakpoint-sm: 576px;
@@ -14,55 +12,34 @@
   --breakpoint-lg: 992px;
   --breakpoint-xl: 1200px;
   --breakpoint-xxl: 1600px;
-  
+
   /* ─── Calculated Heights ─── */
   --content-height: calc(100vh - var(--header-height));
   --content-inner-height: calc(100vh - var(--header-height) - var(--content-padding) * 2);
-  
-  /* ─── Colors ─── */
-  --bg-primary: #09090b;
-  --bg-secondary: #18181b;
-  --bg-card: #1c1c1f;
-  --bg-card-hover: #27272a;
-  --bg-header: #09090b;
-  --border-color: #27272a;
-  --border-color-light: #1f1f23;
-  --text-primary: #fafafa;
-  --text-secondary: #a1a1aa;
-  --text-tertiary: #71717a;
-  --accent-color: #2563eb;
-  --scrollbar-thumb: #3f3f46;
-  --scrollbar-thumb-hover: #52525b;
+
+  /* 颜色只有一套来源：--es-* 由 AntD 从 theme.token 派生（src/theme/themeConfig.ts，
+     index.html 的 <html class="es"> 让变量全局可用），本文件不再手写第二套颜色变量 */
   color-scheme: dark;
 }
 
 [data-theme='light'] {
-  --sidebar-width: 240px;
-  --sidebar-collapsed-width: 80px;
+  /* ─── Layout Dimensions ─── */
   --header-height: 64px;
   --content-padding: 24px;
   --chat-sidebar-width: 280px;
+
+  /* ─── Responsive Breakpoints (for JS reference) ─── */
   --breakpoint-xs: 480px;
   --breakpoint-sm: 576px;
   --breakpoint-md: 768px;
   --breakpoint-lg: 992px;
   --breakpoint-xl: 1200px;
   --breakpoint-xxl: 1600px;
+
+  /* ─── Calculated Heights ─── */
   --content-height: calc(100vh - var(--header-height));
   --content-inner-height: calc(100vh - var(--header-height) - var(--content-padding) * 2);
-  --bg-primary: #fafafa;
-  --bg-secondary: #ffffff;
-  --bg-card: #ffffff;
-  --bg-card-hover: #f4f4f5;
-  --bg-header: #ffffff;
-  --border-color: #e4e4e7;
-  --border-color-light: #f4f4f5;
-  --text-primary: #09090b;
-  --text-secondary: #71717a;
-  --text-tertiary: #a1a1aa;
-  --accent-color: #2563eb;
-  --scrollbar-thumb: rgba(0, 0, 0, 0.12);
-  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.2);
+
   color-scheme: light;
 }
 
@@ -80,13 +57,12 @@ body,
 }
 
 body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
-    'Helvetica Neue', Arial, 'Noto Sans', sans-serif, 'Apple Color Emoji',
-    'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  font-family: var(--es-font-family), 'Apple Color Emoji', 'Segoe UI Emoji',
+    'Segoe UI Symbol', 'Noto Color Emoji';
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background: var(--bg-primary);
-  color: var(--text-primary);
+  background: var(--es-color-bg-layout);
+  color: var(--es-color-text);
 }
 
 /* Custom Scrollbar */
@@ -98,15 +74,15 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--scrollbar-thumb);
+  background: var(--es-color-text-quaternary);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--scrollbar-thumb-hover);
+  background: var(--es-color-text-tertiary);
 }
 
 :focus-visible {
-  outline: 2px solid var(--accent-color);
+  outline: 2px solid var(--es-color-primary);
   outline-offset: 2px;
 }
 
@@ -142,13 +118,12 @@ body {
 }
 
 /* ─── Table refinement ─── */
-.ant-table-wrapper .ant-table {
-  border-radius: 12px !important;
+/* 表头圆角由 Table.headerBorderRadius:10 提供（§4.10.1 :146，原 important 声明已删） */
+.ant-table-wrapper .ant-table-thead > tr > th {
+  font-weight: 500;
 }
 .ant-table-thead > tr > th,
 .ant-table-thead > tr > td {
-  font-weight: 600 !important;
-  font-size: 12px !important;
   text-transform: uppercase;
   letter-spacing: 0.4px;
 }
@@ -162,8 +137,9 @@ body {
 }
 
 /* ─── Pro Table toolbar refinement ─── */
-.ant-pro-table-list-toolbar {
-  padding: 16px 0 !important;
+/* 0,2,0 特异性稳定胜过 pro-components 的 0,1,0（§4.10.1 :166，原 important 声明已删） */
+.ant-pro-table .ant-pro-table-list-toolbar {
+  padding: 16px 0;
 }
 
 /* ─── Sidebar menu font weights ─── */
@@ -177,13 +153,14 @@ body {
 
 /* ─── Selection highlight ─── */
 ::selection {
-  background: rgba(37, 99, 235, 0.2);
+  background: var(--es-color-primary-bg-hover);
   color: inherit;
 }
 
 /* ─── MainLayout Sidebar Fix ─── */
+/* AntD 6 的 layout/style 对 .ant-layout-sider 不设 position，普通声明即生效（§4.10.1 :186） */
 .main-layout-sider {
-  position: sticky !important;
+  position: sticky;
   top: 0;
   height: 100vh;
   display: flex;
@@ -314,7 +291,7 @@ body {
 
 /* Make text selection visible on both white assistant and colored user message bubbles */
 .ai-chat-messages ::selection {
-  background: rgba(37, 99, 235, 0.3);
+  background: var(--es-color-primary-bg-hover);
   color: inherit;
 }
 
@@ -331,7 +308,7 @@ body {
   left: 0;
   right: 0;
   height: 1px;
-  background: linear-gradient(90deg, transparent, var(--accent-color), transparent);
+  background: linear-gradient(90deg, transparent, var(--es-color-primary), transparent);
   opacity: 0.3;
   z-index: 1;
 }
@@ -344,12 +321,12 @@ body {
 .ai-chat-empty-icon {
   animation: breathe 3s ease-in-out infinite;
   display: inline-block;
-  color: var(--accent-color);
+  color: var(--es-color-primary);
 }
 
 @keyframes breathe {
   0% { transform: scale(1); opacity: 0.8; }
-  50% { transform: scale(1.05); opacity: 1; filter: drop-shadow(0 0 12px rgba(37, 99, 235, 0.4)); }
+  50% { transform: scale(1.05); opacity: 1; filter: drop-shadow(0 0 12px rgba(94, 106, 210, 0.4)); }
   100% { transform: scale(1); opacity: 0.8; }
 }
 
@@ -367,7 +344,6 @@ body {
 }
 .suggested-prompt-card:hover {
   transform: scale(1.02);
-  border-left-width: 4px !important;
 }
 
 .typing-dots {
@@ -380,7 +356,7 @@ body {
 .typing-dots span {
   width: 6px;
   height: 6px;
-  background-color: var(--text-secondary);
+  background-color: var(--es-color-text-secondary);
   border-radius: 50%;
   animation: typingBounce 1.4s infinite ease-in-out both;
 }
@@ -494,28 +470,14 @@ body {
   }
 }
 
-/* ─── Responsive Card Styles ─── */
-@media (max-width: 768px) {
-  .ant-card {
-    border-radius: 8px !important;
-  }
-  
-  .ant-card-body {
-    padding: 12px !important;
-  }
-}
-
 /* ─── Responsive Modal Styles ─── */
+/* .ant-modal 的 max-width/margin 由 AntD 6 自带媒体查询提供（§4.10.1 :511/:512）；
+   卡片圆角与内边距不再随断点降档，统一由全局 borderRadiusLG:10 / Card.bodyPadding 提供（:500/:504） */
 @media (max-width: 768px) {
-  .ant-modal {
-    max-width: calc(100vw - 32px) !important;
-    margin: 16px auto !important;
-  }
-  
   .ant-modal-content {
     padding: 16px !important;
   }
-  
+
   .ant-drawer-content-wrapper {
     max-width: 100vw !important;
   }
@@ -524,7 +486,6 @@ body {
 /* ─── Responsive: Tablet ─── */
 @media (min-width: 769px) and (max-width: 992px) {
   :root {
-    --sidebar-width: 200px;
     --chat-sidebar-width: 240px;
   }
 }

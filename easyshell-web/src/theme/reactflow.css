@@ -1,0 +1,26 @@
+/* src/theme/reactflow.css（新建）—— 唯一允许出现 --xy-* 的地方（设计文档 §7.1）。
+ * @xyflow/react 没有 theme object，靠 --xy-* CSS 变量 + colorMode 属性（内部加 .react-flow.dark class）。
+ * 变量值全部派生自 --es-*（AntD cssVar 同源），画布组件必须传 colorMode="dark" 才会命中本表。 */
+.react-flow.dark {
+  --xy-background-color: var(--es-color-bg-layout);
+  --xy-background-pattern-color: var(--es-color-border);
+  --xy-node-background-color: var(--es-color-bg-container);
+  --xy-node-color: var(--es-color-text);
+  --xy-node-border: 1px solid var(--es-color-border);
+  --xy-node-border-radius: 8px;
+  --xy-node-boxshadow-selected: 0 0 0 3px rgba(94, 106, 210, 0.2);
+  --xy-node-boxshadow-hover: 0 0 0 1px var(--es-color-border-secondary);
+  --xy-edge-stroke: var(--es-color-border);
+  --xy-edge-stroke-selected: var(--es-color-primary);
+  --xy-edge-stroke-width: 1.5;
+  --xy-connectionline-stroke: var(--es-color-primary);
+  --xy-edge-label-background-color: var(--es-color-bg-spotlight);
+  --xy-edge-label-color: var(--es-color-text);
+  --xy-controls-button-background-color: var(--es-color-bg-elevated);
+  --xy-controls-button-color: var(--es-color-text-secondary);
+  --xy-controls-button-border-color: var(--es-color-border);
+  --xy-minimap-background-color: var(--es-color-bg-elevated);
+  --xy-minimap-mask-background-color: rgba(7, 8, 10, 0.7);
+  --xy-minimap-node-background-color: var(--es-color-border);
+  --xy-attribution-background-color: transparent;
+}

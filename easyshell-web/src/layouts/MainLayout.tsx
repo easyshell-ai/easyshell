@@ -7,6 +7,7 @@ import {
   DesktopOutlined,
   CodeOutlined,
   PlayCircleOutlined,
+  ReloadOutlined,
   ClusterOutlined,
   AuditOutlined,
   MenuFoldOutlined,
@@ -74,7 +75,7 @@ const MainLayout: React.FC = () => {
     setPrevPathname(location.pathname);
     setOpenKeys(getOpenKeys(location.pathname));
   }
-  const { isDark, toggleTheme } = useTheme();
+  const { isDark, toggleTheme, resetTheme } = useTheme();
   const { token } = theme.useToken();
   const { t, i18n } = useTranslation();
   const { isMobile } = useResponsive();
@@ -211,6 +212,12 @@ const MainLayout: React.FC = () => {
 
   const userMenuItems: MenuProps['items'] = useMemo(() => [
     {
+      key: 'reset-theme',
+      icon: <ReloadOutlined />,
+      label: t('header.reset_theme_default', i18n.language === 'zh-CN' ? '重置为默认主题' : 'Reset to default theme'),
+      onClick: resetTheme,
+    },
+    {
       key: 'logout',
       icon: <LogoutOutlined />,
       label: t('header.logout'),
@@ -219,7 +226,7 @@ const MainLayout: React.FC = () => {
         navigate('/login');
       },
     },
-  ], [t, navigate]);
+  ], [t, navigate, resetTheme, i18n.language]);
 
   const accentGlow = isDark
     ? `0 0 80px ${token.colorPrimary}15, 0 0 160px ${token.colorPrimary}08`
