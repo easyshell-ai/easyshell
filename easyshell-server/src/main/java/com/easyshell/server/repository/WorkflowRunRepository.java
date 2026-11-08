@@ -112,4 +112,29 @@ public interface WorkflowRunRepository extends JpaRepository<WorkflowRun, String
                              @Param("currentNodes") String currentNodes,
                              @Param("variablesJson") String variablesJson,
                              @Param("variablesTruncated") boolean variablesTruncated);
+
+    /**
+     * 启动：pending/queued -> running 并写入 startedAt（触发端点提交 drive 前的状态迁移）。
+     *
+     * <p>带状态条件：与取消/看门狗的终态写互斥——返回 0 行说明 run 已被取消或已终态，
+     * 调用方不得再提交 drive。</p>
+     *
+     * @return 1 = 已启动；0 = run 不存在或已不是 pending/queued
+     */
+    @Modifying(flushAutomatically = true)
+    @Query("update WorkflowRun r set r.status = 'running', r.startedAt = :startedAt, " +
+            "r.heartbeatAt = :startedAt, r.ownerInstance = :ownerInstance " +
+            "where r.id = :id and r.status in ('pending', 'queued')")
+    int startAtomically(@Param("id") String runId,
+                        @Param("startedAt") LocalDateTime startedAt,
+                        @Param("ownerInstance") String ownerInstance);
+
+    /**
+     * 背压①：全局并发满时把刚建的 run 置 queued（§3.9），由 WorkflowPendingWakeupScanner 泵回。
+     *
+     * @return 1 = 已入队；0 = run 不存在或已不是 pending
+     */
+    @Modifying(flushAutomatically = true)
+    @Query("update WorkflowRun r set r.status = 'queued' where r.id = :id and r.status = 'pending'")
+    int queueIfPending(@Param("id") String runId);
 }

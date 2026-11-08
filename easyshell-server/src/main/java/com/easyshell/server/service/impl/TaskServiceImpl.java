@@ -303,11 +303,13 @@ public class TaskServiceImpl implements TaskService {
 
     /**
      * 证据校验：HUMAN_APPROVED 的证据是审批通过的任务行（且脚本一致，换脚本不认）；
-     * 其余授权值交给注册的 {@link DispatchEvidenceVerifier}，没有校验器一律 fail-closed。
+     * 工作流侧的同名授权证据是 {@code workflow_approval:<runId>:<id>}（§6.3.3），
+     * 由注册的 {@link DispatchEvidenceVerifier} 校验；其余授权值交给校验器，
+     * 没有校验器一律 fail-closed。
      */
     private String verifyDispatchEvidence(DispatchAuthority authority, String evidenceRef,
                                           String scriptContent, Long userId) {
-        if (authority == DispatchAuthority.HUMAN_APPROVED) {
+        if (authority == DispatchAuthority.HUMAN_APPROVED && !isWorkflowEvidence(evidenceRef)) {
             if (evidenceRef == null || evidenceRef.isBlank()) {
                 return null;
             }
@@ -323,6 +325,11 @@ public class TaskServiceImpl implements TaskService {
             }
         }
         return null;
+    }
+
+    /** 工作流授权证据前缀：{@code workflow_approval:<runId>:<approvalId>}（§6.3.3） */
+    private static boolean isWorkflowEvidence(String evidenceRef) {
+        return evidenceRef != null && evidenceRef.startsWith("workflow_approval:");
     }
 
     @Override

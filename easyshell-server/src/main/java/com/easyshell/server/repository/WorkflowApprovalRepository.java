@@ -57,4 +57,17 @@ public interface WorkflowApprovalRepository extends JpaRepository<WorkflowApprov
     @Modifying(flushAutomatically = true)
     @Query("update WorkflowApproval a set a.status = 'cancelled' where a.runId = :runId and a.status = 'pending'")
     int cancelPendingByRunId(@Param("runId") String runId);
+
+    /**
+     * 审批超时（§3.10 四级超时之审批级）：expires_at 到点由 WorkflowWatchdog 置 timeout。
+     *
+     * <p>与 {@link #decideIfPending} 同样带 version 乐观锁，返回 0 行 = 已被人工决策
+     * （看门狗与审批端点的竞态由此确定收敛：先到者赢，后到者放弃）。</p>
+     *
+     * @return 1 = 已置 timeout；0 = 非 pending 或版本不匹配
+     */
+    @Modifying(flushAutomatically = true)
+    @Query("update WorkflowApproval a set a.status = 'timeout' " +
+            "where a.id = :id and a.status = 'pending' and a.version = :expectedVersion")
+    int expireIfPending(@Param("id") Long approvalId, @Param("expectedVersion") int expectedVersion);
 }

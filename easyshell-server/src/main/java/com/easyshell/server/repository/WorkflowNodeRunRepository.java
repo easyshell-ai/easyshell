@@ -73,4 +73,53 @@ public interface WorkflowNodeRunRepository extends JpaRepository<WorkflowNodeRun
     @Query("update WorkflowNodeRun n set n.status = 'cancelled', n.errorMessage = :reason " +
             "where n.runId = :runId and n.status in ('pending', 'waiting')")
     int cancelUnfinishedNodes(@Param("runId") String runId, @Param("reason") String reason);
+
+    /**
+     * 看门狗：按状态扫 attempt 行（僵尸/超时 attempt 的兜底判定）。
+     */
+    List<WorkflowNodeRun> findByStatus(String status);
+
+    /**
+     * finishAttempt（§3.2.2 第二类事务边界）：attempt 行的终态写入。
+     *
+     * <p>{@code status = 'running'} 是竞争条件：orphan 线程（节点超时后仍在跑的旧执行体）
+     * 或重复回传晚到时，只能有第一个线程把 attempt 收尾，后到的按返回值放弃——
+     * 与 {@code JobRepository.finalizeJobAtomically} 同一套路，保证同一 attempt 不会被
+     * 终态化两次。</p>
+     *
+     * @return 1 = 终态已写入；0 = 行不存在或已不是 running
+     */
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("update WorkflowNodeRun n set n.status = :status, n.outputJson = :outputJson, " +
+            "n.outputSha256 = :outputSha256, n.previewSha256 = :previewSha256, n.rawParams = :rawParams, " +
+            "n.artifactIds = :artifactIds, n.errorMessage = :errorMessage, " +
+            "n.warningMessage = :warningMessage, n.agentVersions = :agentVersions, n.taskId = :taskId, " +
+            "n.approvalId = :approvalId, n.cancelDelivered = :cancelDelivered, " +
+            "n.finishedAt = :finishedAt, n.durationMs = :durationMs " +
+            "where n.id = :id and n.status = 'running'")
+    int finishAttemptAtomically(@Param("id") String nodeRunId,
+                                @Param("status") String status,
+                                @Param("outputJson") String outputJson,
+                                @Param("outputSha256") String outputSha256,
+                                @Param("previewSha256") String previewSha256,
+                                @Param("rawParams") String rawParams,
+                                @Param("artifactIds") String artifactIds,
+                                @Param("errorMessage") String errorMessage,
+                                @Param("warningMessage") String warningMessage,
+                                @Param("agentVersions") String agentVersions,
+                                @Param("taskId") String taskId,
+                                @Param("approvalId") Long approvalId,
+                                @Param("cancelDelivered") boolean cancelDelivered,
+                                @Param("finishedAt") LocalDateTime finishedAt,
+                                @Param("durationMs") Long durationMs);
+
+    /**
+     * 挂起（§3.8）：attempt 行 running -> waiting，回填 approvalId。
+     *
+     * @return 1 = 已挂起；0 = 行不存在或已不是 running（被取消/超时抢先）
+     */
+    @Modifying(flushAutomatically = true)
+    @Query("update WorkflowNodeRun n set n.status = 'waiting', n.approvalId = :approvalId " +
+            "where n.id = :id and n.status = 'running'")
+    int suspendAttemptAtomically(@Param("id") String nodeRunId, @Param("approvalId") Long approvalId);
 }
