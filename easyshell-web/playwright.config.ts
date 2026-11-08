@@ -1,11 +1,17 @@
 import { defineConfig, devices } from '@playwright/test';
 
 /**
- * preview 端口：默认 4173（CI 用）。本机 4173 被别的服务占用时，
- * 用 PLAYWRIGHT_PREVIEW_PORT=4180 npm run test:visual 换端口，避免
- * reuseExistingServer 误抓到别人的服务器。
+ * preview 端口：默认 4717，CI 与本机同一个值。
+ *
+ * 为什么不是 Vite 默认的 4173：那是预览端口里最常用的一个，本机就常年被别的
+ * 服务占着。一旦撞上，`reuseExistingServer` 会把那个陌生服务器当成我们的
+ * preview，每个用例都以"元素找不到"失败，报错完全指不到真正原因。现在默认端口
+ * 换成一个不常见的值，并且 `reuseExistingServer: false`——真撞上了也是明确的
+ * EADDRINUSE，而不是一堆莫名其妙的元素找不到。仍可用 PLAYWRIGHT_PREVIEW_PORT
+ * 显式覆盖。（Playwright 1.49 的配置不支持异步函数，所以没法在配置里自动挑空闲
+ * 端口；那条路要到高版本才有。）
  */
-const previewPort = Number(process.env.PLAYWRIGHT_PREVIEW_PORT ?? 4173);
+const previewPort = Number(process.env.PLAYWRIGHT_PREVIEW_PORT ?? 4717);
 const baseURL = `http://127.0.0.1:${previewPort}`;
 
 /**
@@ -57,7 +63,9 @@ export default defineConfig({
   webServer: {
     command: `npm run build && npm run preview -- --port ${previewPort}`,
     url: baseURL,
-    reuseExistingServer: !process.env.CI,
+    // 不复用：端口被别的服务占用时必须让我们自己的 preview 去撞 EADDRINUSE，
+    // 而不是静默连上别人的服务器然后报"元素找不到"（见文件头注释）。
+    reuseExistingServer: false,
     timeout: 180_000,
   },
 });
