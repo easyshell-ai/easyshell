@@ -46,6 +46,12 @@ dependencies {
     // Database
     runtimeOnly("com.mysql:mysql-connector-j")
 
+    // Flyway（1.2.0 数据层地基）：只纳管 workflow* 五张新表，
+    // 存量表仍由 ddl-auto 管理，"双主管"对冲见 WorkflowSchemaFilterProvider
+    implementation("org.flywaydb:flyway-core")
+    // Flyway 10+ 起数据库支持模块化，MySQL 方言支持需要显式引入
+    runtimeOnly("org.flywaydb:flyway-mysql")
+
     // QueryDSL
     implementation("com.querydsl:querydsl-jpa:$queryDslVersion:jakarta")
     annotationProcessor("com.querydsl:querydsl-apt:$queryDslVersion:jakarta")

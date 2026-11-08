@@ -13,11 +13,22 @@ spring:
 
   jpa:
     hibernate:
+      # 存量表仍由 Hibernate create-drop 管理；workflow* 五张新表由 Flyway 建，
+      # 两者管辖范围由 WorkflowSchemaFilterProvider 强制不相交（与生产同一条对冲）
       ddl-auto: create-drop
     show-sql: true
     properties:
       hibernate:
         format_sql: true
+        hbm2ddl:
+          schema_filter_provider: com.easyshell.server.config.WorkflowSchemaFilterProvider
+
+  # 测试库同样跑真实迁移脚本：@DataJpaTest 切片包含 FlywayAutoConfiguration，
+  # H2(MODE=MySQL) 上执行 V1_2_0__workflow_engine.sql，与生产同一份 DDL
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    validate-on-migrate: true
 
   data:
     redis:

@@ -29,7 +29,21 @@ spring:
       hibernate:
         dialect: org.hibernate.dialect.MySQLDialect
         format_sql: true
+        # "双主管"对冲（MF-6）：Hibernate 的 create/drop/migrate 只放行存量表，
+        # workflow* 五张新表只归 Flyway 纳管，两个主管的管辖范围强制不相交
+        hbm2ddl:
+          schema_filter_provider: com.easyshell.server.config.WorkflowSchemaFilterProvider
     show-sql: false
+
+  # 1.2.0 数据层地基：Flyway 只纳管 workflow* 五张新表（V1_2_0__workflow_engine.sql），
+  # 存量 22 张表仍由上面的 ddl-auto 管理，绝不互相建表（MF-6 / 零 ALTER 旧表）
+  flyway:
+    enabled: true
+    # 存量 1.1.x 库没有 flyway_schema_history：先打 baseline(0) 再迁移，避免启动即失败；
+    # 回退 = 停服 DROP 五张表 + 隐藏路由，已 applied 的脚本永不删除（MF-7）
+    baseline-on-migrate: true
+    # 启动即校验：已 applied 的迁移脚本被改动/校验和不一致直接 fail-fast
+    validate-on-migrate: true
 
   data:
     redis:
@@ -96,6 +110,10 @@ easyshell:
   websocket:
     # Comma separated list of browser origins allowed to open WebSockets. Empty = same-origin only.
     allowed-origins: ${WEBSOCKET_ALLOWED_ORIGINS:}
+  workflow:
+    # 启动时把五个工作流实体与 Flyway DDL 逐字段比对，不一致即 fail-fast（不建议关闭）
+    schema-check:
+      enabled: ${WORKFLOW_SCHEMA_CHECK_ENABLED:true}
   provision:
     server-url: ${PROVISION_SERVER_URL:http://127.0.0.1:18080}
     agent-binary-dir: ${AGENT_BINARY_DIR:/opt/easyshell/agent-binaries}
