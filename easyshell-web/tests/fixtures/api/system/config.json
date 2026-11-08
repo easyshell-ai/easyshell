@@ -1,0 +1,46 @@
+{
+  "code": 200,
+  "message": "ok",
+  "data": [
+    {
+      "id": 1,
+      "configKey": "server.external-url",
+      "configValue": "https://easyshell.example.com",
+      "description": "对外访问地址，用于生成 Agent 安装命令",
+      "configGroup": "system",
+      "updatedAt": "2026-01-02T11:00:00"
+    },
+    {
+      "id": 2,
+      "configKey": "agent.heartbeat-interval",
+      "configValue": "30",
+      "description": "Agent 心跳间隔（秒）",
+      "configGroup": "agent",
+      "updatedAt": "2026-01-02T11:05:00"
+    },
+    {
+      "id": 3,
+      "configKey": "agent.install-command",
+      "configValue": "curl -fsSL https://easyshell.example.com/install.sh | sh -",
+      "description": "Agent 一键安装命令",
+      "configGroup": "agent",
+      "updatedAt": "2026-01-02T11:06:00"
+    },
+    {
+      "id": 4,
+      "configKey": "task.log-retention-days",
+      "configValue": "30",
+      "description": "任务日志保留天数",
+      "configGroup": "system",
+      "updatedAt": "2026-01-03T09:00:00"
+    },
+    {
+      "id": 5,
+      "configKey": "audit.max-export-rows",
+      "configValue": "10000",
+      "description": "审计日志单次导出上限",
+      "configGroup": "system",
+      "updatedAt": "2026-01-03T09:10:00"
+    }
+  ]
+}

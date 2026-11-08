@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Playwright 视觉回归产物（不入库：CI 用 artifact 上传，见 .github/workflows/frontend-visual.yml）
+playwright-report/
+test-results/

@@ -1,0 +1,13 @@
+{
+  "code": 200,
+  "message": "ok",
+  "data": {
+    "id": 1,
+    "username": "admin",
+    "email": "admin@easyshell.ai",
+    "role": "ADMIN",
+    "status": 1,
+    "lastLoginAt": "2026-01-05T09:12:00",
+    "createdAt": "2025-03-01T10:00:00"
+  }
+}

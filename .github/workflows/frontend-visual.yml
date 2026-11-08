@@ -1,0 +1,63 @@
+name: frontend-visual
+
+# 视觉回归（Playwright 截图 diff）+ lint/build/单测，PR 的第一道闸。
+# 设计文档：frontend-redesign-design-v3.md §6.7。
+#
+# ── 基线图纪律（review 时逐条核对）──────────────────────────────────────────
+# 1. 基线图随代码入库（easyshell-web/.visual-baselines/**），CI 只做"对比"，永不自动更新：
+#    禁止在 CI 里跑 --update-snapshots，否则回归会被静默吞掉。
+# 2. --update-snapshots 必须由人显式执行，且与"改样式"在同一个 commit/PR 里：
+#    防止"顺手把回归基线一起吞掉"。更新命令见 easyshell-web/tests/visual/README.md。
+# 3. 误报优先修测试基建（等稳态/掩码/fixture），不要随手 --update-snapshots 掩盖。
+# ───────────────────────────────────────────────────────────────────────────
+
+on:
+  pull_request:
+    branches: [main]
+    paths: ['easyshell-web/**', '.github/workflows/frontend-visual.yml']
+  push:
+    branches: [main]
+    paths: ['easyshell-web/**']
+
+jobs:
+  visual:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: easyshell-web/package-lock.json
+      # Playwright 浏览器版本由 package-lock 钉死，缓存键必须含它
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('easyshell-web/package-lock.json') }}
+          restore-keys: ${{ runner.os }}-playwright-
+      - name: npm ci
+        working-directory: easyshell-web
+        run: npm ci
+      - name: 安装 Chromium 与系统依赖
+        working-directory: easyshell-web
+        # --with-deps 必须：ubuntu-latest 不预装 Chromium 全部依赖
+        #（缺 libnss3/libatk 等会启动即崩）。只装 chromium 把安装量从约 1.2GB 降到约 350MB。
+        run: npx playwright install --with-deps chromium
+      - name: lint / build / 单测 / 视觉回归
+        working-directory: easyshell-web
+        # W9 再把 `npx playwright test tests/a11y`（axe 扫描）和
+        # `node scripts/verify-theme-tokens.mjs`（token 溯源）接进来，届时与本步合并。
+        run: |
+          npm run lint && npm run build && npm test
+          npx playwright test
+      # 失败时把 diff 三件套（expected / actual / diff）与 html 报告作 artifact 上传，
+      # PR 的 Checks 页底部即可下载对比；github reporter 同时会在 PR 里标注失败用例。
+      - name: 上报 diff 图
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            easyshell-web/playwright-report/
+            easyshell-web/test-results/
+          retention-days: 14
