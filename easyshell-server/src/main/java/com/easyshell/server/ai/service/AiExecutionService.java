@@ -10,6 +10,7 @@ import com.easyshell.server.model.dto.TaskCreateRequest;
 import com.easyshell.server.model.entity.Task;
 import com.easyshell.server.repository.TaskRepository;
 import com.easyshell.server.service.AuditLogService;
+import com.easyshell.server.service.DispatchAuthority;
 import com.easyshell.server.service.TaskService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -103,16 +104,16 @@ public class AiExecutionService {
         taskRepository.save(task);
 
         // Actually dispatch the task to agents
-        // riskCleared: 该脚本已经过人工审批（本方法的前置校验），咽喉要道的风险门禁
-        // 必须放行，否则审批通过的任务永远无法真正执行。
+        // 人工审批通过：唯一能豁免门禁（含 BANNED）的授权，证据 = 审批通过的任务行
+        // （approvalStatus=approved 且脚本一致，换脚本蹭授权会被证据校验拦下）。
         TaskCreateRequest dispatchReq = new TaskCreateRequest();
         dispatchReq.setName(task.getName());
         dispatchReq.setScriptContent(task.getScriptContent());
         dispatchReq.setTimeoutSeconds(task.getTimeoutSeconds());
         dispatchReq.setAgentIds(parseAgentIds(task.getTargetAgentIds()));
-        dispatchReq.setRiskCleared(true);
 
-        Task executedTask = taskService.createAndDispatch(dispatchReq, userId);
+        Task executedTask = taskService.createAndDispatch(dispatchReq, userId,
+                DispatchAuthority.HUMAN_APPROVED, taskId);
         log.info("Approved AI task {} -> dispatched as {} by user {}", taskId, executedTask.getId(), userId);
     }
 

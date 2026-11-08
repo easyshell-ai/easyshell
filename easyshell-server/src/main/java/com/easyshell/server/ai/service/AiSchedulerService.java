@@ -14,6 +14,7 @@ import com.easyshell.server.repository.AgentTagRepository;
 import com.easyshell.server.repository.ClusterAgentRepository;
 import com.easyshell.server.repository.JobRepository;
 import com.easyshell.server.service.AuditLogService;
+import com.easyshell.server.service.DispatchAuthority;
 import com.easyshell.server.service.TaskService;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -134,13 +135,14 @@ public class AiSchedulerService {
             request.setScriptContent(script);
             request.setAgentIds(agentIds);
             request.setTimeoutSeconds(120);
-            // riskCleared: 定时任务是用户显式创建/启用并自己提供的脚本（含内置巡检
-            // 模板），属于上游已授权路径；门禁在咽喉要道默认拒绝未授权调用方。
-            request.setRiskCleared(true);
-
+            // 定时任务是用户显式创建/启用并自己提供的脚本（含内置巡检模板），
+            // 属上游已授权路径：证据 = ai_scheduled_task 行存在且 createdBy 匹配
+            // （ScheduledTaskEvidenceVerifier 校验）。BANNED 脚本仍不可豁免，
+            // 且每次豁免派发都会同步写审计留痕（authority + evidence）。
             runningReport = saveReport(scheduledTask, null, null, "running");
 
-            Task task = taskService.createAndDispatch(request, scheduledTask.getCreatedBy());
+            Task task = taskService.createAndDispatch(request, scheduledTask.getCreatedBy(),
+                    DispatchAuthority.USER_SCHEDULED_TASK, String.valueOf(scheduledTask.getId()));
 
             String scriptOutput = collectExecutionOutput(task.getId());
             String aiAnalysis = null;

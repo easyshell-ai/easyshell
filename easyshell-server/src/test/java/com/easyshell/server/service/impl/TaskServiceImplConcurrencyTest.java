@@ -96,6 +96,10 @@ class TaskServiceImplConcurrencyTest {
     @MockitoBean
     private CommandRiskEngine riskEngine;
 
+    /** 门禁依赖审计（豁免留痕）；本测试只跑无授权的 LOW 脚本，审计不会被触发 */
+    @MockitoBean
+    private com.easyshell.server.service.AuditLogService auditLogService;
+
     @Autowired
     private TaskServiceImpl taskService;
 

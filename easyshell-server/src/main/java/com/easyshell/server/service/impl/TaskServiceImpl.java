@@ -16,7 +16,10 @@ import com.easyshell.server.repository.AgentRepository;
 import com.easyshell.server.repository.JobRepository;
 import com.easyshell.server.repository.ScriptRepository;
 import com.easyshell.server.repository.TaskRepository;
+import com.easyshell.server.service.AuditLogService;
 import com.easyshell.server.service.ClusterService;
+import com.easyshell.server.service.DispatchAuthority;
+import com.easyshell.server.service.DispatchEvidenceVerifier;
 import com.easyshell.server.service.TagService;
 import com.easyshell.server.service.TaskService;
 import com.easyshell.server.websocket.AgentWebSocketHandler;
@@ -34,6 +37,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
@@ -60,6 +64,9 @@ public class TaskServiceImpl implements TaskService {
     private final ClusterService clusterService;
     private final TagService tagService;
     private final CommandRiskEngine riskEngine;
+    private final AuditLogService auditLogService;
+    /** 授权证据校验器（按 supports() 分派）；没有校验器的授权值一律 fail-closed */
+    private final List<DispatchEvidenceVerifier> evidenceVerifiers;
 
     public TaskServiceImpl(
             TaskRepository taskRepository,
@@ -71,7 +78,9 @@ public class TaskServiceImpl implements TaskService {
             @Lazy AgentWebSocketHandler agentWebSocketHandler,
             @Lazy ClusterService clusterService,
             @Lazy TagService tagService,
-            CommandRiskEngine riskEngine) {
+            CommandRiskEngine riskEngine,
+            AuditLogService auditLogService,
+            List<DispatchEvidenceVerifier> evidenceVerifiers) {
         this.taskRepository = taskRepository;
         this.jobRepository = jobRepository;
         this.scriptRepository = scriptRepository;
@@ -82,11 +91,21 @@ public class TaskServiceImpl implements TaskService {
         this.clusterService = clusterService;
         this.tagService = tagService;
         this.riskEngine = riskEngine;
+        this.auditLogService = auditLogService;
+        this.evidenceVerifiers = evidenceVerifiers;
     }
 
     @Override
     @Transactional
     public Task createAndDispatch(TaskCreateRequest request, Long userId) {
+        // 无授权调用方（Controller / AI 工具 / AI 自动执行）：门禁默认最严，非 LOW 一律拒绝
+        return createAndDispatch(request, userId, null, null);
+    }
+
+    @Override
+    @Transactional
+    public Task createAndDispatch(TaskCreateRequest request, Long userId,
+                                  DispatchAuthority authority, String evidenceRef) {
         String scriptContent = request.getScriptContent();
         String scriptType = "shell";
 
@@ -110,18 +129,10 @@ public class TaskServiceImpl implements TaskService {
         }
 
         // 风险门禁下沉到唯一咽喉要道（B1-b）：无论调用方是 Controller、AI 工具、
-        // 定时巡检还是未来的工作流，只要没显式带上"上游已授权"标记，替换后的完整
-        // 脚本都要在这里过 CommandRiskEngine，非 LOW 一律拒绝派发。
-        // 与 TaskController 的事前校验使用同一引擎、同一份（替换后）脚本，结果一致，
-        // 已放行的 LOW 脚本二次校验不会行为变化（幂等）。
-        if (!request.isRiskCleared()) {
-            RiskAssessment risk = riskEngine.assessScript(scriptContent);
-            if (risk.getOverallRisk() != RiskLevel.LOW) {
-                log.warn("Blocked dispatch at chokepoint: risk={}, reason={}",
-                        risk.getOverallRisk(), risk.getExplanation());
-                throw new BusinessException(449, risk.getExplanation());
-            }
-        }
+        // 定时巡检还是未来的工作流，替换后的完整脚本都要在这里过 CommandRiskEngine。
+        // 默认路径（无授权）非 LOW 一律拒绝；带授权的路径必须通过证据校验并留痕，
+        // 授权值本身不可从请求体构造（见 DispatchAuthority）。
+        enforceRiskGate(scriptContent, userId, authority, evidenceRef);
 
         Set<String> resolvedAgentIds = new LinkedHashSet<>();
         if (request.getAgentIds() != null) {
@@ -244,6 +255,74 @@ public class TaskServiceImpl implements TaskService {
         }
 
         return task;
+    }
+
+    /**
+     * 风险门禁（B1-b 咽喉要道的判定核心）：
+     * <ul>
+     *   <li>无授权（authority == null，Controller / AI 工具 / AI 自动执行）：非 LOW 一律 449；</li>
+     *   <li>带授权：BANNED 只有 HUMAN_APPROVED 能放过，其余授权先过证据校验（不成立 449），
+     *       通过后同步写审计（授权值 + 证据 + 风险等级 + 命中模式，不存脚本原文）。</li>
+     * </ul>
+     * 与 TaskController 的事前校验使用同一引擎、同一份（替换后）脚本，结果一致，
+     * 已放行的 LOW 脚本二次校验不会行为变化（幂等）。
+     */
+    private void enforceRiskGate(String scriptContent, Long userId,
+                                 DispatchAuthority authority, String evidenceRef) {
+        RiskAssessment risk = riskEngine.assessScript(scriptContent);
+
+        if (authority == null) {
+            if (risk.getOverallRisk() != RiskLevel.LOW) {
+                log.warn("Blocked dispatch at chokepoint: risk={}, reason={}",
+                        risk.getOverallRisk(), risk.getExplanation());
+                throw new BusinessException(449, risk.getExplanation());
+            }
+            return;
+        }
+
+        // 硬规则：除人工审批外，任何授权都不能放过 BANNED（rm -rf /、fork bomb、> /etc/passwd 等）
+        if (risk.getOverallRisk() == RiskLevel.BANNED && authority != DispatchAuthority.HUMAN_APPROVED) {
+            log.warn("Blocked banned script dispatch despite authority={}", authority);
+            throw new BusinessException(449, risk.getExplanation());
+        }
+
+        // 授权值只是意图声明，真正放行由证据校验决定（换脚本/换任务/换用户都会失败）
+        String evidence = verifyDispatchEvidence(authority, evidenceRef, scriptContent, userId);
+        if (evidence == null) {
+            log.warn("Blocked dispatch: authority={} evidence verification failed", authority);
+            throw new BusinessException(449, "派发授权证据不成立，已拒绝派发");
+        }
+
+        // 被豁免的派发必须留痕：授权值 + 证据 + 风险等级 + 命中模式（不存脚本原文）
+        auditLogService.logSync(userId, "SYSTEM", "SCRIPT_DISPATCH", "task", null,
+                "authority=" + authority + ", evidence=" + evidence
+                        + ", risk=" + risk.getOverallRisk()
+                        + ", matches=" + String.join(",", risk.getBannedMatches()),
+                null, "success");
+    }
+
+    /**
+     * 证据校验：HUMAN_APPROVED 的证据是审批通过的任务行（且脚本一致，换脚本不认）；
+     * 其余授权值交给注册的 {@link DispatchEvidenceVerifier}，没有校验器一律 fail-closed。
+     */
+    private String verifyDispatchEvidence(DispatchAuthority authority, String evidenceRef,
+                                          String scriptContent, Long userId) {
+        if (authority == DispatchAuthority.HUMAN_APPROVED) {
+            if (evidenceRef == null || evidenceRef.isBlank()) {
+                return null;
+            }
+            return taskRepository.findById(evidenceRef)
+                    .filter(t -> "approved".equals(t.getApprovalStatus()))
+                    .filter(t -> Objects.equals(t.getScriptContent(), scriptContent))
+                    .map(t -> "task:" + evidenceRef)
+                    .orElse(null);
+        }
+        for (DispatchEvidenceVerifier verifier : evidenceVerifiers) {
+            if (verifier.supports() == authority) {
+                return verifier.verify(evidenceRef, scriptContent, userId);
+            }
+        }
+        return null;
     }
 
     @Override
