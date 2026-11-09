@@ -97,6 +97,8 @@ class ScriptExecNodeExecutorTest {
     private WorkflowApprovalRepository approvalRepository;
     @Autowired
     private PlatformTransactionManager transactionManager;
+    @Autowired
+    private jakarta.persistence.EntityManager entityManager;
 
     @MockitoBean
     private AuditLogService auditLogService;
@@ -117,7 +119,7 @@ class ScriptExecNodeExecutorTest {
 
         objectMapper = new ObjectMapper();
         expressionEvaluator = new ExpressionEvaluator(objectMapper);
-        approvalStore = new WorkflowApprovalStore(approvalRepository, transactionManager);
+        approvalStore = new WorkflowApprovalStore(approvalRepository, entityManager, transactionManager);
         properties = new WorkflowProperties();
         properties.getEngine().setDefaultNodeTimeoutSec(300);
         properties.getEngine().setPollIntervalMs(50);

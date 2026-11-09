@@ -2,6 +2,7 @@ package com.easyshell.server.workflow.approval;
 
 import com.easyshell.server.model.entity.WorkflowApproval;
 import com.easyshell.server.repository.WorkflowApprovalRepository;
+import jakarta.persistence.EntityManager;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -22,13 +23,16 @@ import java.util.Optional;
 public class WorkflowApprovalStore {
 
     private final WorkflowApprovalRepository approvalRepository;
+    private final EntityManager entityManager;
 
     /** 显式 REQUIRES_NEW 事务边界（引擎线程池里手动装配的对象图不保证经过 Spring 代理） */
     private final TransactionTemplate transactionTemplate;
 
     public WorkflowApprovalStore(WorkflowApprovalRepository approvalRepository,
+                                 EntityManager entityManager,
                                  PlatformTransactionManager transactionManager) {
         this.approvalRepository = approvalRepository;
+        this.entityManager = entityManager;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
@@ -64,20 +68,32 @@ public class WorkflowApprovalStore {
     /**
      * 决策端点唯一写入口（MF-8：只做状态迁移）。
      *
-     * @return true = 决策已落库；false = 已有人决策过或版本已被推进（调用方转 409）
+     * @return 决策后的审批行（本事务内已提交，返回即脱离持久化上下文）；null = 已有人决策过
+     *         或版本已被推进（调用方转 409 APPROVAL_DECIDED）。
+     *         <p>为什么返回整行而不是布尔：{@code @Modifying} 批量 UPDATE <b>不进</b>持久化
+     *         上下文，调用方（决策端点）手里那行还是决策前的旧快照——直接把它回给前端，
+     *         响应体里的 status 会是 pending，用户以为没批成功。这里 refresh 出真实状态
+     *         （含被条件 UPDATE 推进过的 version）再交出去，调用方不需要、也不能再就地改它：
+     *         那行在调用方事务里是托管实体，改它会在提交时被 flush 成一次假的乐观锁冲突。</p>
      */
-    public boolean decide(Long approvalId, String status, Long decidedBy, String comment) {
+    public WorkflowApproval decide(Long approvalId, String status, Long decidedBy, String comment) {
         return transactionTemplate.execute(tx -> {
             Optional<WorkflowApproval> current = approvalRepository.findById(approvalId);
             if (current.isEmpty()) {
-                return false;
+                return null;
             }
             WorkflowApproval approval = current.get();
             if (!"pending".equals(approval.getStatus())) {
-                return false;
+                return null;
             }
-            return approvalRepository.decideIfPending(approvalId, status, decidedBy, LocalDateTime.now(),
-                    comment, approval.getVersion()) == 1;
+            LocalDateTime now = LocalDateTime.now();
+            int updated = approvalRepository.decideIfPending(approvalId, status, decidedBy, now,
+                    comment, approval.getVersion());
+            if (updated != 1) {
+                return null;
+            }
+            entityManager.refresh(approval);
+            return approval;
         });
     }
 

@@ -7,6 +7,8 @@ import com.easyshell.server.workflow.properties.WorkflowProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -32,14 +34,25 @@ public class WorkflowPendingWakeupScanner {
     private final AuditLogService auditLogService;
     private final WorkflowProperties properties;
 
+    /**
+     * 显式事务边界：{@code startAtomically} 是 @Modifying，而本类的调用方是
+     * {@code @Scheduled} 线程——没有事务，Spring Data 直接抛
+     * {@code InvalidDataAccessApiUsageException}（实测："No EntityManager with actual
+     * transaction available"），泵回从此整段瘫痪。与 {@code WorkflowRunService} 同范式，
+     * 不依赖调用方恰好带着事务。
+     */
+    private final TransactionTemplate transactionTemplate;
+
     public WorkflowPendingWakeupScanner(WorkflowRunRepository runRepository,
                                         WorkflowEngine engine,
                                         AuditLogService auditLogService,
-                                        WorkflowProperties properties) {
+                                        WorkflowProperties properties,
+                                        PlatformTransactionManager transactionManager) {
         this.runRepository = runRepository;
         this.engine = engine;
         this.auditLogService = auditLogService;
         this.properties = properties;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
     @Scheduled(fixedDelayString = "${easyshell.workflow.engine.wakeup-interval-sec:10}000",
@@ -62,8 +75,9 @@ public class WorkflowPendingWakeupScanner {
                 return;
             }
             WorkflowRun run = queued.get(0);
-            int started = runRepository.startAtomically(run.getId(), LocalDateTime.now(), "scanner");
-            if (started == 0) {
+            Integer started = transactionTemplate.execute(status ->
+                    runRepository.startAtomically(run.getId(), LocalDateTime.now(), "scanner"));
+            if (started == null || started == 0) {
                 return;
             }
             engine.submitDrive(run);

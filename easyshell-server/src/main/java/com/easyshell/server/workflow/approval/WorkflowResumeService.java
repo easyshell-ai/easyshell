@@ -15,6 +15,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -82,7 +83,11 @@ public class WorkflowResumeService {
         if (!"approved".equals(decision) && !"rejected".equals(decision)) {
             throw new BusinessException(400, "WORKFLOW_PARAM_INVALID: decision 必须是 approved / rejected");
         }
-        if (!approvalStore.decide(approvalId, decision, decidedBy, comment)) {
+        // decide 返回决策后的真实行（refresh 过，含推进后的 version）。
+        // 不要就地改 approval 再返回：它在本地事务里是托管实体，提交时的 flush 会拿着
+        // 旧 version 去 UPDATE，把一次成功的决策报成假的乐观锁冲突。
+        WorkflowApproval decided = approvalStore.decide(approvalId, decision, decidedBy, comment);
+        if (decided == null) {
             throw new BusinessException(409, "APPROVAL_DECIDED");
         }
 
@@ -90,12 +95,12 @@ public class WorkflowResumeService {
         auditLogService.logSync(decidedBy, "SYSTEM",
                 "approved".equals(decision) ? "WORKFLOW_APPROVE" : "WORKFLOW_REJECT",
                 "workflow_approval", String.valueOf(approvalId),
-                "run=" + approval.getRunId() + ", node=" + approval.getNodeKey()
+                "run=" + decided.getRunId() + ", node=" + decided.getNodeKey()
                         + ", comment=" + comment, null, "success");
 
         // 自审批约束（S1）：默认开启，decided_by == started_by 时允许但记 WARNING
         if (properties.getApproval().isRequireDifferentApprover()) {
-            runRepository.findById(approval.getRunId()).ifPresent(run -> {
+            runRepository.findById(decided.getRunId()).ifPresent(run -> {
                 if (decidedBy != null && decidedBy.equals(run.getStartedBy())) {
                     auditLogService.logSync(decidedBy, "SYSTEM", "WORKFLOW_SELF_APPROVAL",
                             "workflow_approval", String.valueOf(approvalId),
@@ -104,7 +109,7 @@ public class WorkflowResumeService {
             });
         }
 
-        String runId = approval.getRunId();
+        String runId = decided.getRunId();
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(
                     new org.springframework.transaction.support.TransactionSynchronization() {
@@ -116,7 +121,7 @@ public class WorkflowResumeService {
         } else {
             submitResume(runId);
         }
-        return approval;
+        return decided;
     }
 
     /** 同 JVM 事件入口（唤醒路径①） */
