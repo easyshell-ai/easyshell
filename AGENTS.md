@@ -42,6 +42,47 @@
   （如 `ExpressionEvaluator`）漏登记会**启动即失败**，而单测全绿盖不住——
   见 `WorkflowApiWiringTest`。
 
+### 4.1 四条测试命令（本地起栈与回归）
+
+| 组件 | 命令 |
+| --- | --- |
+| server | `cd easyshell-server && ./gradlew clean compileJava compileTestJava test` |
+| web 单元 | `cd easyshell-web && npm run lint && npx tsc --noEmit && npm test` |
+| web 构建 | `cd easyshell-web && npm run build` |
+| web 视觉 | `cd easyshell-web && npm run test:visual`（需要先 `npm run build`） |
+| agent | `cd easyshell-agent && go build ./... && go vet ./... && go test ./...` |
+| mcp | `cd easyshell-mcp && npm run lint && npm test` |
+
+**本地起栈跑工作流**（默认 MySQL + Redis 绑回环）：
+
+```bash
+docker compose up -d                       # 起 MySQL / Redis / server / web
+docker logs easyshell-server | grep 'initial admin password'   # 首次启动的初始密码
+# 打开 http://localhost:18880 → /workflow；script-exec 需要至少一个在线 agent
+```
+
+工作流的 H2 集成测试不依赖 agent：`WorkflowApiContractTest` 用 `wait` 节点搭三节点
+定义，因此没有执行环境也能跑通 17 个端点的契约。**契约测试改 `easyshell.workflow.*`
+默认值前先看它的 `@TestPropertySource`**——它把 `min-trigger-interval-sec` 调到 0、
+把 `wakeup-interval-sec` 调到 1，否则用例之间会互相排队。
+
+### 4.2 PR 检查单（设计准入条件中属于工程纪律的部分）
+
+- **新增端点必须同步 403 参数化测试**：带路径变量的端点各配一条"非所有者返回 403"
+  用例，并更新 `WorkflowControllerTest` 的端点清单哨兵（§1 的硬规则）。
+- **视觉基线必须与改样式同一个 commit**：`test:visual:update` 不与样式改动分开提交，
+  否则基线追不上代码，回归测试失去意义。
+- **CI 必须装 `fonts-noto-cjk` 且字体栈显式声明 CJK 家族**：`'Noto Sans CJK SC'` 要写在
+  平台专属名字之前。没有它，中文会回落到 fontconfig 默认字体，同一份截图在不同机器上
+  差出几千像素，视觉回归全部假红。
+- **画布性能预算以比率判定**：拖拽 P95 不得超过空闲 P95 的 2 倍（40ms 下限），不用固定
+  加性阈值——那是按一台机器标定的。
+- **工作流契约变更必须先看 `WorkflowApiContractTest`**：VO 字段名、嵌套层级、内部列名
+  是否外泄都由它锁死，改 VO 先跑它。
+- **新字符串必须同时进 `zh-CN.json` 与 `en-US.json`**（设计 SF-11 / G-19）。
+- **禁止第二道门禁、第二套命令白名单、第二套掩码实现**：门禁唯一位置是
+  `TaskServiceImpl.createAndDispatch`，掩码唯一实现是 `SensitiveDataFilter`。
+
 ## 5. 审计
 
 - 复用既有 `audit_log` 与 `AuditLogService`，**不另造一套审计表**。
