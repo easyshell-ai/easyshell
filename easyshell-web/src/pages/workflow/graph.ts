@@ -293,11 +293,30 @@ export function computeDeleteImpact(selectedNodeKeys: string[], edges: WorkflowE
 
 /* ── 新建节点默认值 ────────────────────────────────────────────────── */
 
+/**
+ * 新建节点默认值。键名与服务端执行器读取的一致（`script` / `targets` / `channels` /
+ * `messageTemplate` / `expression` / `durationSec`）——前端写错一个字母，发布就是
+ * `NODE_CONFIG_INVALID`，所以这里不做任何"更友好的别名"。
+ */
 export const DEFAULT_NODE_CONFIG: Record<WorkflowNodeType, Record<string, unknown>> = {
-  'script-exec': { scriptContent: '', timeoutSec: 600 },
+  'script-exec': {
+    script: '',
+    targets: { mode: 'explicit', agentIds: [] },
+    parameters: {},
+    rawParams: [],
+    riskPolicy: 'block',
+    onUnsafeValue: 'reject',
+  },
   condition: { expression: '' },
-  notify: { channel: 'webhook', message: '' },
-  approval: { mode: 'confirm', title: '' },
+  notify: { channels: ['telegram'], messageTemplate: '', parameters: {} },
+  approval: {
+    mode: 'approval',
+    title: '',
+    approverRole: 'ADMIN',
+    timeoutSec: 86400,
+    onTimeout: 'reject',
+    parameters: {},
+  },
   wait: { durationSec: 60 },
 };
 

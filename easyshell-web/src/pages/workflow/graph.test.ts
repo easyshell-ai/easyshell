@@ -127,7 +127,7 @@ describe('definition <-> flow roundtrip', () => {
   it('preserves positions, config, meta and edge conditions', () => {
     const original = definition({
       nodes: [
-        { ...node('a', 'script-exec'), position: { x: 40, y: 60 }, config: { scriptContent: 'ls' }, retryMax: 2 },
+        { ...node('a', 'script-exec'), position: { x: 40, y: 60 }, config: { script: 'ls' }, retryMax: 2 },
         { ...node('cond', 'condition'), position: { x: 400, y: 0 }, config: { expression: 'a>1' } },
       ],
       edges: [
@@ -147,7 +147,7 @@ describe('definition <-> flow roundtrip', () => {
 
     const back = flowToDefinition(nodes, edges, original);
     expect(back.nodes.map((n) => n.key)).toEqual(['a', 'cond', 'b']);
-    expect(back.nodes[0].config).toEqual({ scriptContent: 'ls' });
+    expect(back.nodes[0].config).toEqual({ script: 'ls' });
     expect(back.nodes[0].retryMax).toBe(2);
     expect(back.nodes[0].position).toEqual({ x: 40, y: 60 });
     expect(back.variables).toEqual({ env: { type: 'string', required: true } });

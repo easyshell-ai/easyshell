@@ -52,7 +52,7 @@ describe('draftStorage', () => {
           type: 'script-exec',
           name: 'deploy',
           position: { x: 0, y: 0 },
-          config: { scriptContent: 'mysql://root:s3cret@db/app' },
+          config: { script: 'mysql://root:s3cret@db/app' },
         },
       ],
     } as unknown as WorkflowDefinition;
@@ -60,7 +60,7 @@ describe('draftStorage', () => {
     const raw = storage.getItem(draftKey(7))!;
     expect(raw).not.toContain('s3cret');
     expect(raw).toContain('***');
-    expect(readDraft(storage, 7)?.definition.nodes[0].config.scriptContent).toBe('mysql://root:***@db/app');
+    expect(readDraft(storage, 7)?.definition.nodes[0].config.script).toBe('mysql://root:***@db/app');
   });
 
   it('returns null for missing or corrupt entries', () => {

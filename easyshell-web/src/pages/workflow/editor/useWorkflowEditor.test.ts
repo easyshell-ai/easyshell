@@ -19,7 +19,7 @@ const definition: WorkflowDefinition = {
   onRejection: 'abort',
   variables: {},
   nodes: [
-    { key: 'n1', type: 'script-exec', name: 'first', position: { x: 0, y: 0 }, config: { scriptContent: 'ls' } },
+    { key: 'n1', type: 'script-exec', name: 'first', position: { x: 0, y: 0 }, config: { script: 'ls' } },
   ],
   edges: [],
 };
@@ -75,7 +75,7 @@ describe('useWorkflowEditor', () => {
     const { result } = setup();
     expect(result.current.dirty).toBe(false);
     expect(result.current.nodes).toHaveLength(1);
-    expect(result.current.definition.nodes[0].config).toEqual({ scriptContent: 'ls' });
+    expect(result.current.definition.nodes[0].config).toEqual({ script: 'ls' });
     expect(saveWorkflowDraft).not.toHaveBeenCalled();
   });
 
@@ -187,31 +187,31 @@ describe('useWorkflowEditor', () => {
   it('updateNode writes config through the snapshot and keeps it undoable', () => {
     const { result } = setup();
     act(() => {
-      result.current.updateNode('n1', { config: { scriptContent: 'df -h' }, name: 'disk check' });
+      result.current.updateNode('n1', { config: { script: 'df -h' }, name: 'disk check' });
     });
-    expect(result.current.definition.nodes[0].config).toEqual({ scriptContent: 'df -h' });
+    expect(result.current.definition.nodes[0].config).toEqual({ script: 'df -h' });
     expect(result.current.definition.nodes[0].name).toBe('disk check');
     expect(result.current.dirty).toBe(true);
 
     act(() => {
       result.current.undo();
     });
-    expect(result.current.definition.nodes[0].config).toEqual({ scriptContent: 'ls' });
+    expect(result.current.definition.nodes[0].config).toEqual({ script: 'ls' });
     expect(result.current.definition.nodes[0].name).toBe('first');
   });
 
   it('coalesces consecutive edits to the same node field into one undo step', () => {
     const { result } = setup();
     act(() => {
-      result.current.updateNode('n1', { config: { scriptContent: 'a' } });
+      result.current.updateNode('n1', { config: { script: 'a' } });
     });
     act(() => {
-      result.current.updateNode('n1', { config: { scriptContent: 'ab' } });
+      result.current.updateNode('n1', { config: { script: 'ab' } });
     });
     act(() => {
       result.current.undo();
     });
-    expect(result.current.definition.nodes[0].config).toEqual({ scriptContent: 'ls' });
+    expect(result.current.definition.nodes[0].config).toEqual({ script: 'ls' });
   });
 
   it('updateMeta rewrites definition-level policy and variables', () => {

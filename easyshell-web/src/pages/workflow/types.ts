@@ -20,6 +20,89 @@ export interface VariableSpec {
 /** abort / skip / partial / compensate(M2) */
 export type FailurePolicyCode = 'abort' | 'skip' | 'partial' | 'compensate';
 
+/**
+ * 节点私有 config 的字段名口径（服务端权威，逐字对齐执行器的读取键）：
+ * script-exec → `ScriptExecNodeExecutor.configString("script")` /
+ *   `configMap("targets")` / `config.get("parameters")` / `config.get("rawParams")`
+ * notify       → `NotifyNodeExecutor.configList("channels")` / `configString("messageTemplate")`
+ * approval     → `ApprovalNodeExecutor.configString("title"|"mode"|"approverRole"|"onTimeout")`
+ * condition    → `ConditionNodeExecutor.configString("expression")`
+ * wait         → `WaitNodeExecutor.configInt("durationSec")`
+ */
+
+export type TargetsMode = 'explicit' | 'cluster' | 'tag' | 'variable';
+
+export interface TargetsConfig {
+  mode: TargetsMode;
+  /** explicit 模式：agent id 列表 */
+  agentIds?: string[];
+  /** cluster 模式：集群 id 列表 */
+  clusterIds?: number[];
+  /** tag 模式：标签 id 列表 */
+  tagIds?: number[];
+  /** variable 模式：上游产出主机列表的表达式路径 */
+  variableRef?: string;
+}
+
+export interface ScriptExecConfig {
+  /** 脚本文本（未渲染，含 {{NAME}} 槽位）；与 scriptId 二选一 */
+  script?: string;
+  /** 可选：脚本库引用（1.3.0 语义，当前服务端不读，仅随定义保存） */
+  scriptId?: string;
+  /** 槽位取值：字面量或 ${path} 表达式 */
+  parameters?: Record<string, string>;
+  /** 声明为 `{{NAME:raw}}` 的参数名（必须同时 riskPolicy >= allow_medium） */
+  rawParams?: string[];
+  /** 寻址（必填，mode 缺失 → 发布 ERROR） */
+  targets?: TargetsConfig;
+  /** reject(默认) / raw / truncate */
+  onUnsafeValue?: 'reject' | 'raw' | 'truncate';
+  /** block(默认) / allow_medium / strict */
+  riskPolicy?: 'block' | 'allow_medium' | 'strict';
+  /** task 派发超时秒（节点级 timeoutSec 之外的第二口径，见执行器 :328） */
+  timeoutSeconds?: number;
+}
+
+export interface NotifyConfig {
+  /** 渠道 key 数组（1..6）：telegram / discord / dingtalk / slack / feishu / wechat-work */
+  channels?: string[];
+  /** 消息模板：支持 ${path} 与 {{NAME}}（NAME 取自 parameters） */
+  messageTemplate?: string;
+  /** {{NAME}} 槽位取值 */
+  parameters?: Record<string, string>;
+  /** info(默认) / warning / error，非 info 时给内容加前缀 */
+  level?: 'info' | 'warning' | 'error';
+}
+
+export type ApprovalMode = 'approval' | 'human-confirm';
+
+export interface ApprovalConfig {
+  /** approval(默认) / human-confirm（后者标题加"人工确认"前缀） */
+  mode?: ApprovalMode;
+  /** 审批标题（必填，支持模板渲染） */
+  title?: string;
+  /** 详情模板；缺省用执行器内置快照 */
+  detailTemplate?: string;
+  /** ADMIN(默认) / SUPER_ADMIN */
+  approverRole?: 'ADMIN' | 'SUPER_ADMIN';
+  /** 60..604800 */
+  timeoutSec?: number;
+  /** approve / reject(默认) / fail */
+  onTimeout?: 'approve' | 'reject' | 'fail';
+  /** 标题/详情模板里的 {{NAME}} 槽位取值 */
+  parameters?: Record<string, string>;
+}
+
+export interface WaitConfig {
+  /** 1..3600 */
+  durationSec?: number;
+}
+
+export interface ConditionConfig {
+  /** 条件表达式（≤512 字符，白名单子集） */
+  expression?: string;
+}
+
 export interface WorkflowNode {
   /** ^[a-z][a-z0-9_]{0,63}$，图内稳定 ID */
   key: string;

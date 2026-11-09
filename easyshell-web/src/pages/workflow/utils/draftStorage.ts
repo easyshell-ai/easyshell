@@ -1,7 +1,7 @@
 /**
  * 草稿本地落盘（设计 §4.3：断网离线变更存 localStorage，键 wf-draft-{id}）。
  *
- * B2 #16：M1 没有 secret 类型变量，但用户可能把凭据写进 scriptContent——所以写入前
+ * B2 #16：M1 没有 secret 类型变量，但用户可能把凭据写进 script——所以写入前
  * 必须跑 SensitiveDataFilter 同规则正则（JS 镜像见 utils/sensitiveFilter.ts）。
  */
 

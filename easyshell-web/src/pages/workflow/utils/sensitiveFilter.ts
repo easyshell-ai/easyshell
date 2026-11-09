@@ -2,7 +2,7 @@
  * 草稿 localStorage 脱敏（设计 §4.3 / B2 #16）。
  *
  * 与 easyshell-server 的 ai/security/SensitiveDataFilter.java 同规则正则的 JS 镜像：
- * M1 没有 secret 类型的变量，但用户完全可能把凭据写进 scriptContent / parameters，
+ * M1 没有 secret 类型的变量，但用户完全可能把凭据写进 script / parameters，
  * 而草稿是按 `wf-draft-{id}` 落盘的。单测与 Java 的行为逐条对齐（见 *.test.ts）。
  */
 

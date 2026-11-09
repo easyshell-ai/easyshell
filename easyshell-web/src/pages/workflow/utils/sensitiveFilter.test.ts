@@ -65,7 +65,7 @@ describe('sanitizeDefinitionForStorage', () => {
           type: 'script-exec',
           name: 'deploy',
           position: { x: 0, y: 0 },
-          config: { scriptContent: 'curl -H "Authorization: Bearer abcDEF123.456" https://x' },
+          config: { script: 'curl -H "Authorization: Bearer abcDEF123.456" https://x' },
         },
       ],
       edges: [],
@@ -83,7 +83,7 @@ describe('sanitizeDefinitionForStorage', () => {
       defaultOnUpstreamFailure: 'skip',
       onRejection: 'abort',
       variables: { env: { type: 'string', required: true } },
-      nodes: [{ key: 'n1', type: 'script-exec', name: 'x', position: { x: 1, y: 2 }, config: { scriptContent: 'ls -la' } }],
+      nodes: [{ key: 'n1', type: 'script-exec', name: 'x', position: { x: 1, y: 2 }, config: { script: 'ls -la' } }],
       edges: [],
     };
     expect(sanitizeDefinitionForStorage(definition)).toBe(JSON.stringify(definition));

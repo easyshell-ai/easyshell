@@ -508,6 +508,30 @@ class WorkflowControllerTest {
     }
 
     @Test
+    @DisplayName("GET /runs/{runId}：input_json 出站前脱敏（P-1 之后节点参数列才有值，凭据不得明文外泄）")
+    void runDetail_masksSensitiveInputSnapshots() {
+        // MF-13：input_json 存渲染后的 parameters Map，值可能就是 PAT 之类的凭据。
+        // P-1 修好之后这一列第一次真正有值，出站口径必须与 run 级快照一致（出口 1/2）
+        WorkflowNodeRun nodeRun = new WorkflowNodeRun();
+        nodeRun.setId("wnr_secret");
+        nodeRun.setRunId(RUN_ID);
+        nodeRun.setNodeKey(NODE_KEY);
+        nodeRun.setInputJson("{\"parameters\":{\"PAT\":\"password=hunter2\"}}");
+        when(nodeRunRepository.findByRunId(RUN_ID)).thenReturn(List.of(nodeRun));
+        WorkflowRun run = runStartedBy(OWNER);
+        run.setInputJson("{\"PAT\":\"password=hunter2\"}");
+        when(runRepository.findById(RUN_ID)).thenReturn(Optional.of(run));
+
+        var detail = controller.runDetail(RUN_ID, auth(OWNER, "operator")).getData();
+
+        // 节点级：MF-13 的 parameters Map 脱敏后再出站
+        assertThat(detail.getNodeRuns().get(0).getInput())
+                .containsEntry("parameters", Map.of("PAT", "password=***"));
+        // run 级：触发入参快照同样脱敏（既有口径，回归保护）
+        assertThat(detail.getRun().getInput()).containsEntry("PAT", "password=***");
+    }
+
+    @Test
     @DisplayName("POST /runs/{runId}/cancel：取消并返回最新状态")
     void cancelRun_requestsCancel() {
         WorkflowRun cancelled = runStartedBy(OWNER);
