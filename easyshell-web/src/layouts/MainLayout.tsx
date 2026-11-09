@@ -17,7 +17,7 @@ import {
   SettingOutlined,
   TeamOutlined,
   ToolOutlined,
-  ThunderboltOutlined,
+  ThunderboltFilled,
   SunOutlined,
   MoonOutlined,
   RobotOutlined,
@@ -44,6 +44,13 @@ import { useTranslation } from 'react-i18next';
 import { getMe } from '../api/auth';
 import { useResponsive } from '../hooks/useResponsive';
 import { useVersion } from '../hooks/useVersion';
+import {
+  SIDEBAR_WIDTH,
+  SIDEBAR_COLLAPSED_WIDTH,
+  HEADER_HEIGHT,
+  MOBILE_DRAWER_WIDTH,
+  ICON_BUTTON_SIZE,
+} from './layoutConstants';
 
 const { Header, Sider, Content } = Layout;
 
@@ -118,15 +125,15 @@ const MainLayout: React.FC = () => {
   }), [t]);
 
   const menuItems: MenuProps['items'] = useMemo(() => {
+    // 分组标题（§4.6）：11px / 500 / 常规大小写；字号与行高由 Menu 的
+    // groupTitleFontSize:11 / groupTitleLineHeight:16 token 提供，这里只补内边距与取色。
+    // 颜色用 colorTextTertiary 而不是 Menu.darkGroupTitleColor：W1 锁定的那个 token 落在
+    // ash 档（#6a6b6c / #9a9a9a），§4.9.2-5 要求 11px 文字必须用 mute 档（7.30 / 4.95）。
     const groupLabelStyle: CSSProperties = {
-      fontSize: 10,
-      fontWeight: 700,
-      letterSpacing: '0.08em',
-      textTransform: 'uppercase' as const,
-      color: isDark ? 'rgba(255,255,255,0.28)' : 'rgba(0,0,0,0.3)',
-      padding: '20px 16px 6px',
-      lineHeight: '16px',
+      padding: '12px 0 4px',
+      lineHeight: 16,
       userSelect: 'none',
+      color: token.colorTextTertiary,
     };
 
     return [
@@ -178,7 +185,7 @@ const MainLayout: React.FC = () => {
         },
       ]},
     ];
-  }, [t, isDark]);
+  }, [t, token.colorTextTertiary]);
 
   const breadcrumbItems = useMemo(() => {
     const items: Array<{ title: React.ReactNode; key: string }> = [
@@ -241,26 +248,19 @@ const MainLayout: React.FC = () => {
     },
   ], [t, navigate, resetTheme, i18n.language]);
 
-  const accentGlow = isDark
-    ? `0 0 80px ${token.colorPrimary}15, 0 0 160px ${token.colorPrimary}08`
-    : 'none';
-
+  /** 顶栏图标按钮（§4.6）：统一 28×28 + colorBorder 边，收进一个常量（原 34×34 是 §4.10.2 白名单必改项） */
   const iconBtnStyle: CSSProperties = {
-    width: 34,
-    height: 34,
-    borderRadius: 8,
+    width: ICON_BUTTON_SIZE,
+    height: ICON_BUTTON_SIZE,
+    borderRadius: token.borderRadiusSM,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
     cursor: 'pointer',
-    transition: 'all 200ms ease',
-    background: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)',
-    border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'}`,
+    transition: 'all 0.1s ease',
+    background: token.colorFillTertiary,
+    border: `1px solid ${token.colorBorder}`,
   };
-
-  const sidebarBackground = isDark
-    ? 'linear-gradient(180deg, #111113 0%, #0c0c0e 100%)'
-    : 'linear-gradient(180deg, #ffffff 0%, #fafafa 100%)';
 
   const handleMenuClick = ({ key }: { key: string }) => {
     navigate(key);
@@ -272,40 +272,34 @@ const MainLayout: React.FC = () => {
   // Shared sidebar content for both desktop Sider and mobile Drawer
   const sidebarContent = (
     <>
-      <div 
+      <div
         className="sidebar-header"
         style={{
           justifyContent: collapsed && !isMobile ? 'center' : 'flex-start',
           padding: collapsed && !isMobile ? 0 : '0 20px',
           gap: 10,
-          borderBottom: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'}`,
+          borderBottom: `1px solid ${token.colorSplit}`,
         }}
       >
+        {/* Logo（§4.6）：去掉渐变文字与彩色 glow，改为 24×24 colorPrimary 圆角方块 + 白色闪电 */}
         <div style={{
-          width: 34,
-          height: 34,
-          borderRadius: 10,
-          background: `linear-gradient(135deg, ${token.colorPrimary}, ${token.colorPrimaryActive || '#1d4ed8'})`,
+          width: 24,
+          height: 24,
+          borderRadius: 6,
+          background: token.colorPrimary,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           flexShrink: 0,
-          boxShadow: `0 2px 12px ${token.colorPrimary}40`,
         }}>
-          <ThunderboltOutlined style={{ fontSize: 16, color: '#fff' }} />
+          <ThunderboltFilled style={{ fontSize: 14, color: token.colorTextLightSolid }} />
         </div>
         {(isMobile || !collapsed) && (
           <span style={{
-            fontSize: 18,
-            fontWeight: 800,
+            fontSize: 15,
+            fontWeight: 600,
             color: token.colorText,
-            letterSpacing: '-0.02em',
             whiteSpace: 'nowrap',
-            background: isDark
-              ? `linear-gradient(135deg, #fff, ${token.colorPrimary})`
-              : `linear-gradient(135deg, #111, ${token.colorPrimary})`,
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
           }}>
             EasyShell
           </span>
@@ -331,12 +325,12 @@ const MainLayout: React.FC = () => {
       {(isMobile || !collapsed) && (
         <div className="sidebar-footer">
           <div style={{
-            padding: '10px 12px',
-            borderRadius: 10,
-            background: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)',
-            border: `1px solid ${isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)'}`,
+            padding: '8px 12px',
+            borderRadius: 6,
+            background: token.colorFillQuaternary,
+            border: `1px solid ${token.colorBorderSecondary}`,
             fontSize: 11,
-            color: isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.3)',
+            color: token.colorTextTertiary,
             textAlign: 'center',
           }}>
             EasyShell {versionInfo ? `v${versionInfo.agentVersion}` : ''}
@@ -348,18 +342,22 @@ const MainLayout: React.FC = () => {
 
   return (
     <Layout style={{ minHeight: '100vh' }} data-testid="main-layout">
+      {/* Skip link（§4.9.3）：键盘用户第一条 Tab 就能跳过侧边栏直达内容 */}
+      <a href="#main-content" className="es-skip-link">
+        {t('header.skip_to_content', i18n.language === 'zh-CN' ? '跳到主内容' : 'Skip to main content')}
+      </a>
+
       {/* Desktop Sider - hidden on mobile */}
       {!isMobile && (
         <Sider
           trigger={null}
           collapsible
           collapsed={collapsed}
-          width={240}
+          width={SIDEBAR_WIDTH}
+          collapsedWidth={SIDEBAR_COLLAPSED_WIDTH}
           className="main-layout-sider"
           style={{
-            background: sidebarBackground,
-            borderRight: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'}`,
-            boxShadow: accentGlow,
+            borderRight: `1px solid ${token.colorSplit}`,
           }}
           aria-label="Sidebar navigation"
         >
@@ -373,7 +371,7 @@ const MainLayout: React.FC = () => {
           placement="left"
           open={drawerVisible}
           onClose={() => setDrawerVisible(false)}
-          width={280}
+          width={MOBILE_DRAWER_WIDTH}
           styles={{
             body: { padding: 0 },
             header: { display: 'none' },
@@ -385,7 +383,7 @@ const MainLayout: React.FC = () => {
               height: '100%',
               display: 'flex',
               flexDirection: 'column',
-              background: sidebarBackground,
+              background: token.colorBgLayout,
             }}
           >
             {sidebarContent}
@@ -393,18 +391,15 @@ const MainLayout: React.FC = () => {
         </Drawer>
       )}
 
-      <Layout style={{ background: isDark ? '#09090b' : '#f5f5f7' }}>
+      <Layout style={{ background: token.colorBgLayout }}>
         <Header
           style={{
-            height: 64,
-            lineHeight: '64px',
-            padding: isMobile ? '0 16px' : '0 24px',
-            background: isDark
-              ? 'rgba(14,14,16,0.8)'
-              : 'rgba(255,255,255,0.8)',
+            height: HEADER_HEIGHT,
+            padding: isMobile ? '0 16px' : '0 20px',
+            background: token.colorBgLayout,
             backdropFilter: 'blur(12px) saturate(180%)',
             WebkitBackdropFilter: 'blur(12px) saturate(180%)',
-            borderBottom: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'}`,
+            borderBottom: `1px solid ${token.colorSplit}`,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
@@ -417,22 +412,22 @@ const MainLayout: React.FC = () => {
         >
           <Space size={isMobile ? 12 : 16} align="center">
             {isMobile ? (
-              <MenuOutlined 
-                onClick={() => setDrawerVisible(true)} 
-                style={{ fontSize: 18, color: token.colorTextSecondary, cursor: 'pointer' }} 
-                aria-label={t('header.open_menu')} 
+              <MenuOutlined
+                onClick={() => setDrawerVisible(true)}
+                style={{ fontSize: 18, color: token.colorTextSecondary, cursor: 'pointer' }}
+                aria-label={t('header.open_menu')}
               />
             ) : collapsed ? (
-              <MenuUnfoldOutlined 
-                onClick={() => setCollapsed(false)} 
-                style={{ fontSize: 16, color: token.colorTextSecondary, cursor: 'pointer' }} 
-                aria-label={t('header.expand_sidebar')} 
+              <MenuUnfoldOutlined
+                onClick={() => setCollapsed(false)}
+                style={{ fontSize: 16, color: token.colorTextSecondary, cursor: 'pointer' }}
+                aria-label={t('header.expand_sidebar')}
               />
             ) : (
-              <MenuFoldOutlined 
-                onClick={() => setCollapsed(true)} 
-                style={{ fontSize: 16, color: token.colorTextSecondary, cursor: 'pointer' }} 
-                aria-label={t('header.collapse_sidebar')} 
+              <MenuFoldOutlined
+                onClick={() => setCollapsed(true)}
+                style={{ fontSize: 16, color: token.colorTextSecondary, cursor: 'pointer' }}
+                aria-label={t('header.collapse_sidebar')}
               />
             )}
             <Divider type="vertical" style={{ height: 20, margin: 0 }} />
@@ -460,7 +455,7 @@ const MainLayout: React.FC = () => {
                 </div>
               </a>
             </Tooltip>
-            <div style={{ width: 1, height: 20, background: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)', margin: '0 4px' }} />
+            <div style={{ width: 1, height: 20, background: token.colorBorderSecondary, margin: '0 4px' }} />
             <Tooltip title={i18n.language === 'zh-CN' ? t('header.switch_to_en') : t('header.switch_to_zh')}>
               <div
                 onClick={() => {
@@ -484,24 +479,21 @@ const MainLayout: React.FC = () => {
                 data-testid="theme-toggle"
               >
                 {isDark
-                  ? <SunOutlined style={{ fontSize: 15, color: '#faad14' }} />
+                  ? <SunOutlined style={{ fontSize: 15, color: token.colorWarning }} />
                   : <MoonOutlined style={{ fontSize: 15, color: token.colorPrimary }} />
                 }
               </div>
             </Tooltip>
-            <div style={{ width: 1, height: 20, background: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)', margin: '0 4px' }} />
+            <div style={{ width: 1, height: 20, background: token.colorBorderSecondary, margin: '0 4px' }} />
             <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
-              <Space style={{ cursor: 'pointer', padding: '4px 8px', borderRadius: 8, transition: 'all 200ms', background: 'transparent' }} data-testid="user-menu">
+              <Space style={{ cursor: 'pointer', padding: '4px 8px', borderRadius: 8, transition: 'all 0.1s ease', background: 'transparent' }} data-testid="user-menu">
                 <Avatar
-                  size={30}
+                  size={ICON_BUTTON_SIZE}
                   icon={<UserOutlined />}
-                  style={{
-                    background: `linear-gradient(135deg, ${token.colorPrimary}, ${token.colorPrimaryActive || '#1d4ed8'})`,
-                    boxShadow: `0 2px 8px ${token.colorPrimary}30`,
-                  }}
+                  style={{ background: token.colorPrimary }}
                 />
                 {!isMobile && (
-                  <span style={{ color: token.colorText, fontWeight: 600, fontSize: 13 }}>
+                  <span style={{ color: token.colorText, fontWeight: 500, fontSize: 13 }}>
                     {currentUser.username || '...'}
                   </span>
                 )}
@@ -510,11 +502,15 @@ const MainLayout: React.FC = () => {
           </Space>
         </Header>
         <Content
+          id="main-content"
           className="main-layout-content"
           role="main"
           aria-label="Main content area"
         >
-          <Outlet />
+          {/* 内容区居中容器（§4.10.4）：1600px 上限，超宽视口里内容居中 */}
+          <div className="es-content">
+            <Outlet />
+          </div>
         </Content>
       </Layout>
     </Layout>

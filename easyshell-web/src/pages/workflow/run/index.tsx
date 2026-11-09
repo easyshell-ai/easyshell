@@ -1,22 +1,19 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Button, Card, Space, Table, Tag, Typography, message } from 'antd';
-import { EyeOutlined, ReloadOutlined } from '@ant-design/icons';
+import { EyeOutlined, FieldTimeOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
-import { theme } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { getWorkflowRuns } from '../api';
 import type { PageResponse, RunStatus, WorkflowRun } from '../types';
 import { formatDateTime } from '../../../utils/format';
 import { runStatusMap } from '../status';
+import PageShell from '../../../layouts/PageShell';
 import '../workflow.css';
-
-const { Title } = Typography;
 
 /** 运行列表（§6.1 GET /v1/workflow/runs，非 admin 只看自己的） */
 const WorkflowRunListPage: React.FC = () => {
   const { t } = useTranslation();
-  const { token } = theme.useToken();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const workflowId = searchParams.get('workflowId');
@@ -111,19 +108,18 @@ const WorkflowRunListPage: React.FC = () => {
   );
 
   return (
-    <div style={{ padding: 24 }}>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Title level={4} style={{ margin: 0, color: token.colorText }}>
-          {t('workflow.run.title')}
-        </Title>
+    <PageShell
+      title={t('workflow.run.title')}
+      icon={<FieldTimeOutlined />}
+      extra={
         <Space>
           {workflowId && <Tag color="blue">{t('workflow.run.filtered', { id: workflowId })}</Tag>}
           <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void fetchRuns(page.number)}>
             {t('common.refresh')}
           </Button>
         </Space>
-      </div>
-
+      }
+    >
       <Card style={{ borderRadius: 12 }} styles={{ body: { padding: 0 } }}>
         <Table<WorkflowRun>
           columns={columns}
@@ -141,7 +137,7 @@ const WorkflowRunListPage: React.FC = () => {
           locale={{ emptyText: t('workflow.run.empty') }}
         />
       </Card>
-    </div>
+    </PageShell>
   );
 };
 

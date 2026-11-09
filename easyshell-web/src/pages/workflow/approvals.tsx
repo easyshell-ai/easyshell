@@ -13,15 +13,16 @@ import {
   message,
   theme,
 } from 'antd';
-import { CheckCircleOutlined, CloseCircleOutlined, ReloadOutlined } from '@ant-design/icons';
+import { CheckCircleOutlined, CloseCircleOutlined, ReloadOutlined, SafetyOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import type { ColumnsType } from 'antd/es/table';
 import { decideWorkflowApproval, getPendingWorkflowApprovals } from './api';
 import type { ApprovalStatus, WorkflowApproval } from './types';
 import { formatDateTime } from '../../utils/format';
+import PageShell from '../../layouts/PageShell';
 import './workflow.css';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 /** 工作流审批中心（仿 pages/ai/approval.tsx：待我审批 + 通过/拒绝） */
 const WorkflowApprovalsPage: React.FC = () => {
@@ -158,16 +159,15 @@ const WorkflowApprovalsPage: React.FC = () => {
   ];
 
   return (
-    <div style={{ padding: 24 }}>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Title level={4} style={{ margin: 0, color: token.colorText }}>
-          {t('workflow.approval.title')}
-        </Title>
+    <PageShell
+      title={t('workflow.approval.title')}
+      icon={<SafetyOutlined />}
+      extra={
         <Button icon={<ReloadOutlined />} loading={loading} onClick={fetchApprovals}>
           {t('common.refresh')}
         </Button>
-      </div>
-
+      }
+    >
       <Card style={{ borderRadius: 12 }} styles={{ body: { padding: 0 } }}>
         <Table<WorkflowApproval>
           columns={columns}
@@ -224,7 +224,7 @@ const WorkflowApprovalsPage: React.FC = () => {
           </Descriptions>
         )}
       </Modal>
-    </div>
+    </PageShell>
   );
 };
 
