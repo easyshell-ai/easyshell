@@ -17,7 +17,8 @@ on:
     paths: ['easyshell-web/**', '.github/workflows/frontend-visual.yml']
   push:
     branches: [main]
-    paths: ['easyshell-web/**']
+    paths: ['easyshell-web/**', '.github/workflows/frontend-visual.yml']
+  workflow_dispatch:
 
 jobs:
   visual:
