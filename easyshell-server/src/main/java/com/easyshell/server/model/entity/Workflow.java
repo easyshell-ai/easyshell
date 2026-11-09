@@ -53,6 +53,16 @@ public class Workflow extends BaseEntity {
     @Column(name = "current_version_id")
     private Long currentVersionId;
 
+    /**
+     * 当前发布版本的<b>版本号</b>（{@code currentVersionId} 指向那一行的 version）。
+     *
+     * <p>不落库（{@code @Transient}）：列表页的"版本"列要显示 {@code v3} 而不是版本行 id，
+     * 而调用方手里只有 {@code current_version_id}。由
+     * {@code WorkflowDefinitionService} 在读路径上批量回填，缺省 null = 从未发布。</p>
+     */
+    @Transient
+    private Integer currentVersion;
+
     @Column(name = "run_count", nullable = false)
     private Integer runCount = 0;
 

@@ -26,6 +26,30 @@ public interface WorkflowRunRepository extends JpaRepository<WorkflowRun, String
     Page<WorkflowRun> findByStartedByOrderByCreatedAtDesc(Long startedBy, Pageable pageable);
 
     /**
+     * 运行列表的可见范围（§6.1 GET /runs）：管理员看全部；其余角色只能看
+     * "自己触发的"或"自己创建的工作流的"（与 {@code WorkflowAccess.requireRunAccess}
+     * 同一套语义，避免列表页出现"看得到点不开"的行）。
+     *
+     * <p>{@code status}/{@code workflowId} 为空表示不过滤（HQL 参数化 IS NULL）。</p>
+     */
+    @Query("select r from WorkflowRun r where (r.startedBy = :userId or r.workflowId in " +
+            "(select w.id from Workflow w where w.createdBy = :userId)) " +
+            "and (:status is null or r.status = :status) " +
+            "and (:workflowId is null or r.workflowId = :workflowId) " +
+            "order by r.createdAt desc")
+    Page<WorkflowRun> findVisibleToUser(@Param("userId") Long userId,
+                                        @Param("status") String status,
+                                        @Param("workflowId") Long workflowId,
+                                        Pageable pageable);
+
+    /** 管理员视角的全量分页（§6.1 GET /runs），过滤条件同上。 */
+    @Query("select r from WorkflowRun r where (:status is null or r.status = :status) " +
+            "and (:workflowId is null or r.workflowId = :workflowId) order by r.createdAt desc")
+    Page<WorkflowRun> findAllFiltered(@Param("status") String status,
+                                      @Param("workflowId") Long workflowId,
+                                      Pageable pageable);
+
+    /**
      * 幂等重查：同 userId 同 idempotency_key 已触发过时返回首个 run，
      * 重复触发直接返回 200 + 首个 runId（§3.5 幂等①）。
      */

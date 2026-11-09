@@ -28,6 +28,33 @@ public interface WorkflowRepository extends JpaRepository<Workflow, Long> {
 
     Page<Workflow> findByStatusOrderByCreatedAtDesc(String status, Pageable pageable);
 
+    /**
+     * 管理员视角的分页（§6.1 GET /page）。{@code status} 为空表示不过滤。
+     *
+     * <p>{@code keyword} 匹配名称（大小写不敏感，列表页搜索框）、{@code category} 精确匹配
+     * （{@code idx_wf_category} 索引列）；两者为空表示不过滤。未知查询参数由 Controller
+     * 直接不接收，这里是唯一允许出现的三个过滤维度。</p>
+     */
+    @Query("select w from Workflow w where (:status is null or w.status = :status) " +
+            "and (:keyword is null or lower(w.name) like lower(concat('%', :keyword, '%'))) " +
+            "and (:category is null or w.category = :category) " +
+            "order by w.createdAt desc")
+    Page<Workflow> pageForAdmin(@Param("status") String status, @Param("keyword") String keyword,
+                                @Param("category") String category, Pageable pageable);
+
+    /**
+     * 非管理员视角的分页：只能看到"自己创建的"或"公开的"（§6.1 GET /page 的归属过滤，
+     * 与 {@code WorkflowAccess.requireWorkflowOwner} 的读侧对应物）。
+     */
+    @Query("select w from Workflow w where (w.visibility = 'public' or w.createdBy = :userId) " +
+            "and (:status is null or w.status = :status) " +
+            "and (:keyword is null or lower(w.name) like lower(concat('%', :keyword, '%'))) " +
+            "and (:category is null or w.category = :category) " +
+            "order by w.createdAt desc")
+    Page<Workflow> pageForUser(@Param("status") String status, @Param("userId") Long userId,
+                               @Param("keyword") String keyword, @Param("category") String category,
+                               Pageable pageable);
+
     long countByCreatedBy(Long createdBy);
 
     boolean existsByIdAndCreatedBy(Long id, Long createdBy);
