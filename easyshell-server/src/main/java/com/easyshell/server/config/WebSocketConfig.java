@@ -3,6 +3,7 @@ package com.easyshell.server.config;
 import com.easyshell.server.websocket.AgentWebSocketHandler;
 import com.easyshell.server.websocket.TaskLogWebSocketHandler;
 import com.easyshell.server.websocket.TerminalWebSocketHandler;
+import com.easyshell.server.websocket.WorkflowRunWebSocketHandler;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -23,6 +24,7 @@ public class WebSocketConfig implements WebSocketConfigurer {
     private final TaskLogWebSocketHandler taskLogHandler;
     private final AgentWebSocketHandler agentHandler;
     private final TerminalWebSocketHandler terminalHandler;
+    private final WorkflowRunWebSocketHandler workflowRunHandler;
     private final WebSocketAuthInterceptor webSocketAuthInterceptor;
 
     /**
@@ -46,6 +48,11 @@ public class WebSocketConfig implements WebSocketConfigurer {
                 .setAllowedOrigins(origins.toArray(new String[0]))
                 .addInterceptors(webSocketAuthInterceptor);
         registry.addHandler(terminalHandler, "/ws/terminal/*")
+                .setAllowedOrigins(origins.toArray(new String[0]))
+                .addInterceptors(webSocketAuthInterceptor);
+        // §6.4：工作流运行实时通道。授权不在这里——握手只做认证，
+        // 资源归属校验在 afterConnectionEstablished 里做（与 /ws/task/log 同一范式）。
+        registry.addHandler(workflowRunHandler, "/ws/workflow/run/*")
                 .setAllowedOrigins(origins.toArray(new String[0]))
                 .addInterceptors(webSocketAuthInterceptor);
     }
