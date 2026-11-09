@@ -1693,6 +1693,7 @@
       "concurrency": "全局并发已满，运行进入排队",
       "noVariables": "该工作流没有声明入参变量",
       "required": "必填",
+      "validationFailed": "表单填写有误，请检查后重试",
       "idempotencyKey": "幂等键 (Idempotency-Key)",
       "idempotencyHint": "同一用户同一 key 重复触发会返回首个 run；参数不同则 409"
     },

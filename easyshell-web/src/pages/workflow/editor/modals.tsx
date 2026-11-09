@@ -11,6 +11,7 @@ import {
   Switch,
   Tag,
   Typography,
+  message,
 } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
@@ -97,76 +98,107 @@ export interface TriggerModalProps {
   loading: boolean;
 }
 
+/**
+ * 触发弹窗的表单值：入参变量（schema 限定 `^[a-z][a-z0-9_]{0,63}$`，不可能以 `_` 开头）
+ * + 由 antd 托管的幂等键字段。
+ */
+interface TriggerFormValues extends Record<string, unknown> {
+  __idem?: string;
+}
+
 function newIdempotencyKey(): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
   return `idem-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+}
+
+/** antd `validateFields` 的 reject 形如 `{ errorFields, values, outOfDate }`，据此区分校验失败与其它异常 */
+function isValidationRejection(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'errorFields' in error;
 }
 
 export const TriggerModal: React.FC<TriggerModalProps> = ({
   open, definition, workflowName, onCancel, onSubmit, loading,
 }) => {
   const { t } = useTranslation();
-  const [form] = Form.useForm<Record<string, unknown>>();
-  const [idempotencyKey, setIdempotencyKey] = useState(newIdempotencyKey);
+  const [form] = Form.useForm<TriggerFormValues>();
 
+  // 每次打开弹窗都换一把新幂等键（字段由 antd 托管，直接写 store，Input 同步刷新）
   useEffect(() => {
-    if (open) setIdempotencyKey(newIdempotencyKey());
-  }, [open]);
+    if (open) form.setFieldValue('__idem', newIdempotencyKey());
+  }, [open, form]);
 
   const variables = useMemo(() => Object.entries(definition.variables || {}), [definition.variables]);
+
+  const handleOk = async () => {
+    try {
+      // 无入参变量时表单同样已挂载（至少含幂等键字段），validateFields 直接放行，inputs 为 {}
+      const { __idem, ...inputs } = await form.validateFields();
+      onSubmit(inputs, __idem ?? '');
+    } catch (error) {
+      // 校验失败（含幂等键被清空）或提交回调抛错：都必须给用户可见反馈，绝不再静默吞掉
+      message.error(
+        isValidationRejection(error) ? t('workflow.trigger.validationFailed') : t('workflow.trigger.failed'),
+      );
+    }
+  };
 
   return (
     <Modal
       title={t('workflow.trigger.title', { name: workflowName })}
       open={open}
       onCancel={onCancel}
-      onOk={() => form.validateFields().then((values) => onSubmit(values, idempotencyKey))}
+      onOk={() => void handleOk()}
       confirmLoading={loading}
       okText={t('workflow.trigger.submit')}
       cancelText={t('common.cancel')}
       width={560}
     >
-      {variables.length === 0 ? (
-        <Alert type="info" showIcon message={t('workflow.trigger.noVariables')} />
-      ) : (
-        <Form form={form} layout="vertical" requiredMark="optional">
-          {variables.map(([name, spec]) => (
-            <Form.Item
-              key={name}
-              name={name}
-              label={
-                <Space size={6}>
-                  <Text code>{name}</Text>
-                  <Tag>{spec.type}</Tag>
-                  {spec.required && <Tag color="red">{t('workflow.trigger.required')}</Tag>}
-                </Space>
-              }
-              tooltip={spec.description}
-              rules={[{ required: spec.required, message: t('workflow.trigger.required') }]}
-              initialValue={spec.default}
-            >
-              {spec.type === 'number' ? (
-                <InputNumber style={{ width: '100%' }} />
-              ) : spec.type === 'boolean' ? (
-                <Switch />
-              ) : spec.type === 'json' ? (
-                <Input.TextArea rows={4} style={{ fontFamily: 'monospace', fontSize: 12 }} />
-              ) : (
-                <Input />
-              )}
-            </Form.Item>
-          ))}
-        </Form>
-      )}
-      <Form layout="vertical" style={{ marginTop: 8 }}>
+      <Form form={form} layout="vertical" requiredMark="optional">
+        {variables.length === 0 && (
+          <Alert type="info" showIcon message={t('workflow.trigger.noVariables')} />
+        )}
+        {variables.map(([name, spec]) => (
+          <Form.Item
+            key={name}
+            name={name}
+            label={
+              <Space size={6}>
+                <Text code>{name}</Text>
+                <Tag>{spec.type}</Tag>
+                {spec.required && <Tag color="red">{t('workflow.trigger.required')}</Tag>}
+              </Space>
+            }
+            tooltip={spec.description}
+            rules={[{ required: spec.required, message: t('workflow.trigger.required') }]}
+            initialValue={spec.default}
+          >
+            {spec.type === 'number' ? (
+              <InputNumber style={{ width: '100%' }} />
+            ) : spec.type === 'boolean' ? (
+              <Switch />
+            ) : spec.type === 'json' ? (
+              <Input.TextArea rows={4} style={{ fontFamily: 'monospace', fontSize: 12 }} />
+            ) : (
+              <Input />
+            )}
+          </Form.Item>
+        ))}
         <Form.Item
           label={t('workflow.trigger.idempotencyKey')}
           tooltip={t('workflow.trigger.idempotencyHint')}
           required
+          style={{ marginTop: 8 }}
         >
           <Space.Compact style={{ width: '100%' }}>
-            <Input value={idempotencyKey} onChange={(event) => setIdempotencyKey(event.target.value)} />
-            <Button icon={<ReloadOutlined />} onClick={() => setIdempotencyKey(newIdempotencyKey())} />
+            <Form.Item
+              name="__idem"
+              noStyle
+              initialValue={newIdempotencyKey()}
+              rules={[{ required: true, message: t('workflow.trigger.required') }]}
+            >
+              <Input />
+            </Form.Item>
+            <Button icon={<ReloadOutlined />} onClick={() => form.setFieldValue('__idem', newIdempotencyKey())} />
           </Space.Compact>
         </Form.Item>
       </Form>

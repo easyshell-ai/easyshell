@@ -1693,6 +1693,7 @@
       "concurrency": "Global concurrency is full; the run is queued",
       "noVariables": "This workflow declares no input variables",
       "required": "required",
+      "validationFailed": "Please fix the form errors and try again",
       "idempotencyKey": "Idempotency-Key",
       "idempotencyHint": "Same user + same key returns the first run; different inputs → 409"
     },
