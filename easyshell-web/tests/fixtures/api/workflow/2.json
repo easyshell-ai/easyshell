@@ -75,8 +75,14 @@
               "y": 80
             },
             "config": {
-              "scriptContent": "df -h /",
-              "timeoutSec": 300
+              "timeoutSec": 300,
+              "script": "df -h /",
+              "targets": {
+                "mode": "explicit",
+                "agentIds": [
+                  "agent-1"
+                ]
+              }
             },
             "retryMax": 1,
             "retryIntervalSec": 5,
@@ -106,8 +112,14 @@
               "y": 20
             },
             "config": {
-              "scriptContent": "find /var/log/nginx -mtime +30 -delete",
-              "timeoutSec": 600
+              "timeoutSec": 600,
+              "script": "find /var/log/nginx -mtime +30 -delete",
+              "targets": {
+                "mode": "explicit",
+                "agentIds": [
+                  "agent-1"
+                ]
+              }
             },
             "timeoutSec": 600,
             "onFailure": "skip"
@@ -121,7 +133,7 @@
               "y": 200
             },
             "config": {
-              "mode": "confirm",
+              "mode": "approval",
               "title": "确认清理"
             }
           },
@@ -134,8 +146,10 @@
               "y": 110
             },
             "config": {
-              "channel": "bot",
-              "message": "磁盘已清理：{{env}}"
+              "channels": [
+                "dingtalk"
+              ],
+              "messageTemplate": "磁盘已清理：{{env}}"
             }
           },
           {

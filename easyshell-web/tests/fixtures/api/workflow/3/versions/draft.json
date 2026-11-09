@@ -25,8 +25,14 @@
             "y": 60
           },
           "config": {
-            "scriptContent": "echo node-1",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-1",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-0"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -42,8 +48,14 @@
             "y": 200
           },
           "config": {
-            "scriptContent": "echo node-2",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-2",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-1"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -59,8 +71,14 @@
             "y": 340
           },
           "config": {
-            "scriptContent": "echo node-3",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-3",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-2"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -76,8 +94,14 @@
             "y": 480
           },
           "config": {
-            "scriptContent": "echo node-4",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-4",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-3"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -93,8 +117,14 @@
             "y": 620
           },
           "config": {
-            "scriptContent": "echo node-5",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-5",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-4"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -110,8 +140,14 @@
             "y": 60
           },
           "config": {
-            "scriptContent": "echo node-6",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-6",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-5"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -127,8 +163,14 @@
             "y": 200
           },
           "config": {
-            "scriptContent": "echo node-7",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-7",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-6"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -144,8 +186,14 @@
             "y": 340
           },
           "config": {
-            "scriptContent": "echo node-8",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-8",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-7"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -161,8 +209,14 @@
             "y": 480
           },
           "config": {
-            "scriptContent": "echo node-9",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-9",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-8"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -178,8 +232,14 @@
             "y": 620
           },
           "config": {
-            "scriptContent": "echo node-10",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-10",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-9"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -195,8 +255,14 @@
             "y": 60
           },
           "config": {
-            "scriptContent": "echo node-11",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-11",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-10"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -212,8 +278,14 @@
             "y": 200
           },
           "config": {
-            "scriptContent": "echo node-12",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-12",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-11"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -229,8 +301,14 @@
             "y": 340
           },
           "config": {
-            "scriptContent": "echo node-13",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-13",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-12"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -246,8 +324,14 @@
             "y": 480
           },
           "config": {
-            "scriptContent": "echo node-14",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-14",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-13"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -263,8 +347,14 @@
             "y": 620
           },
           "config": {
-            "scriptContent": "echo node-15",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-15",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-14"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -280,8 +370,14 @@
             "y": 60
           },
           "config": {
-            "scriptContent": "echo node-16",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-16",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-15"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -297,8 +393,14 @@
             "y": 200
           },
           "config": {
-            "scriptContent": "echo node-17",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-17",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-16"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -314,8 +416,14 @@
             "y": 340
           },
           "config": {
-            "scriptContent": "echo node-18",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-18",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-17"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -331,8 +439,14 @@
             "y": 480
           },
           "config": {
-            "scriptContent": "echo node-19",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-19",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-18"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -348,8 +462,14 @@
             "y": 620
           },
           "config": {
-            "scriptContent": "echo node-20",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-20",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-19"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -365,8 +485,14 @@
             "y": 60
           },
           "config": {
-            "scriptContent": "echo node-21",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-21",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-20"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -382,8 +508,14 @@
             "y": 200
           },
           "config": {
-            "scriptContent": "echo node-22",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-22",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-21"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -399,8 +531,14 @@
             "y": 340
           },
           "config": {
-            "scriptContent": "echo node-23",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-23",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-22"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -416,8 +554,14 @@
             "y": 480
           },
           "config": {
-            "scriptContent": "echo node-24",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-24",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-23"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -433,8 +577,14 @@
             "y": 620
           },
           "config": {
-            "scriptContent": "echo node-25",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-25",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-24"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -450,8 +600,14 @@
             "y": 60
           },
           "config": {
-            "scriptContent": "echo node-26",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-26",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-25"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -467,8 +623,14 @@
             "y": 200
           },
           "config": {
-            "scriptContent": "echo node-27",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-27",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-26"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -484,8 +646,14 @@
             "y": 340
           },
           "config": {
-            "scriptContent": "echo node-28",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-28",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-27"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -501,8 +669,14 @@
             "y": 480
           },
           "config": {
-            "scriptContent": "echo node-29",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-29",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-28"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -518,8 +692,14 @@
             "y": 620
           },
           "config": {
-            "scriptContent": "echo node-30",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-30",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-29"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -535,8 +715,14 @@
             "y": 60
           },
           "config": {
-            "scriptContent": "echo node-31",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-31",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-30"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -552,8 +738,14 @@
             "y": 200
           },
           "config": {
-            "scriptContent": "echo node-32",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-32",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-31"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -569,8 +761,14 @@
             "y": 340
           },
           "config": {
-            "scriptContent": "echo node-33",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-33",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-32"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -586,8 +784,14 @@
             "y": 480
           },
           "config": {
-            "scriptContent": "echo node-34",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-34",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-33"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -603,8 +807,14 @@
             "y": 620
           },
           "config": {
-            "scriptContent": "echo node-35",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-35",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-34"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -620,8 +830,14 @@
             "y": 60
           },
           "config": {
-            "scriptContent": "echo node-36",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-36",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-35"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -637,8 +853,14 @@
             "y": 200
           },
           "config": {
-            "scriptContent": "echo node-37",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-37",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-36"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -654,8 +876,14 @@
             "y": 340
           },
           "config": {
-            "scriptContent": "echo node-38",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-38",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-37"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -671,8 +899,14 @@
             "y": 480
           },
           "config": {
-            "scriptContent": "echo node-39",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-39",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-38"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -688,8 +922,14 @@
             "y": 620
           },
           "config": {
-            "scriptContent": "echo node-40",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-40",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-39"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -705,8 +945,14 @@
             "y": 60
           },
           "config": {
-            "scriptContent": "echo node-41",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-41",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-40"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -722,8 +968,14 @@
             "y": 200
           },
           "config": {
-            "scriptContent": "echo node-42",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-42",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-41"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -739,8 +991,14 @@
             "y": 340
           },
           "config": {
-            "scriptContent": "echo node-43",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-43",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-42"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -756,8 +1014,14 @@
             "y": 480
           },
           "config": {
-            "scriptContent": "echo node-44",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-44",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-43"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -773,8 +1037,14 @@
             "y": 620
           },
           "config": {
-            "scriptContent": "echo node-45",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-45",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-44"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -790,8 +1060,14 @@
             "y": 60
           },
           "config": {
-            "scriptContent": "echo node-46",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-46",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-45"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -807,8 +1083,14 @@
             "y": 200
           },
           "config": {
-            "scriptContent": "echo node-47",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-47",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-46"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -824,8 +1106,14 @@
             "y": 340
           },
           "config": {
-            "scriptContent": "echo node-48",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-48",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-47"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -841,8 +1129,14 @@
             "y": 480
           },
           "config": {
-            "scriptContent": "echo node-49",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-49",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-48"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -858,8 +1152,14 @@
             "y": 620
           },
           "config": {
-            "scriptContent": "echo node-50",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-50",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-49"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -875,8 +1175,14 @@
             "y": 60
           },
           "config": {
-            "scriptContent": "echo node-51",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-51",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-50"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -892,8 +1198,14 @@
             "y": 200
           },
           "config": {
-            "scriptContent": "echo node-52",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-52",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-51"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -909,8 +1221,14 @@
             "y": 340
           },
           "config": {
-            "scriptContent": "echo node-53",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-53",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-52"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -926,8 +1244,14 @@
             "y": 480
           },
           "config": {
-            "scriptContent": "echo node-54",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-54",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-53"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -943,8 +1267,14 @@
             "y": 620
           },
           "config": {
-            "scriptContent": "echo node-55",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-55",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-54"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -960,8 +1290,14 @@
             "y": 60
           },
           "config": {
-            "scriptContent": "echo node-56",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-56",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-55"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -977,8 +1313,14 @@
             "y": 200
           },
           "config": {
-            "scriptContent": "echo node-57",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-57",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-56"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -994,8 +1336,14 @@
             "y": 340
           },
           "config": {
-            "scriptContent": "echo node-58",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-58",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-57"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1011,8 +1359,14 @@
             "y": 480
           },
           "config": {
-            "scriptContent": "echo node-59",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-59",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-58"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1028,8 +1382,14 @@
             "y": 620
           },
           "config": {
-            "scriptContent": "echo node-60",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-60",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-59"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1045,8 +1405,14 @@
             "y": 60
           },
           "config": {
-            "scriptContent": "echo node-61",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-61",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-60"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1062,8 +1428,14 @@
             "y": 200
           },
           "config": {
-            "scriptContent": "echo node-62",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-62",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-61"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1079,8 +1451,14 @@
             "y": 340
           },
           "config": {
-            "scriptContent": "echo node-63",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-63",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-62"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1096,8 +1474,14 @@
             "y": 480
           },
           "config": {
-            "scriptContent": "echo node-64",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-64",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-63"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1113,8 +1497,14 @@
             "y": 620
           },
           "config": {
-            "scriptContent": "echo node-65",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-65",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-64"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1130,8 +1520,14 @@
             "y": 60
           },
           "config": {
-            "scriptContent": "echo node-66",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-66",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-65"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1147,8 +1543,14 @@
             "y": 200
           },
           "config": {
-            "scriptContent": "echo node-67",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-67",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-66"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1164,8 +1566,14 @@
             "y": 340
           },
           "config": {
-            "scriptContent": "echo node-68",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-68",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-67"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1181,8 +1589,14 @@
             "y": 480
           },
           "config": {
-            "scriptContent": "echo node-69",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-69",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-68"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1198,8 +1612,14 @@
             "y": 620
           },
           "config": {
-            "scriptContent": "echo node-70",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-70",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-69"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1215,8 +1635,14 @@
             "y": 60
           },
           "config": {
-            "scriptContent": "echo node-71",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-71",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-70"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1232,8 +1658,14 @@
             "y": 200
           },
           "config": {
-            "scriptContent": "echo node-72",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-72",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-71"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1249,8 +1681,14 @@
             "y": 340
           },
           "config": {
-            "scriptContent": "echo node-73",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-73",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-72"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1266,8 +1704,14 @@
             "y": 480
           },
           "config": {
-            "scriptContent": "echo node-74",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-74",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-73"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1283,8 +1727,14 @@
             "y": 620
           },
           "config": {
-            "scriptContent": "echo node-75",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-75",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-74"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1300,8 +1750,14 @@
             "y": 60
           },
           "config": {
-            "scriptContent": "echo node-76",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-76",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-75"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1317,8 +1773,14 @@
             "y": 200
           },
           "config": {
-            "scriptContent": "echo node-77",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-77",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-76"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1334,8 +1796,14 @@
             "y": 340
           },
           "config": {
-            "scriptContent": "echo node-78",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-78",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-77"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1351,8 +1819,14 @@
             "y": 480
           },
           "config": {
-            "scriptContent": "echo node-79",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-79",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-78"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1368,8 +1842,14 @@
             "y": 620
           },
           "config": {
-            "scriptContent": "echo node-80",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-80",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-79"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1385,8 +1865,14 @@
             "y": 60
           },
           "config": {
-            "scriptContent": "echo node-81",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-81",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-80"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1402,8 +1888,14 @@
             "y": 200
           },
           "config": {
-            "scriptContent": "echo node-82",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-82",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-81"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1419,8 +1911,14 @@
             "y": 340
           },
           "config": {
-            "scriptContent": "echo node-83",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-83",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-82"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1436,8 +1934,14 @@
             "y": 480
           },
           "config": {
-            "scriptContent": "echo node-84",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-84",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-83"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1453,8 +1957,14 @@
             "y": 620
           },
           "config": {
-            "scriptContent": "echo node-85",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-85",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-84"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1470,8 +1980,14 @@
             "y": 60
           },
           "config": {
-            "scriptContent": "echo node-86",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-86",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-85"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1487,8 +2003,14 @@
             "y": 200
           },
           "config": {
-            "scriptContent": "echo node-87",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-87",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-86"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1504,8 +2026,14 @@
             "y": 340
           },
           "config": {
-            "scriptContent": "echo node-88",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-88",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-87"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1521,8 +2049,14 @@
             "y": 480
           },
           "config": {
-            "scriptContent": "echo node-89",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-89",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-88"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1538,8 +2072,14 @@
             "y": 620
           },
           "config": {
-            "scriptContent": "echo node-90",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-90",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-89"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1555,8 +2095,14 @@
             "y": 60
           },
           "config": {
-            "scriptContent": "echo node-91",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-91",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-90"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1572,8 +2118,14 @@
             "y": 200
           },
           "config": {
-            "scriptContent": "echo node-92",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-92",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-91"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1589,8 +2141,14 @@
             "y": 340
           },
           "config": {
-            "scriptContent": "echo node-93",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-93",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-92"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1606,8 +2164,14 @@
             "y": 480
           },
           "config": {
-            "scriptContent": "echo node-94",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-94",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-93"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1623,8 +2187,14 @@
             "y": 620
           },
           "config": {
-            "scriptContent": "echo node-95",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-95",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-94"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1640,8 +2210,14 @@
             "y": 60
           },
           "config": {
-            "scriptContent": "echo node-96",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-96",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-95"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1657,8 +2233,14 @@
             "y": 200
           },
           "config": {
-            "scriptContent": "echo node-97",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-97",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-96"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1674,8 +2256,14 @@
             "y": 340
           },
           "config": {
-            "scriptContent": "echo node-98",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-98",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-97"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1691,8 +2279,14 @@
             "y": 480
           },
           "config": {
-            "scriptContent": "echo node-99",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-99",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-98"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
@@ -1708,8 +2302,14 @@
             "y": 620
           },
           "config": {
-            "scriptContent": "echo node-100",
-            "timeoutSec": 60
+            "timeoutSec": 60,
+            "script": "echo node-100",
+            "targets": {
+              "mode": "explicit",
+              "agentIds": [
+                "agent-99"
+              ]
+            }
           },
           "retryMax": 0,
           "retryIntervalSec": 5,
