@@ -1,7 +1,9 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
   Button,
   Col,
+  Divider,
   Drawer,
   Form,
   Input,
@@ -11,20 +13,37 @@ import {
   Space,
   Tag,
   Typography,
-  Divider,
-  Alert,
 } from 'antd';
 import { DeleteOutlined, SaveOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { theme } from 'antd';
-import type { WorkflowNode, WorkflowNodeType } from '../types';
+import type {
+  ApprovalConfig,
+  ApprovalMode,
+  ConditionConfig,
+  NotifyConfig,
+  ScriptExecConfig,
+  TargetsConfig,
+  WaitConfig,
+  WorkflowNode,
+  WorkflowNodeType,
+} from '../types';
 import { nodeHeight, NODE_WIDTH, sourceHandles } from '../graph';
+import { ChannelsEditor, ParametersEditor, TargetsEditor } from './NodeConfigFields';
+import { EMPTY_TARGETS, NOTIFY_CHANNELS, TARGETS_MODES, type TargetsMode, type TargetsValue } from './nodeConfig';
 
 /**
  * 配置表单 = 被选中节点的 config 编辑器（设计 §4.2 双编辑器硬规则）。
  *
  * 这里**不提供**新增/删除节点入口：结构变更唯一路径是画布（或画布的键盘等价操作），
  * 否则同一份 definition 有两个写入路径，409 冲突与 dirty 追踪都会出错。
+ *
+ * <p><b>字段名契约</b>：本面板写进 {@link WorkflowNode.config} 的键，与服务端执行器
+ * 读取的键逐字一致——`script`/`targets`/`parameters`/`rawParams`（ScriptExecNodeExecutor）、
+ * `channels`/`messageTemplate`（NotifyNodeExecutor）、`title`/`approverRole`/`timeoutSec`/
+ * `onTimeout`（ApprovalNodeExecutor）、`expression`（ConditionNodeExecutor）、
+ * `durationSec`（WaitNodeExecutor）。错一个字母 = 发布期 NODE_CONFIG_INVALID，
+ * 所以这里没有、也不该有一层"前端友好名 → 服务端口径"的翻译。</p>
  */
 
 const { Text } = Typography;
@@ -37,23 +56,98 @@ export interface NodeFormPanelProps {
   onRequestDelete: (key: string) => void;
 }
 
+/** antd Form 托管的标量字段（结构字段 targets/parameters/channels 走受控 state） */
 interface FormValues {
   name: string;
-  scriptContent?: string;
+  script?: string;
   scriptId?: string;
   expression?: string;
-  channel?: string;
-  message?: string;
-  mode?: 'confirm' | 'input';
+  messageTemplate?: string;
   title?: string;
+  detailTemplate?: string;
+  mode?: ApprovalMode;
+  approverRole?: 'ADMIN' | 'SUPER_ADMIN';
+  onTimeout?: 'approve' | 'reject' | 'fail';
+  timeoutSec?: number | null;
   durationSec?: number;
+  level?: NotifyConfig['level'];
   outputVar?: string;
   retryMax?: number;
   retryIntervalSec?: number;
-  timeoutSec?: number | null;
+  timeoutSecNode?: number | null;
   onFailure?: WorkflowNode['onFailure'];
-  onUnsafeValue?: WorkflowNode['onUnsafeValue'];
-  riskPolicy?: WorkflowNode['riskPolicy'];
+  onUnsafeValue?: 'reject' | 'raw' | 'truncate';
+  riskPolicy?: 'block' | 'allow_medium' | 'strict';
+}
+
+/* ── config 读取助手（宽松：老草稿/手写 JSON 可能缺字段或类型不符） ── */
+
+function str(value: unknown, fallback = ''): string {
+  return typeof value === 'string' ? value : fallback;
+}
+
+function num(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function strList(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((item) => String(item)) : [];
+}
+
+function numList(value: unknown): number[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is number => typeof item === 'number' && Number.isFinite(item))
+    : [];
+}
+
+function strMap(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const result: Record<string, string> = {};
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    result[key] = item == null ? '' : String(item);
+  }
+  return result;
+}
+
+/** 从 config.targets 还原表单态；mode 缺省按 explicit（服务端把缺 mode 当发布 ERROR） */
+function targetsOf(config: Record<string, unknown>): TargetsValue {
+  const raw: Record<string, unknown> =
+    config.targets && typeof config.targets === 'object' && !Array.isArray(config.targets)
+      ? (config.targets as Record<string, unknown>)
+      : {};
+  const mode = TARGETS_MODES.includes(raw.mode as TargetsMode)
+    ? (raw.mode as TargetsMode)
+    : 'explicit';
+  return {
+    mode,
+    agentIds: strList(raw.agentIds),
+    clusterIds: numList(raw.clusterIds),
+    tagIds: numList(raw.tagIds),
+    variableRef: str(raw.variableRef),
+  };
+}
+
+/** 表单态 targets → config.targets（只写当前 mode 的那一个键，不留上一 mode 的残留） */
+function targetsConfigOf(value: TargetsValue): TargetsConfig {
+  switch (value.mode) {
+    case 'explicit':
+      return { mode: 'explicit', agentIds: value.agentIds };
+    case 'cluster':
+      return { mode: 'cluster', clusterIds: value.clusterIds };
+    case 'tag':
+      return { mode: 'tag', tagIds: value.tagIds };
+    default:
+      return { mode: 'variable', variableRef: value.variableRef.trim() };
+  }
+}
+
+/** 滤掉空键（"刚点添加还没取名"的中间态不该进 definition） */
+function compactParameters(parameters: Record<string, string>): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(parameters)) {
+    if (key.trim()) result[key.trim()] = value;
+  }
+  return result;
 }
 
 const NodeFormPanel: React.FC<NodeFormPanelProps> = ({ node, open, onClose, onSave, onRequestDelete }) => {
@@ -62,51 +156,114 @@ const NodeFormPanel: React.FC<NodeFormPanelProps> = ({ node, open, onClose, onSa
   const [form] = Form.useForm<FormValues>();
   const nodeType: WorkflowNodeType | undefined = node?.type;
 
+  // 结构字段（对象/数组）由面板自持：antd Form 托管不了 targets 的按 mode 动态显隐，
+  // 而 parameters/channels 的增删行也不适合走 Form store
+  const [targets, setTargets] = useState<TargetsValue>(EMPTY_TARGETS);
+  const [parameters, setParameters] = useState<Record<string, string>>({});
+  const [rawParams, setRawParams] = useState<string[]>([]);
+  const [channels, setChannels] = useState<string[]>([...NOTIFY_CHANNELS.slice(0, 1)]);
+
   const initialValues = useMemo<FormValues | undefined>(() => {
     if (!node) return undefined;
     const config = node.config || {};
     return {
       name: node.name,
-      scriptContent: typeof config.scriptContent === 'string' ? config.scriptContent : '',
-      scriptId: typeof config.scriptId === 'string' ? config.scriptId : '',
-      expression: typeof config.expression === 'string' ? config.expression : '',
-      channel: typeof config.channel === 'string' ? config.channel : 'webhook',
-      message: typeof config.message === 'string' ? config.message : '',
-      mode: config.mode === 'input' ? 'input' : 'confirm',
-      title: typeof config.title === 'string' ? config.title : '',
-      durationSec: typeof config.durationSec === 'number' ? config.durationSec : 60,
+      script: str(config.script),
+      scriptId: str(config.scriptId),
+      expression: str(config.expression),
+      messageTemplate: str(config.messageTemplate),
+      title: str(config.title),
+      detailTemplate: str(config.detailTemplate),
+      mode: config.mode === 'human-confirm' ? 'human-confirm' : 'approval',
+      approverRole: config.approverRole === 'SUPER_ADMIN' ? 'SUPER_ADMIN' : 'ADMIN',
+      onTimeout: (['approve', 'reject', 'fail'] as const).includes(config.onTimeout as never)
+        ? (config.onTimeout as FormValues['onTimeout'])
+        : 'reject',
+      timeoutSec: typeof config.timeoutSec === 'number' ? config.timeoutSec : 86400,
+      durationSec: num(config.durationSec, 60),
+      level: (['info', 'warning', 'error'] as const).includes(config.level as never)
+        ? (config.level as NotifyConfig['level'])
+        : 'info',
       outputVar: node.outputVar || '',
       retryMax: node.retryMax ?? 0,
       retryIntervalSec: node.retryIntervalSec ?? 5,
-      timeoutSec: node.timeoutSec ?? null,
+      timeoutSecNode: node.timeoutSec ?? null,
       onFailure: node.onFailure || 'abort',
-      onUnsafeValue: node.onUnsafeValue || 'reject',
-      riskPolicy: node.riskPolicy || 'block',
+      onUnsafeValue:
+        config.onUnsafeValue === 'raw' || config.onUnsafeValue === 'truncate'
+          ? config.onUnsafeValue
+          : 'reject',
+      riskPolicy:
+        config.riskPolicy === 'allow_medium' || config.riskPolicy === 'strict'
+          ? config.riskPolicy
+          : 'block',
     };
   }, [node]);
 
+  // 换节点/重开面板时把结构字段同步成该节点的 config（否则会带着上一个节点的值）
   useEffect(() => {
-    if (open && initialValues) form.setFieldsValue(initialValues);
-  }, [open, initialValues, form]);
+    if (!open || !node || !initialValues) return;
+    const config = node.config || {};
+    setTargets(targetsOf(config));
+    setParameters(strMap(config.parameters));
+    setRawParams(strList(config.rawParams));
+    setChannels(strList(config.channels).length > 0 ? strList(config.channels) : ['telegram']);
+    form.setFieldsValue(initialValues);
+  }, [open, node, initialValues, form]);
 
   const handleSubmit = async () => {
-    const values = await form.validateFields();
+    let values: FormValues;
+    try {
+      values = await form.validateFields();
+    } catch {
+      return; // 校验失败：antd 已在字段上标红，不再静默提交
+    }
     if (!node) return;
     const config: Record<string, unknown> = { ...(node.config || {}) };
+
     if (nodeType === 'script-exec') {
-      config.scriptContent = values.scriptContent || '';
-      if (values.scriptId) config.scriptId = values.scriptId;
+      const scriptExec: ScriptExecConfig = {
+        script: values.script || '',
+        targets: targetsConfigOf(targets),
+        parameters: compactParameters(parameters),
+        rawParams,
+        onUnsafeValue: values.onUnsafeValue || 'reject',
+        riskPolicy: values.riskPolicy || 'block',
+      };
+      if (values.scriptId && values.scriptId.trim()) scriptExec.scriptId = values.scriptId.trim();
+      Object.assign(config, scriptExec);
     }
-    if (nodeType === 'condition') config.expression = values.expression || '';
+    if (nodeType === 'condition') {
+      const condition: ConditionConfig = { expression: values.expression || '' };
+      Object.assign(config, condition);
+    }
     if (nodeType === 'notify') {
-      config.channel = values.channel || 'webhook';
-      config.message = values.message || '';
+      const notify: NotifyConfig = {
+        channels,
+        messageTemplate: values.messageTemplate || '',
+        parameters: compactParameters(parameters),
+        level: values.level || 'info',
+      };
+      Object.assign(config, notify);
     }
     if (nodeType === 'approval') {
-      config.mode = values.mode || 'confirm';
-      config.title = values.title || '';
+      const approval: ApprovalConfig = {
+        mode: values.mode || 'approval',
+        title: values.title || '',
+        approverRole: values.approverRole || 'ADMIN',
+        timeoutSec: values.timeoutSec ?? 86400,
+        onTimeout: values.onTimeout || 'reject',
+        parameters: compactParameters(parameters),
+      };
+      if (values.detailTemplate && values.detailTemplate.trim()) {
+        approval.detailTemplate = values.detailTemplate;
+      }
+      Object.assign(config, approval);
     }
-    if (nodeType === 'wait') config.durationSec = values.durationSec ?? 60;
+    if (nodeType === 'wait') {
+      const wait: WaitConfig = { durationSec: values.durationSec ?? 60 };
+      Object.assign(config, wait);
+    }
 
     onSave(node.key, {
       name: values.name,
@@ -114,12 +271,20 @@ const NodeFormPanel: React.FC<NodeFormPanelProps> = ({ node, open, onClose, onSa
       outputVar: values.outputVar || undefined,
       retryMax: values.retryMax ?? 0,
       retryIntervalSec: values.retryIntervalSec ?? 5,
-      timeoutSec: values.timeoutSec ?? null,
+      timeoutSec: values.timeoutSecNode ?? null,
       onFailure: values.onFailure,
-      onUnsafeValue: values.onUnsafeValue,
-      riskPolicy: values.riskPolicy,
     });
   };
+
+  /** raw 参数必须配 riskPolicy >= allow_medium（服务端 ERROR，这里提前告知而非代改） */
+  const rawNeedsMedium =
+    nodeType === 'script-exec' && rawParams.length > 0 && form.getFieldValue('riskPolicy') === 'block';
+  const targetIdsEmpty =
+    nodeType === 'script-exec' &&
+    ((targets.mode === 'explicit' && targets.agentIds.length === 0) ||
+      (targets.mode === 'cluster' && targets.clusterIds.length === 0) ||
+      (targets.mode === 'tag' && targets.tagIds.length === 0) ||
+      (targets.mode === 'variable' && !targets.variableRef.trim()));
 
   return (
     <Drawer
@@ -132,7 +297,7 @@ const NodeFormPanel: React.FC<NodeFormPanelProps> = ({ node, open, onClose, onSa
       }
       open={open}
       onClose={onClose}
-      width={420}
+      width={480}
       extra={
         node && (
           <Space>
@@ -147,25 +312,55 @@ const NodeFormPanel: React.FC<NodeFormPanelProps> = ({ node, open, onClose, onSa
       }
     >
       {node && nodeType ? (
-        <Form form={form} layout="vertical" initialValues={initialValues} requiredMark={false}>
+        <Form form={form} layout="vertical" initialValues={initialValues} requiredMark="optional">
           <Form.Item name="name" label={t('workflow.form.name')} rules={[{ required: true, message: t('workflow.form.nameRequired') }]}>
             <Input />
           </Form.Item>
 
           {nodeType === 'script-exec' && (
             <>
-              <Form.Item name="scriptId" label={t('workflow.form.scriptId')}>
+              <Form.Item
+                name="script"
+                label={t('workflow.form.script')}
+                rules={[{ required: true, message: t('workflow.form.scriptRequired') }]}
+                tooltip={t('workflow.form.scriptHint')}
+              >
+                <Input.TextArea rows={10} style={{ fontFamily: 'monospace', fontSize: 12 }} />
+              </Form.Item>
+              <Form.Item name="scriptId" label={t('workflow.form.scriptId')} tooltip={t('workflow.form.scriptIdHint')}>
                 <Input placeholder={t('workflow.form.scriptIdPlaceholder')} />
               </Form.Item>
               <Form.Item
-                name="scriptContent"
-                label={t('workflow.form.scriptContent')}
-                rules={[{ required: true, message: t('workflow.form.scriptContentRequired') }]}
-                tooltip={t('workflow.form.scriptContentHint')}
+                label={t('workflow.form.targets')}
+                required
+                tooltip={t('workflow.form.targetsHint')}
+                extra={targetIdsEmpty ? t('workflow.form.targetsEmpty') : undefined}
               >
-                <Input.TextArea rows={8} style={{ fontFamily: 'monospace', fontSize: 12 }} />
+                <TargetsEditor value={targets} onChange={setTargets} />
               </Form.Item>
-              <Alert type="warning" showIcon message={t('workflow.form.riskHint')} style={{ marginBottom: 16 }} />
+              <Form.Item label={t('workflow.form.parameters')} tooltip={t('workflow.form.parametersHint')}>
+                <ParametersEditor value={parameters} onChange={setParameters} ariaLabel={t('workflow.form.parameters')} />
+              </Form.Item>
+              <Form.Item label={t('workflow.form.rawParams')} tooltip={t('workflow.form.rawParamsHint')}>
+                <Select
+                  mode="multiple"
+                  value={rawParams}
+                  onChange={(next: string[]) => setRawParams(next)}
+                  options={Object.keys(parameters).map((key) => ({ value: key, label: key }))}
+                  placeholder={t('workflow.form.rawParamsPlaceholder')}
+                  style={{ width: '100%' }}
+                  aria-label={t('workflow.form.rawParams')}
+                />
+              </Form.Item>
+              <Alert type="warning" showIcon message={t('workflow.form.riskHint')} style={{ marginBottom: 12 }} />
+              {rawNeedsMedium && (
+                <Alert
+                  type="error"
+                  showIcon
+                  message={t('workflow.form.rawNeedsMedium')}
+                  style={{ marginBottom: 12 }}
+                />
+              )}
             </>
           )}
 
@@ -175,6 +370,7 @@ const NodeFormPanel: React.FC<NodeFormPanelProps> = ({ node, open, onClose, onSa
               label={t('workflow.form.expression')}
               rules={[{ required: true, message: t('workflow.form.expressionRequired') }]}
               tooltip={t('workflow.form.expressionHint')}
+              extra={t('workflow.form.expressionSyntax')}
             >
               <Input placeholder="nodes.n1.output.count > 0" style={{ fontFamily: 'monospace' }} />
             </Form.Item>
@@ -182,40 +378,103 @@ const NodeFormPanel: React.FC<NodeFormPanelProps> = ({ node, open, onClose, onSa
 
           {nodeType === 'notify' && (
             <>
-              <Form.Item name="channel" label={t('workflow.form.channel')}>
+              <Form.Item
+                label={t('workflow.form.channels')}
+                required
+                tooltip={t('workflow.form.channelsHint')}
+                extra={channels.length === 0 ? t('workflow.form.channelsRequired') : undefined}
+              >
+                <ChannelsEditor value={channels} onChange={setChannels} />
+              </Form.Item>
+              <Form.Item
+                name="messageTemplate"
+                label={t('workflow.form.messageTemplate')}
+                rules={[{ required: true, message: t('workflow.form.messageTemplateRequired') }]}
+                tooltip={t('workflow.form.messageTemplateHint')}
+              >
+                <Input.TextArea rows={5} style={{ fontFamily: 'monospace', fontSize: 12 }} />
+              </Form.Item>
+              <Form.Item label={t('workflow.form.parameters')} tooltip={t('workflow.form.parametersHint')}>
+                <ParametersEditor value={parameters} onChange={setParameters} ariaLabel={t('workflow.form.parameters')} />
+              </Form.Item>
+              <Form.Item name="level" label={t('workflow.form.level')} tooltip={t('workflow.form.levelHint')}>
                 <Select
                   options={[
-                    { value: 'webhook', label: 'Webhook' },
-                    { value: 'email', label: 'Email' },
-                    { value: 'bot', label: t('nav.system_bot') },
+                    { value: 'info', label: 'info' },
+                    { value: 'warning', label: 'warning' },
+                    { value: 'error', label: 'error' },
                   ]}
                 />
-              </Form.Item>
-              <Form.Item name="message" label={t('workflow.form.message')} rules={[{ required: true }]}>
-                <Input.TextArea rows={4} />
               </Form.Item>
             </>
           )}
 
           {nodeType === 'approval' && (
             <>
-              <Form.Item name="mode" label={t('workflow.form.approvalMode')}>
+              <Form.Item name="mode" label={t('workflow.form.approvalMode')} tooltip={t('workflow.form.approvalModeHint')}>
                 <Select
                   options={[
-                    { value: 'confirm', label: t('workflow.form.approvalModeConfirm') },
-                    { value: 'input', label: t('workflow.form.approvalModeInput') },
+                    { value: 'approval', label: t('workflow.form.approvalModeApproval') },
+                    { value: 'human-confirm', label: t('workflow.form.approvalModeHumanConfirm') },
                   ]}
                 />
               </Form.Item>
-              <Form.Item name="title" label={t('workflow.form.approvalTitle')} rules={[{ required: true }]}>
+              <Form.Item
+                name="title"
+                label={t('workflow.form.approvalTitle')}
+                rules={[{ required: true, message: t('workflow.form.approvalTitleRequired') }]}
+                tooltip={t('workflow.form.approvalTitleHint')}
+              >
                 <Input />
+              </Form.Item>
+              <Form.Item name="detailTemplate" label={t('workflow.form.detailTemplate')} tooltip={t('workflow.form.detailTemplateHint')}>
+                <Input.TextArea rows={3} style={{ fontFamily: 'monospace', fontSize: 12 }} />
+              </Form.Item>
+              <Row gutter={12}>
+                <Col span={12}>
+                  <Form.Item name="approverRole" label={t('workflow.form.approverRole')} tooltip={t('workflow.form.approverRoleHint')}>
+                    <Select
+                      options={[
+                        { value: 'ADMIN', label: 'ADMIN' },
+                        { value: 'SUPER_ADMIN', label: 'SUPER_ADMIN' },
+                      ]}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item
+                    name="timeoutSec"
+                    label={t('workflow.form.approvalTimeout')}
+                    tooltip={t('workflow.form.approvalTimeoutHint')}
+                    rules={[{ required: true, message: t('workflow.form.approvalTimeoutRequired') }]}
+                  >
+                    <InputNumber min={60} max={604800} style={{ width: '100%' }} addonAfter={t('common.seconds')} />
+                  </Form.Item>
+                </Col>
+              </Row>
+              <Form.Item name="onTimeout" label={t('workflow.form.onTimeout')} tooltip={t('workflow.form.onTimeoutHint')}>
+                <Select
+                  options={[
+                    { value: 'reject', label: 'reject' },
+                    { value: 'approve', label: 'approve' },
+                    { value: 'fail', label: 'fail' },
+                  ]}
+                />
+              </Form.Item>
+              <Form.Item label={t('workflow.form.parameters')} tooltip={t('workflow.form.parametersHint')}>
+                <ParametersEditor value={parameters} onChange={setParameters} ariaLabel={t('workflow.form.parameters')} />
               </Form.Item>
             </>
           )}
 
           {nodeType === 'wait' && (
-            <Form.Item name="durationSec" label={t('workflow.form.durationSec')} rules={[{ required: true }]}>
-              <InputNumber min={1} max={86400} style={{ width: '100%' }} addonAfter={t('common.seconds')} />
+            <Form.Item
+              name="durationSec"
+              label={t('workflow.form.durationSec')}
+              rules={[{ required: true, message: t('workflow.form.durationSecRequired') }]}
+              tooltip={t('workflow.form.durationSecHint')}
+            >
+              <InputNumber min={1} max={3600} style={{ width: '100%' }} addonAfter={t('common.seconds')} />
             </Form.Item>
           )}
 
@@ -240,7 +499,7 @@ const NodeFormPanel: React.FC<NodeFormPanelProps> = ({ node, open, onClose, onSa
 
           <Row gutter={12}>
             <Col span={12}>
-              <Form.Item name="timeoutSec" label={t('workflow.form.timeout')}>
+              <Form.Item name="timeoutSecNode" label={t('workflow.form.timeout')} tooltip={t('workflow.form.timeoutHint')}>
                 <InputNumber min={1} max={86400} style={{ width: '100%' }} addonAfter="s" />
               </Form.Item>
             </Col>
@@ -259,7 +518,7 @@ const NodeFormPanel: React.FC<NodeFormPanelProps> = ({ node, open, onClose, onSa
 
           <Row gutter={12}>
             <Col span={12}>
-              <Form.Item name="onUnsafeValue" label={t('workflow.form.onUnsafeValue')}>
+              <Form.Item name="onUnsafeValue" label={t('workflow.form.onUnsafeValue')} tooltip={t('workflow.form.onUnsafeValueHint')}>
                 <Select
                   options={[
                     { value: 'reject', label: 'reject' },
@@ -270,7 +529,7 @@ const NodeFormPanel: React.FC<NodeFormPanelProps> = ({ node, open, onClose, onSa
               </Form.Item>
             </Col>
             <Col span={12}>
-              <Form.Item name="riskPolicy" label={t('workflow.form.riskPolicy')}>
+              <Form.Item name="riskPolicy" label={t('workflow.form.riskPolicy')} tooltip={t('workflow.form.riskPolicyHint')}>
                 <Select
                   options={[
                     { value: 'block', label: 'block' },
