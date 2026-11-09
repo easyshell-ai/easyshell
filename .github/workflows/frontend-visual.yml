@@ -42,7 +42,14 @@ jobs:
         working-directory: easyshell-web
         # --with-deps 必须：ubuntu-latest 不预装 Chromium 全部依赖
         #（缺 libnss3/libatk 等会启动即崩）。只装 chromium 把安装量从约 1.2GB 降到约 350MB。
-        run: npx playwright install --with-deps chromium
+        #
+        # fonts-noto-cjk 必须：runner 默认只有 liberation 与 noto-color-emoji，没有中文字体。
+        # 缺它时中文按 fallback 字体渲染，字形宽度与开发机（Noto Sans CJK）不同，
+        # 表格与侧边栏会整体微移，每个暗色基线差几千像素——表现为"回归"实际是字体差异。
+        # 装上之后 CI 与开发机渲染一致，基线才有意义。
+        run: |
+          sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+          npx playwright install --with-deps chromium
       - name: lint / build / 单测 / 视觉回归
         working-directory: easyshell-web
         # W9 再把 `npx playwright test tests/a11y`（axe 扫描）和
