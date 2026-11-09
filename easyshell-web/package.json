@@ -41,7 +41,7 @@
     "react-codemirror-merge": "^4.25.7",
     "react-dom": "^19.2.0",
     "react-i18next": "^16.5.4",
-    "react-js-cron": "^5.2.0",
+    "react-js-cron": "^6.0.2",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.18.5",
     "rehype-highlight": "^7.0.2",
