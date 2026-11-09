@@ -61,7 +61,12 @@ export default defineConfig({
     { name: 'light-1440', use: { ...devices['Desktop Chrome'], colorScheme: 'light', viewport: { width: 1440, height: 900 } } },
   ],
   webServer: {
-    command: `npm run build && npm run preview -- --port ${previewPort}`,
+    // 不用 `npm run build && npm run preview`：CI 上那条链第二次构建会把 vite 的
+    // reporter 输出吞掉一半，npm 的 script 包装层又让 preview 的 banner 完全不出现，
+    // 一旦探活失败，日志里看不到任何线索（见 frontend-visual 的首次失败）。
+    // 现在 build 只由 workflow 的 step 做一次，这里直接起 vite preview，输出完整、
+    // 失败信息明确。strictPort 让端口冲突立刻报错而不是静默换端口。
+    command: `npx vite preview --port ${previewPort} --strictPort --host 127.0.0.1`,
     url: baseURL,
     // 不复用：端口被别的服务占用时必须让我们自己的 preview 去撞 EADDRINUSE，
     // 而不是静默连上别人的服务器然后报"元素找不到"（见文件头注释）。

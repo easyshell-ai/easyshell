@@ -47,6 +47,8 @@ jobs:
         working-directory: easyshell-web
         # W9 再把 `npx playwright test tests/a11y`（axe 扫描）和
         # `node scripts/verify-theme-tokens.mjs`（token 溯源）接进来，届时与本步合并。
+        # build 必须在本步完成：playwright.config.ts 的 webServer 只起 vite preview，
+        # 不再自己构建（见该文件 webServer 注释——CI 上 npm 包装层会吞掉 preview 的输出）。
         run: |
           npm run lint && npm run build && npm test
           npx playwright test
