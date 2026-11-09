@@ -1,4 +1,4 @@
-FROM node:25-alpine AS builder
+FROM node:26-alpine AS builder
 
 WORKDIR /build
 COPY easyshell-web/package.json easyshell-web/package-lock.json ./
