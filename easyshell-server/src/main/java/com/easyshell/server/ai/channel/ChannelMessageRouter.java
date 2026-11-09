@@ -328,24 +328,37 @@ public class ChannelMessageRouter {
 
     /**
      * 主动推送消息到指定渠道的配置目标。
+     *
+     * <p><b>如实返回结果</b>（P-3）：渠道未注册 / 未启用 / 解析不出目标时只告警不抛异常，
+     * 旧 {@code void} 签名让调用方只能把"没抛异常"当成"已交付"。现在把
+     * {@link PushOutcome} 交回去，只有 {@code DELIVERED} 表示消息真的离开了系统。</p>
+     *
      * @param channelKey 渠道标识 (telegram / discord / dingtalk / slack / feishu / wechat-work)
      * @param content 消息内容
+     * @return 推送结果；{@link PushOutcome#DELIVERED} = 至少一个目标确认接收
      */
-    public void pushMessage(String channelKey, String content) {
+    public PushOutcome pushMessage(String channelKey, String content) {
         BotChannelService svc = serviceMap.get(channelKey);
-        if (svc == null || !svc.isRunning()) {
-            log.warn("Cannot push message: channel '{}' not available or not running", channelKey);
-            return;
+        if (svc == null) {
+            log.warn("Cannot push message: channel '{}' is not registered", channelKey);
+            return PushOutcome.CHANNEL_UNKNOWN;
+        }
+        if (!svc.isRunning()) {
+            log.warn("Cannot push message: channel '{}' not running (enabled=false or failed to start)",
+                    channelKey);
+            return PushOutcome.CHANNEL_NOT_RUNNING;
         }
         List<String> targets = resolvePushTargets(channelKey);
         if (targets.isEmpty()) {
             log.warn("No push targets resolved for channel '{}'", channelKey);
-            return;
+            return PushOutcome.NO_TARGETS;
         }
+        int sent = 0;
         for (String target : targets) {
             try {
-                boolean sent = svc.pushMessage(target, content);
-                if (sent) {
+                boolean delivered = svc.pushMessage(target, content);
+                if (delivered) {
+                    sent++;
                     log.info("Pushed message to {} target '{}'", channelKey, target);
                 } else {
                     log.warn("Failed to push message to {} target '{}'", channelKey, target);
@@ -354,6 +367,7 @@ public class ChannelMessageRouter {
                 log.error("Error pushing message to {} target '{}': {}", channelKey, target, e.getMessage());
             }
         }
+        return sent > 0 ? PushOutcome.DELIVERED : PushOutcome.PUSH_FAILED;
     }
 
     /**
