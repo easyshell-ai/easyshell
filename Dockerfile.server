@@ -13,7 +13,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.versi
     CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w -X main.version=${VERSION}" -o easyshell-agent-linux-arm64 ./cmd/agent
 
 # ---- Stage 2: Build Java Server jar ----
-FROM --platform=$BUILDPLATFORM gradle:8-jdk17 AS server-builder
+FROM --platform=$BUILDPLATFORM gradle:9-jdk17 AS server-builder
 
 WORKDIR /build
 COPY easyshell-server/ .
