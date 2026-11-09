@@ -22,6 +22,11 @@ const AiChat = lazy(() => import('../pages/ai/chat'));
 const AiScheduled = lazy(() => import('../pages/ai/scheduled'));
 const AiReports = lazy(() => import('../pages/ai/reports'));
 const AiApproval = lazy(() => import('../pages/ai/approval'));
+const WorkflowList = lazy(() => import('../pages/workflow'));
+const WorkflowEditor = lazy(() => import('../pages/workflow/editor'));
+const WorkflowRunList = lazy(() => import('../pages/workflow/run'));
+const WorkflowRunMonitor = lazy(() => import('../pages/workflow/run/monitor'));
+const WorkflowApprovals = lazy(() => import('../pages/workflow/approvals'));
 
 export {
   Login,
@@ -46,4 +51,9 @@ export {
   AiScheduled,
   AiReports,
   AiApproval,
+  WorkflowList,
+  WorkflowEditor,
+  WorkflowRunList,
+  WorkflowRunMonitor,
+  WorkflowApprovals,
 };

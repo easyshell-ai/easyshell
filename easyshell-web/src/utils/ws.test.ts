@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildTaskLogWsUrl } from './ws';
+import { buildTaskLogWsUrl, buildWorkflowRunWsUrl } from './ws';
 
 describe('buildTaskLogWsUrl', () => {
   const https = { protocol: 'https:', host: 'easyshell.example.com' };
@@ -20,5 +20,17 @@ describe('buildTaskLogWsUrl', () => {
   it('omits the query string entirely when there is no token', () => {
     expect(buildTaskLogWsUrl('task-3', null, https)).toBe('wss://easyshell.example.com/ws/task/log/task-3');
     expect(buildTaskLogWsUrl('task-3', '', https)).toBe('wss://easyshell.example.com/ws/task/log/task-3');
+  });
+});
+
+describe('buildWorkflowRunWsUrl', () => {
+  const https = { protocol: 'https:', host: 'easyshell.example.com' };
+
+  it('targets the workflow run channel and carries the token', () => {
+    expect(buildWorkflowRunWsUrl('run-1', 'tok', https)).toBe('wss://easyshell.example.com/ws/workflow/run/run-1?token=tok');
+  });
+
+  it('omits the query string when there is no token', () => {
+    expect(buildWorkflowRunWsUrl('run-1', null, https)).toBe('wss://easyshell.example.com/ws/workflow/run/run-1');
   });
 });

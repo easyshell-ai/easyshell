@@ -34,6 +34,9 @@ import {
   QuestionCircleOutlined,
   LinkOutlined,
   ApiOutlined,
+  PartitionOutlined,
+  FieldTimeOutlined,
+  SafetyOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import { useTheme } from '../contexts/themeContext';
@@ -50,6 +53,9 @@ const getSelectedKeys = (pathname: string): string[] => {
   if (pathname.startsWith('/host/')) return ['/host'];
   if (pathname.startsWith('/terminal/')) return ['/host'];
   if (pathname.startsWith('/script/')) return ['/script'];
+  if (pathname === '/workflow/approvals') return ['/workflow/approvals'];
+  if (pathname.startsWith('/workflow/run')) return ['/workflow/run'];
+  if (pathname.startsWith('/workflow')) return ['/workflow'];
   if (pathname === '/ai/approval') return ['/ai/approval'];
   if (pathname.startsWith('/ai/')) return [pathname];
   return ['/' + pathname.split('/')[1]];
@@ -88,6 +94,10 @@ const MainLayout: React.FC = () => {
     '/script/new': t('script.createScript'),
     '/script/edit': t('script.editScript'),
     '/task': t('nav.task'),
+    '/workflow': t('nav.workflow'),
+    '/workflow/editor': t('nav.workflow_editor'),
+    '/workflow/run': t('nav.workflow_run'),
+    '/workflow/approvals': t('nav.workflow_approvals'),
     '/cluster': t('nav.cluster'),
     '/audit': t('nav.audit'),
     '/ai': t('nav.ai'),
@@ -130,10 +140,13 @@ const MainLayout: React.FC = () => {
       { type: 'group', label: <div style={groupLabelStyle}>{t('nav.group.devops')}</div>, children: [
         { key: '/script', icon: <CodeOutlined />, label: t('nav.script') },
         { key: '/task', icon: <PlayCircleOutlined />, label: t('nav.task') },
+        { key: '/workflow', icon: <PartitionOutlined />, label: t('nav.workflow') },
+        { key: '/workflow/run', icon: <FieldTimeOutlined />, label: t('nav.workflow_run') },
         { key: '/audit', icon: <AuditOutlined />, label: t('nav.audit') },
       ]},
       { type: 'group', label: <div style={groupLabelStyle}>{t('nav.group.approval')}</div>, children: [
         { key: '/ai/approval', icon: <CheckSquareOutlined />, label: t('nav.ai_approval') },
+        { key: '/workflow/approvals', icon: <SafetyOutlined />, label: t('nav.workflow_approvals') },
       ]},
       { type: 'group', label: <div style={groupLabelStyle}>{t('nav.group.intelligence')}</div>, children: [
         {

@@ -1,0 +1,151 @@
+{
+  "code": 200,
+  "message": "ok",
+  "data": {
+    "id": 12,
+    "version": 4,
+    "baseVersion": 3,
+    "isValid": false,
+    "estimatedRisk": null,
+    "publishedAt": null,
+    "createdAt": "2026-02-14T10:00:00",
+    "changelog": null,
+    "definition": {
+      "schemaVersion": 1,
+      "defaultOnUpstreamFailure": "skip",
+      "onRejection": "abort",
+      "variables": {
+        "env": {
+          "type": "string",
+          "required": true,
+          "description": "目标环境"
+        },
+        "threshold": {
+          "type": "number",
+          "required": false,
+          "default": 80
+        }
+      },
+      "nodes": [
+        {
+          "key": "n1",
+          "type": "script-exec",
+          "name": "磁盘检查",
+          "position": {
+            "x": 80,
+            "y": 80
+          },
+          "config": {
+            "scriptContent": "df -h /",
+            "timeoutSec": 300
+          },
+          "retryMax": 1,
+          "retryIntervalSec": 5,
+          "timeoutSec": 300,
+          "onFailure": "abort",
+          "outputVar": "disk"
+        },
+        {
+          "key": "n2",
+          "type": "condition",
+          "name": "使用率超阈值？",
+          "position": {
+            "x": 420,
+            "y": 80
+          },
+          "config": {
+            "expression": "nodes.n1.output.usage > threshold"
+          },
+          "outputVar": "decision"
+        },
+        {
+          "key": "n3",
+          "type": "script-exec",
+          "name": "清理日志",
+          "position": {
+            "x": 760,
+            "y": 20
+          },
+          "config": {
+            "scriptContent": "find /var/log/nginx -mtime +30 -delete",
+            "timeoutSec": 600
+          },
+          "timeoutSec": 600,
+          "onFailure": "skip"
+        },
+        {
+          "key": "n4",
+          "type": "approval",
+          "name": "人工确认",
+          "position": {
+            "x": 760,
+            "y": 200
+          },
+          "config": {
+            "mode": "confirm",
+            "title": "确认清理"
+          }
+        },
+        {
+          "key": "n5",
+          "type": "notify",
+          "name": "通知值班",
+          "position": {
+            "x": 1100,
+            "y": 110
+          },
+          "config": {
+            "channel": "bot",
+            "message": "磁盘已清理：{{env}}"
+          }
+        },
+        {
+          "key": "n6",
+          "type": "wait",
+          "name": "等待 60 秒",
+          "position": {
+            "x": 1100,
+            "y": 300
+          },
+          "config": {
+            "durationSec": 60
+          },
+          "timeoutSec": null
+        }
+      ],
+      "edges": [
+        {
+          "id": "n1:out->n2",
+          "from": "n1",
+          "to": "n2"
+        },
+        {
+          "id": "n2:true->n3",
+          "from": "n2",
+          "to": "n3",
+          "condition": "nodes.n1.output.usage > threshold"
+        },
+        {
+          "id": "n2:false->n6",
+          "from": "n2",
+          "to": "n6"
+        },
+        {
+          "id": "n3:out->n4",
+          "from": "n3",
+          "to": "n4"
+        },
+        {
+          "id": "n4:out->n5",
+          "from": "n4",
+          "to": "n5"
+        },
+        {
+          "id": "n6:out->n5",
+          "from": "n6",
+          "to": "n5"
+        }
+      ]
+    }
+  }
+}

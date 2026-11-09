@@ -24,6 +24,11 @@ import {
   AiScheduled,
   AiReports,
   AiApproval,
+  WorkflowList,
+  WorkflowEditor,
+  WorkflowRunList,
+  WorkflowRunMonitor,
+  WorkflowApprovals,
 } from './lazyPages';
 
 const router = createBrowserRouter([
@@ -66,6 +71,26 @@ const router = createBrowserRouter([
       {
         path: 'task',
         element: <LazyLoad><Task /></LazyLoad>,
+      },
+      {
+        path: 'workflow',
+        element: <LazyLoad><WorkflowList /></LazyLoad>,
+      },
+      {
+        path: 'workflow/editor/:id',
+        element: <LazyLoad><WorkflowEditor /></LazyLoad>,
+      },
+      {
+        path: 'workflow/run',
+        element: <LazyLoad><WorkflowRunList /></LazyLoad>,
+      },
+      {
+        path: 'workflow/run/:runId',
+        element: <LazyLoad><WorkflowRunMonitor /></LazyLoad>,
+      },
+      {
+        path: 'workflow/approvals',
+        element: <LazyLoad><WorkflowApprovals /></LazyLoad>,
       },
       {
         path: 'cluster',

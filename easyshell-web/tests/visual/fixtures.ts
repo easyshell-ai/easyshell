@@ -45,6 +45,9 @@ const SHAPE_BY_PATH: Array<[RegExp, StubShape]> = [
   // ── 分页型 ApiResponse<PageResponse<T>> ─────────────────────────────────
   [/\/v1\/audit\/list$/, 'page'], // getAuditLogList
   [/\/v1\/task\/page$/, 'page'], // getTaskPage
+  [/\/v1\/workflow\/page$/, 'page'], // getWorkflowPage
+  [/\/v1\/workflow\/runs$/, 'page'], // getWorkflowRuns
+  [/\/v1\/workflow\/approvals\/pending$/, 'array'], // getPendingWorkflowApprovals
   [/\/v1\/ai\/inspect\/reports$/, 'page'], // getInspectReports
   [/^\/api\/memory$/, 'page'], // getMemoryList
   [/^\/api\/sop$/, 'page'], // getSopList
@@ -59,6 +62,10 @@ const SHAPE_BY_PATH: Array<[RegExp, StubShape]> = [
   [/\/v1\/cluster\/[^/]+$/, 'object'], // getClusterDetail
   [/\/v1\/task\/[^/]+$/, 'object'], // getTaskDetail
   [/\/v1\/script\/[^/]+$/, 'object'], // getScript
+  [/\/v1\/workflow\/runs\/[^/]+$/, 'object'], // getWorkflowRun
+  [/\/v1\/workflow\/[^/]+\/versions\/[^/]+$/, 'object'], // getWorkflowVersion / getWorkflowDraft
+  [/\/v1\/workflow\/[^/]+\/versions$/, 'array'], // getWorkflowVersions
+  [/\/v1\/workflow\/[^/]+$/, 'object'], // getWorkflowDetail
   [/\/v1\/user\/[^/]+$/, 'object'], // getUserDetail
   [/^\/api\/agents\/[^/]+$/, 'object'], // getAgent（toggle 也走这里）
   [/^\/api\/memory\/[^/]+$/, 'object'], // getMemory

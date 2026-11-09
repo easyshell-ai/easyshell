@@ -1,0 +1,26 @@
+{
+  "code": 200,
+  "message": "ok",
+  "data": [
+    {
+      "id": 11,
+      "version": 3,
+      "baseVersion": 3,
+      "isValid": true,
+      "estimatedRisk": "LOW",
+      "publishedAt": "2026-02-01T08:00:00",
+      "createdAt": "2026-02-01T08:00:00",
+      "changelog": "加通知节点"
+    },
+    {
+      "id": 10,
+      "version": 2,
+      "baseVersion": 2,
+      "isValid": true,
+      "estimatedRisk": "LOW",
+      "publishedAt": "2026-01-20T08:00:00",
+      "createdAt": "2026-01-20T08:00:00",
+      "changelog": null
+    }
+  ]
+}

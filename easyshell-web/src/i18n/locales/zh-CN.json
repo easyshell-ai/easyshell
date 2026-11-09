@@ -73,7 +73,11 @@
     "system_memory": "记忆管理",
     "system_sop": "SOP 管理",
     "terminal": "终端",
-    "host_detail": "主机详情"
+    "host_detail": "主机详情",
+    "workflow": "工作流",
+    "workflow_editor": "工作流编辑",
+    "workflow_run": "运行记录",
+    "workflow_approvals": "工作流审批"
   },
   "header": {
     "switch_to_en": "Switch to English",
@@ -1518,6 +1522,276 @@
       "cancel": "取消",
       "approvalSubmitted": "已提交审批，请等待管理员处理",
       "approvalFailed": "提交审批失败"
+    }
+  },
+  "workflow": {
+    "list": {
+      "title": "工作流",
+      "create": "新建工作流",
+      "created": "工作流已创建",
+      "createFailed": "创建工作流失败",
+      "edit": "编辑",
+      "fetchFailed": "获取工作流列表失败",
+      "searchPlaceholder": "搜索名称 / 分类",
+      "empty": "暂无工作流",
+      "emptyHint": "点击右上角「新建工作流」开始，或从 AI 运维的 DAG 计划导入。",
+      "nameRequired": "请输入工作流名称",
+      "description": "描述",
+      "archiveConfirm": "确认归档此工作流？（软删除，可恢复）",
+      "archived": "已归档",
+      "archiveFailed": "归档失败",
+      "col": {
+        "name": "名称",
+        "visibility": "可见性",
+        "category": "分类",
+        "version": "当前版本",
+        "runs": "运行 / 成功",
+        "lastRunAt": "最近运行"
+      }
+    },
+    "status": {
+      "draft": "草稿",
+      "published": "已发布",
+      "archived": "已归档"
+    },
+    "visibility": {
+      "private": "仅自己",
+      "public": "全员可见"
+    },
+    "palette": {
+      "title": "节点调色板",
+      "add": "添加",
+      "handles": "{{in}} 入 {{out}} 出",
+      "hint": "拖到画布，或聚焦后按 Enter 添加"
+    },
+    "node": {
+      "type": {
+        "script-exec": "脚本执行",
+        "condition": "条件分支",
+        "notify": "通知",
+        "approval": "人工审批",
+        "wait": "等待"
+      },
+      "desc": {
+        "script-exec": "在目标主机上执行脚本，落到真实 Task",
+        "condition": "表达式求值，true / false 双分支",
+        "notify": "通过 Webhook / 邮件 / 机器人推送消息",
+        "approval": "挂起运行，等待管理员审批",
+        "wait": "按秒等待后继续"
+      }
+    },
+    "nodeStatus": {
+      "pending": "等待中",
+      "running": "执行中",
+      "succeeded": "成功",
+      "failed": "失败",
+      "skipped": "已跳过",
+      "suspended": "挂起中",
+      "cancelled": "已取消",
+      "timeout": "超时",
+      "interrupted": "已中断"
+    },
+    "canvas": {
+      "ariaLabel": "工作流画布：Tab 遍历节点，Enter 打开配置，方向键移动，Delete 删除",
+      "hint": "拖空白框选 · 空格+拖动平移 · Ctrl+Z 撤销",
+      "reject": {
+        "SELF_CONNECTION": "不能连接到节点自身",
+        "DUPLICATE_EDGE": "这条连线已存在",
+        "CYCLE": "不允许成环（工作流必须是有向无环图）",
+        "ENDPOINT_MISSING": "连线端点不存在"
+      },
+      "deleteTitle": "确认删除",
+      "deleteConfirm": "将删除 {{nodes}} 个节点与 {{edges}} 条连线，此操作可用 Ctrl+Z 撤销。",
+      "deleteNodes": "涉及节点",
+      "deleted": "已删除",
+      "copied": "已复制 {{count}} 个节点",
+      "autoLayoutDone": "已按分层重新布局"
+    },
+    "form": {
+      "title": "节点配置",
+      "empty": "在画布中选择一个节点",
+      "name": "节点名称",
+      "nameRequired": "请输入节点名称",
+      "scriptId": "脚本 ID（可选，复用脚本库）",
+      "scriptIdPlaceholder": "留空则直接写脚本内容",
+      "scriptContent": "脚本内容",
+      "scriptContentRequired": "请输入脚本内容",
+      "scriptContentHint": "支持 {{NAME}} 插值；raw:true 参数按声明处理",
+      "riskHint": "非 LOW 风险脚本会被风险门禁拦截；有 approval 祖先时可人工审批放行",
+      "expression": "条件表达式",
+      "expressionRequired": "请输入条件表达式",
+      "expressionHint": "示例：nodes.n1.output.count > 0",
+      "channel": "通知渠道",
+      "message": "消息内容",
+      "approvalMode": "审批模式",
+      "approvalModeConfirm": "仅确认",
+      "approvalModeInput": "确认并填写输入",
+      "approvalTitle": "审批标题",
+      "durationSec": "等待时长",
+      "advanced": "高级",
+      "outputVar": "输出变量名",
+      "outputVarHint": "以 nodes.<key>.output 形式被下游引用，不得与节点 key 相同",
+      "retryMax": "重试次数",
+      "retryInterval": "重试间隔",
+      "timeout": "超时（秒）",
+      "onFailure": "失败策略",
+      "onUnsafeValue": "值越界处置",
+      "riskPolicy": "风险策略",
+      "nodeShape": "尺寸 {{width}}×{{height}}",
+      "handles": "{{in}} 入 {{out}} 出"
+    },
+    "edge": {
+      "title": "连线：{{from}} → {{to}}",
+      "condition": "条件表达式（留空 = 恒真）",
+      "conditionHint": "仅 condition 节点的 true 分支可带条件",
+      "dualHandleHint": "condition 节点：true 分支可带条件，false 分支必须留空",
+      "falseBranchLocked": "false 分支的连线不允许带条件（门控由把手承担）",
+      "onUpstreamFailure": "上游失败时"
+    },
+    "json": {
+      "title": "定义 JSON（只读）",
+      "meta": "{{nodes}} 个节点 / {{edges}} 条连线 / schema v{{version}}"
+    },
+    "editor": {
+      "dirty": "未保存",
+      "saved": "已保存",
+      "lastSaved": "上次保存 {{time}}",
+      "selectedCount": "已选 {{count}} 个节点",
+      "selectedEdges": "已选 {{count}} 条连线",
+      "undo": "撤销 (Ctrl+Z)",
+      "redo": "重做 (Ctrl+Shift+Z)",
+      "autoLayout": "自动布局",
+      "nothingToUndo": "没有可撤销的操作",
+      "nothingToRedo": "没有可重做的操作",
+      "saveFailed": "保存草稿失败",
+      "saveFailedOffline": "保存失败，改动已存到本地草稿",
+      "localDraftFound": "发现本地草稿（上次保存失败时留下）",
+      "localDraftRestore": "恢复本地草稿",
+      "localDraftDiscard": "丢弃",
+      "localDraftRestored": "已恢复本地草稿"
+    },
+    "publish": {
+      "action": "发布",
+      "title": "发布工作流",
+      "confirm": "确认发布",
+      "blocked": "存在 ERROR，无法发布",
+      "revalidate": "重新校验",
+      "noIssues": "校验通过，可以发布",
+      "errorCount": "{{count}} 个 ERROR",
+      "errorHint": "修复画布上的结构问题后重试；ERROR 会阻塞发布。",
+      "success": "已发布",
+      "failed": "发布失败",
+      "riskBlocked": "风险门禁拦截：需要审批或调整脚本"
+    },
+    "trigger": {
+      "action": "触发",
+      "title": "触发运行：{{name}}",
+      "submit": "触发",
+      "success": "已触发运行",
+      "failed": "触发失败",
+      "notPublished": "工作流尚未发布，请先发布",
+      "concurrency": "全局并发已满，运行进入排队",
+      "noVariables": "该工作流没有声明入参变量",
+      "required": "必填",
+      "idempotencyKey": "幂等键 (Idempotency-Key)",
+      "idempotencyHint": "同一用户同一 key 重复触发会返回首个 run；参数不同则 409"
+    },
+    "conflict": {
+      "title": "版本冲突（409）",
+      "message": "服务端草稿已被其他会话修改（base_version 不匹配）。系统不会自动合并，请选择处理方式：",
+      "overwrite": "覆盖保存（记录审计 WORKFLOW_OVERWRITE）",
+      "overwriteDone": "已覆盖保存",
+      "saveCopy": "另存为副本（保留我的改动）",
+      "copyCreated": "副本已创建",
+      "copyFailed": "创建副本失败",
+      "discard": "放弃我的改动，重载服务端草稿",
+      "discarded": "已重载服务端草稿"
+    },
+    "run": {
+      "title": "运行记录",
+      "monitor": "监控",
+      "empty": "暂无运行记录",
+      "fetchFailed": "获取运行列表失败",
+      "filtered": "仅看工作流 #{{id}}",
+      "canvasTitle": "运行图（只读）",
+      "nodes": "节点执行",
+      "info": "运行信息",
+      "input": "触发入参",
+      "variables": "变量快照",
+      "variablesTruncated": "变量快照已截断",
+      "output": "运行输出",
+      "logs": "实时日志",
+      "noLogs": "暂无日志",
+      "logLabel": "工作流运行日志",
+      "ws": {
+        "idle": "连接中",
+        "connected": "已连接",
+        "disconnected": "已断开"
+      },
+      "cancel": "取消运行",
+      "cancelConfirm": "确认取消此运行？",
+      "cancelHint": "取消在下一检查点传播，已启动的脚本会继续跑完。",
+      "cancelRequested": "取消请求已记录",
+      "cancelFailed": "取消失败",
+      "ariaRunning": "正在执行：{{nodes}}",
+      "ariaStatus": "运行状态：{{status}}",
+      "col": {
+        "id": "运行 ID",
+        "workflow": "工作流",
+        "version": "版本",
+        "trigger": "触发方式",
+        "currentNodes": "当前节点",
+        "nodeKey": "节点",
+        "nodeType": "类型",
+        "attempt": "尝试",
+        "task": "关联任务",
+        "error": "错误"
+      },
+      "trigger": {
+        "manual": "手动",
+        "scheduled": "定时",
+        "replay": "重放"
+      }
+    },
+    "approval": {
+      "title": "工作流审批",
+      "fetchError": "获取待审批列表失败",
+      "empty": "暂无待审批项",
+      "approve": "通过",
+      "reject": "拒绝",
+      "approveSuccess": "已通过审批",
+      "rejectSuccess": "已拒绝",
+      "decideFailed": "审批操作失败",
+      "decided": "该审批已被处理",
+      "confirmApprove": "确认通过此审批？",
+      "confirmApproveDesc": "通过后挂起的运行会继续执行",
+      "confirmReject": "确认拒绝此审批？",
+      "confirmRejectDesc": "拒绝后运行按 onRejection 策略处理",
+      "detailTitle": "审批详情",
+      "detail": "详情快照",
+      "auditHint": "决策会写审计（含审批人与时间）",
+      "status": {
+        "pending": "待审批",
+        "approved": "已通过",
+        "rejected": "已拒绝",
+        "timeout": "已超时",
+        "cancelled": "已取消"
+      },
+      "col": {
+        "title": "标题",
+        "nodeType": "节点类型",
+        "risk": "风险等级",
+        "expiresAt": "过期时间"
+      }
+    },
+    "error": {
+      "403": "无权访问此工作流",
+      "403Desc": "只有创建者或管理员可以访问。",
+      "404": "工作流不存在",
+      "404Desc": "它可能已被删除或归档。",
+      "run404": "运行不存在",
+      "backToList": "返回工作流列表",
+      "generic": "加载失败"
     }
   }
 }
