@@ -94,7 +94,10 @@ public class WorkflowApiPresenter {
                 .attempt(nodeRun.getAttempt())
                 .status(nodeRun.getStatus())
                 .taskId(nodeRun.getTaskId())
-                .input(readMap(nodeRun.getInputJson()))
+                // MF-13：input_json 存的是渲染后的 parameters Map，值可能就是凭据（PAT 等）。
+                // 落库保留原文供审计，但出站前必须与 run 级快照同样脱敏（§6.7.3 出口 1/2，
+                // 复用同一个 SensitiveDataFilter，不写第二套掩码）。
+                .input(readMap(mask(nodeRun.getInputJson())))
                 .output(readMap(nodeRun.getOutputJson()))
                 .errorMessage(nodeRun.getErrorMessage())
                 .warningMessage(nodeRun.getWarningMessage())

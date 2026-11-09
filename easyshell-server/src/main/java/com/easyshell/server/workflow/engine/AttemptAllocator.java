@@ -84,6 +84,7 @@ public class AttemptAllocator {
         return transactionTemplate.execute(status -> nodeRunRepository.finishAttemptAtomically(
                 row.getId(),
                 result.status(),
+                result.inputJson(),
                 result.outputJson(),
                 result.outputSha256(),
                 result.previewSha256(),
@@ -110,7 +111,8 @@ public class AttemptAllocator {
     }
 
     /** attempt 终态字段集合（避免 15 参方法在调用处散落） */
-    public record AttemptResult(String status, String outputJson, String outputSha256, String previewSha256,
+    public record AttemptResult(String status, String inputJson, String outputJson, String outputSha256,
+                                String previewSha256,
                                 String rawParams, String artifactIds, String errorMessage, String warningMessage,
                                 String agentVersions, String taskId, Long approvalId, boolean cancelDelivered,
                                 Long durationMs) {
@@ -121,6 +123,7 @@ public class AttemptAllocator {
 
         public static final class Builder {
             private String status;
+            private String inputJson;
             private String outputJson;
             private String outputSha256;
             private String previewSha256;
@@ -136,6 +139,12 @@ public class AttemptAllocator {
 
             public Builder status(String status) {
                 this.status = status;
+                return this;
+            }
+
+            /** 渲染后的 parameters Map + rawParams 声明（MF-13；执行体回填在 nodeRun 行上） */
+            public Builder inputJson(String inputJson) {
+                this.inputJson = inputJson;
                 return this;
             }
 
@@ -200,9 +209,9 @@ public class AttemptAllocator {
             }
 
             public AttemptResult build() {
-                return new AttemptResult(status, outputJson, outputSha256, previewSha256, rawParams,
-                        artifactIds, errorMessage, warningMessage, agentVersions, taskId, approvalId,
-                        cancelDelivered, durationMs);
+                return new AttemptResult(status, inputJson, outputJson, outputSha256, previewSha256,
+                        rawParams, artifactIds, errorMessage, warningMessage, agentVersions, taskId,
+                        approvalId, cancelDelivered, durationMs);
             }
         }
     }

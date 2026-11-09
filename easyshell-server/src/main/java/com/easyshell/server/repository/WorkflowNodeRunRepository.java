@@ -87,10 +87,16 @@ public interface WorkflowNodeRunRepository extends JpaRepository<WorkflowNodeRun
      * 与 {@code JobRepository.finalizeJobAtomically} 同一套路，保证同一 attempt 不会被
      * 终态化两次。</p>
      *
+     * <p><b>inputJson 必须在这里落（MF-13 / P-1）</b>：执行体在 attempt 行 INSERT 之后才
+     * 回填 {@code ctx.nodeRun().setInputJson(...)}，而 {@code startAttempt} 的新行里没有
+     * 这个字段；本 UPDATE 若不带上它，{@code workflow_node_run.input_json} 就恒为 NULL，
+     * "这个节点当时拿到了什么参数"永远无法审计复现。</p>
+     *
      * @return 1 = 终态已写入；0 = 行不存在或已不是 running
      */
     @Modifying(flushAutomatically = true, clearAutomatically = true)
-    @Query("update WorkflowNodeRun n set n.status = :status, n.outputJson = :outputJson, " +
+    @Query("update WorkflowNodeRun n set n.status = :status, n.inputJson = :inputJson, " +
+            "n.outputJson = :outputJson, " +
             "n.outputSha256 = :outputSha256, n.previewSha256 = :previewSha256, n.rawParams = :rawParams, " +
             "n.artifactIds = :artifactIds, n.errorMessage = :errorMessage, " +
             "n.warningMessage = :warningMessage, n.agentVersions = :agentVersions, n.taskId = :taskId, " +
@@ -99,6 +105,7 @@ public interface WorkflowNodeRunRepository extends JpaRepository<WorkflowNodeRun
             "where n.id = :id and n.status = 'running'")
     int finishAttemptAtomically(@Param("id") String nodeRunId,
                                 @Param("status") String status,
+                                @Param("inputJson") String inputJson,
                                 @Param("outputJson") String outputJson,
                                 @Param("outputSha256") String outputSha256,
                                 @Param("previewSha256") String previewSha256,

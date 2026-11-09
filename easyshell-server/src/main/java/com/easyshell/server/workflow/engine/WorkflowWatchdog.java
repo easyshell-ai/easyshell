@@ -148,7 +148,7 @@ public class WorkflowWatchdog {
                 long durationMs = Duration.between(row.getStartedAt(), now).toMillis();
                 Integer marked = transactionTemplate.execute(tx ->
                         nodeRunRepository.finishAttemptAtomically(rowId, "timeout",
-                                null, null, null, null, null,
+                                row.getInputJson(), null, null, null, null, null,
                                 "attempt 超过 " + timeoutSec + "s 未终态（看门狗兜底）", null, null, null, null,
                                 false, now, durationMs));
                 if (marked == 1) {
