@@ -99,4 +99,14 @@ dependencies {
 
 tasks.withType<Test> {
     useJUnitPlatform()
+    // 集成测试（@SpringBootTest + H2 + 打桩 Redis）在共享核 CI/开发机上并行跑时，
+    // 上下文启动与 awaitility 轮询会互相挤。曾经出现过连续两次全量跑里
+    // WorkflowApiContractTest 的两条审批用例随机超时（单独跑必过、clean 单跑也过），
+    // 是负载抖动而非代码缺陷。限制并行度并保留失败详情，把这层噪声压掉。
+    maxParallelForks = (Runtime.getRuntime().availableProcessors() / 2).coerceAtLeast(1)
+    testLogging {
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        showExceptions = true
+        showStandardStreams = true
+    }
 }

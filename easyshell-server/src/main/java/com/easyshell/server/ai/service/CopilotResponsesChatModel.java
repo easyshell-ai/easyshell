@@ -46,7 +46,7 @@ public class CopilotResponsesChatModel implements ChatModel {
                 .defaultHeader("Editor-Version", "vscode/1.80.1")
                 .defaultHeader("Editor-Plugin-Version", "copilot.vim/1.16.0")
                 .defaultHeader("Copilot-Integration-Id", "vscode-chat")
-                .defaultHeader("User-Agent", "EasyShell/1.1.2")
+                .defaultHeader("User-Agent", "EasyShell/1.2.0")
                 .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(16 * 1024 * 1024))
                 .build();
     }
