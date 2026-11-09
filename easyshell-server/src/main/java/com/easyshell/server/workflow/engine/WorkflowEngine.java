@@ -21,9 +21,11 @@ import com.easyshell.server.workflow.model.WorkflowNode;
 import com.easyshell.server.workflow.properties.WorkflowProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
@@ -101,6 +103,19 @@ public class WorkflowEngine {
      */
     private final TransactionTemplate transactionTemplate;
 
+    /**
+     * 留痕行（"从未开始"节点的 cancelled/skipped attempt 行）写入专用短事务，
+     * PROPAGATION_REQUIRES_NEW——与 {@link AttemptAllocator#startAttempt} 同一套路。
+     *
+     * <p><b>为什么不能并进调用方的事务</b>：留痕写是"尽力而为"的审计行，撞 uk_node_run
+     * 是常态竞态而非错误。若它并进取消事务，仓储方法自身的 {@code @Transactional}
+     * 一抛就会把<b>整个取消事务</b>标成 rollback-only，run 的终态、节点批量取消全部回滚，
+     * 对外就是 HTTP 500；失败实体留在持久化上下文里，还会让后续 JPQL 查询前的 auto-flush
+     * 把同一条 INSERT 重发一遍，第二次异常没有任何 try/catch 接着。
+     * 独立短事务把这两件事一起关在里面：失败即整体回滚丢弃，取消事务毫发无损。</p>
+     */
+    private final TransactionTemplate terminalRowTemplate;
+
     /** per-runId 进程内锁（MF-10②：触发端点/扫描器/看门狗/resume 四方同 JVM 重入防护） */
     private final Map<String, ReentrantLock> runLocks = new ConcurrentHashMap<>();
 
@@ -130,9 +145,9 @@ public class WorkflowEngine {
                           Optional<Consumer<WorkflowEvent>> eventSink,
                           @org.springframework.beans.factory.annotation.Qualifier("workflowEnginePool") ExecutorService enginePool,
                           @org.springframework.beans.factory.annotation.Qualifier("workflowScheduler") TaskScheduler retryScheduler,
-                          WorkflowProperties properties,
-                          ObjectMapper objectMapper,
-                          PlatformTransactionManager transactionManager) {
+                           WorkflowProperties properties,
+                           ObjectMapper objectMapper,
+                           PlatformTransactionManager transactionManager) {
         this.runRepository = runRepository;
         this.nodeRunRepository = nodeRunRepository;
         this.approvalRepository = approvalRepository;
@@ -150,6 +165,8 @@ public class WorkflowEngine {
         this.properties = properties;
         this.objectMapper = objectMapper;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.terminalRowTemplate = new TransactionTemplate(transactionManager);
+        this.terminalRowTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     // ==================================================================
@@ -873,6 +890,9 @@ public class WorkflowEngine {
         }
         int updated = attemptAllocator.finishAttempt(row, AttemptAllocator.AttemptResult.builder()
                 .status(effectiveStatus)
+                // MF-13：执行体回填的渲染后 parameters Map 必须随终态一起落库（P-1）。
+                // startAttempt 的新行里没有它，只有这条 UPDATE 能把它写进 input_json。
+                .inputJson(row.getInputJson())
                 .outputJson(output == null ? null : truncate(output.json(), 262144))
                 .outputSha256(output == null ? null : output.sha256())
                 .previewSha256(output == null ? null : output.previewSha256())
@@ -900,8 +920,36 @@ public class WorkflowEngine {
         }, run.getId(), row.getNodeKey(), effectiveStatus.equals("succeeded") ? null : error));
     }
 
-    /** 从未开始节点的终态留痕（uk_node_run 冲突时静默放弃：说明已有 attempt 行） */
+    /**
+     * 从未开始节点的终态留痕（uk_node_run 冲突时静默放弃：说明已有 attempt 行）。
+     *
+     * <p><b>幂等语义</b>：同一 (runId, nodeKey, attempt) 只允许一行（uk_node_run）。
+     * 先查后写，已有 attempt 行就直接放弃——"已有 attempt 行"由那个 attempt 自行收敛，
+     * 取消路径绝不因为一条留痕写不进去而失败（对外即 HTTP 500）。</p>
+     *
+     * <p><b>为什么必须 saveAndFlush 而不是 save</b>：{@code save()} 只把实体挂进持久化
+     * 上下文，INSERT 要到 flush/commit 才真正发出，那时异常早已不在本方法的 try/catch
+     * 覆盖范围内，会连坐炸掉调用方事务（对外就是 HTTP 500，且 run 的终态一起回滚）。
+     * {@code saveAndFlush} 让冲突在方法内暴露，兜底才兜得住。</p>
+     *
+     * <p><b>为什么必须跑在独立短事务里</b>（{@link #terminalRowTemplate}，REQUIRES_NEW）：
+     * 仓储方法自身的 {@code @Transactional} 是<b>参与</b>调用方事务的，它一抛就会把整个
+     * 取消事务标成 rollback-only——run 终态、节点批量取消、悬死审批清理全部回滚，
+     * 对外就是 HTTP 500；且失败实体留在持久化上下文里，后续 JPQL 查询前的 auto-flush
+     * 会把同一条 INSERT <b>再发一遍</b>，第二次异常没有任何 try/catch 接着
+     * （复现见 {@code WorkflowEngineH2Test} 的"取消 vs 引擎并发 attempt"用例）。
+     * 独立短事务把这两件事一起关在里面：撞键即整体回滚丢弃，取消事务毫发无损。
+     * 与 {@link AttemptAllocator#startAttempt} 处理同一个 uk_node_run 竞态同一套路。</p>
+     *
+     * <p>兜底只认 uk_node_run 冲突（{@code DataIntegrityViolationException}）：
+     * 真实错误（字段超长、空值等）不在静默范围内，照旧往外抛。</p>
+     */
     private void insertTerminalRow(String runId, WorkflowNode node, String status, String reason) {
+        // ① 已有 attempt 行（引擎侧同一瞬间抢占同一 attempt / 上一次留痕已落库）：不写第二条
+        if (nodeRunRepository.findByRunIdAndNodeKeyAndAttempt(runId, node.getKey(), 1).isPresent()) {
+            log.debug("终态留痕跳过（已有 attempt=1 行）: run={} node={} status={}", runId, node.getKey(), status);
+            return;
+        }
         LocalDateTime now = LocalDateTime.now();
         WorkflowNodeRun row = new WorkflowNodeRun();
         row.setId("wnr_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16));
@@ -914,8 +962,13 @@ public class WorkflowEngine {
         row.setStartedAt(now);
         row.setFinishedAt(now);
         try {
-            nodeRunRepository.save(row);
-        } catch (Exception e) {
+            terminalRowTemplate.execute(tx -> {
+                nodeRunRepository.saveAndFlush(row);
+                return null;
+            });
+        } catch (DataIntegrityViolationException e) {
+            // 查与 INSERT 之间的竞态窗口：引擎侧刚好在这一刻插下同一个 attempt。
+            // 按"已有 attempt 行"作废本次留痕，由那个 attempt 自行收敛；不重试、不改写别人的行。
             log.debug("终态留痕写入被并发抢先（可忽略）: run={} node={} status={}", runId, node.getKey(), status);
         }
     }
