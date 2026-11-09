@@ -202,7 +202,7 @@ export default function ScriptWorkbench() {
     <div style={{ 
       display: 'flex', 
       flexDirection: 'column', 
-      height: 'var(--content-inner-height, calc(100vh - 112px))',
+      height: 'var(--es-content-inner-height, calc(100vh - 112px))',
       backgroundColor: token.colorBgContainer,
       borderRadius: token.borderRadiusLG,
       overflow: 'hidden'

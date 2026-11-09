@@ -1,0 +1,69 @@
+/* PageShell 的样式（设计文档 §4.10.3 页面骨架模板）。
+   间距全部读 AntD 全局 token 派生的 --es-padding-*（4px 基数），不手写魔法数字；
+   颜色只读 --es-*，本文件不出现任何 hex。 */
+
+.es-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--es-page-section-gap, 16px);
+}
+
+/* ─── 标题区 + 操作区 ─── */
+.es-page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--es-padding-md, 16px);
+  flex-wrap: wrap;
+}
+
+.es-page-title {
+  display: flex;
+  align-items: center;
+  gap: var(--es-padding-sm, 12px);
+  min-width: 0;
+}
+
+.es-page-title-icon {
+  display: inline-flex;
+  align-items: center;
+  font-size: 16px;
+  color: var(--es-color-primary);
+}
+
+.es-page-title-text {
+  margin: 0;
+  font-size: var(--es-font-size-xl, 20px);
+  font-weight: 500;
+  line-height: var(--es-line-height-lg, 1.5);
+  color: var(--es-color-text);
+}
+
+.es-page-extra {
+  display: flex;
+  align-items: center;
+  gap: var(--es-padding-xs, 8px);
+  flex-wrap: wrap;
+}
+
+/* ─── 说明区 ─── */
+.es-page-description {
+  margin: calc(-1 * var(--es-padding-xs, 8px)) 0 0;
+  font-size: var(--es-font-size-sm, 13px);
+  line-height: var(--es-line-height, 1.5);
+  color: var(--es-color-text-tertiary);
+}
+
+/* ─── 筛选区 ─── */
+.es-page-filter {
+  border-radius: var(--es-border-radius-lg, 10px);
+}
+
+/* ─── 内容区 ─── */
+.es-page-body {
+  min-width: 0;
+}
+
+.es-page-skeleton {
+  border-radius: var(--es-border-radius-lg, 10px);
+}

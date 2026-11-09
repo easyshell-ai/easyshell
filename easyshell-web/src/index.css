@@ -1,11 +1,30 @@
-:root,
-[data-theme='dark'] {
-  /* ─── Layout Dimensions ─── */
-  --header-height: 64px;
-  --content-padding: 24px;
-  --chat-sidebar-width: 280px;
+/* ─── 布局框架（设计文档 frontend-redesign-design-v3.md §4.10）──────────────
+   颜色只有一套来源：--es-* 由 AntD 从 src/theme/themeConfig.ts 派生（W1 已定），
+   本文件不再手写第二套颜色变量。
+   尺寸/间距同样只有一套来源：token 派生 → 这里做别名与派生计算，不写第二个数值。 */
 
-  /* ─── Responsive Breakpoints (for JS reference) ─── */
+:root {
+  /* 侧边栏：展开 216（§4.10.4：240 → 216）/ 折叠 56（80 → 56）。
+     折叠宽读 Menu.collapsedWidth 的派生变量，展开宽是 JSX 常量（Sider 的 width prop
+     不读 CSS 变量，§4.10.4 明确要求"JSX 常量 + CSS 变量双改"）。 */
+  --es-sidebar-width: 216px;
+  --es-sidebar-collapsed-width: var(--es-menu-collapsed-width, 56px);
+
+  /* 顶栏高 52（64 → 52）与内容区内边距 20（24 → 20）直接读 token 派生值：
+     Layout.headerHeight 与全局 paddingContentHorizontalLG。 */
+  --es-header-height: var(--es-layout-header-height, 52px);
+  --es-content-padding: var(--es-padding-content-horizontal-lg, 20px);
+
+  /* 内容区最大宽度：无 → 1600px 居中（§4.10.4） */
+  --es-content-max-width: 1600px;
+
+  /* 派生高度：滚动区 = 视口 - 顶栏；内容盒 = 再减去上下内边距（terminal / ScriptWorkbench 消费） */
+  --es-content-height: calc(100vh - var(--es-header-height));
+  --es-content-inner-height: calc(100vh - var(--es-header-height) - var(--es-content-padding) * 2);
+
+  /* 响应式断点（§4.10.5）：与 src/hooks/useResponsive.ts 的 6 档逐字一致。
+     媒体查询里不能用 var()，所以这里是"给 JS / 文档引用"的登记表；
+     xxl 在 ≥1200 即激活（getBreakpoint 最后一条分支），1600 这个常量本身无消费方。 */
   --breakpoint-xs: 480px;
   --breakpoint-sm: 576px;
   --breakpoint-md: 768px;
@@ -13,35 +32,16 @@
   --breakpoint-xl: 1200px;
   --breakpoint-xxl: 1600px;
 
-  /* ─── Calculated Heights ─── */
-  --content-height: calc(100vh - var(--header-height));
-  --content-inner-height: calc(100vh - var(--header-height) - var(--content-padding) * 2);
+  /* AI 对话侧栏（§4.10.4：280 不变，只随断点调档） */
+  --es-chat-sidebar-width: 280px;
 
-  /* 颜色只有一套来源：--es-* 由 AntD 从 theme.token 派生（src/theme/themeConfig.ts，
-     index.html 的 <html class="es"> 让变量全局可用），本文件不再手写第二套颜色变量 */
-  color-scheme: dark;
+  /* 页面骨架区块间距（§4.10.3）：间距全部走 4px 基数的 token 档位 */
+  --es-page-section-gap: 16px;
 }
 
-[data-theme='light'] {
-  /* ─── Layout Dimensions ─── */
-  --header-height: 64px;
-  --content-padding: 24px;
-  --chat-sidebar-width: 280px;
-
-  /* ─── Responsive Breakpoints (for JS reference) ─── */
-  --breakpoint-xs: 480px;
-  --breakpoint-sm: 576px;
-  --breakpoint-md: 768px;
-  --breakpoint-lg: 992px;
-  --breakpoint-xl: 1200px;
-  --breakpoint-xxl: 1600px;
-
-  /* ─── Calculated Heights ─── */
-  --content-height: calc(100vh - var(--header-height));
-  --content-inner-height: calc(100vh - var(--header-height) - var(--content-padding) * 2);
-
-  color-scheme: light;
-}
+/* data-theme 只负责 color-scheme；颜色变量一律由 AntD 的 --es-* 提供 */
+[data-theme='dark'] { color-scheme: dark; }
+[data-theme='light'] { color-scheme: light; }
 
 * {
   margin: 0;
@@ -122,11 +122,6 @@ body {
 .ant-table-wrapper .ant-table-thead > tr > th {
   font-weight: 500;
 }
-.ant-table-thead > tr > th,
-.ant-table-thead > tr > td {
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-}
 
 /* ─── Better tag styling ─── */
 .ant-tag {
@@ -149,6 +144,19 @@ body {
 }
 .ant-menu-item-selected {
   font-weight: 600;
+}
+/* 分组标题（§4.6）：11px/500。字号由 Menu.groupTitleFontSize:11 提供，字重这里补——
+   AntD 的 item-group-title 不设 font-weight（默认 400），与规范的 500 不符；
+   颜色在 MainLayout 里读 colorTextTertiary：W1 锁定的 Menu.darkGroupTitleColor 落在
+   ash 档，而 §4.9.2-5 要求 11px 文字必须用 mute 档（7.30 / 4.95）。 */
+.ant-menu-item-group-title {
+  font-weight: 500;
+}
+
+/* ─── Breadcrumb（§4.6）─── 12px；Breadcrumb 自己继承全局 fontSize=14，这里降一档。
+   separatorMargin / separatorColor / iconFontSize 已由 Breadcrumb token 提供。 */
+.ant-layout-header .ant-breadcrumb {
+  font-size: 12px;
 }
 
 /* ─── Selection highlight ─── */
@@ -176,7 +184,7 @@ body {
 }
 
 .sidebar-header {
-  height: var(--header-height);
+  height: var(--es-header-height);
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -195,25 +203,51 @@ body {
 }
 
 /* ─── MainLayout Content Fix ─── */
+/* §4.10.4：内容区 = 滚动区（高 = 视口 - 顶栏）+ 20px 内边距 + 1600px 居中。
+   用 padding 而不是 margin：盒子模型变成 border-box 后"外沿仍是视口减顶栏"，
+   不会像 margin 那样把滚动区本身挤短一截。 */
 .main-layout-content {
-  margin: var(--content-padding);
-  padding: 0;
+  height: var(--es-content-height);
+  padding: var(--es-content-padding);
   min-height: 280px;
-  height: var(--content-inner-height);
   overflow: auto;
+}
+
+/* 内容区居中容器：超过 1600px 的视口里内容居中，两侧留 canvas */
+.es-content {
+  max-width: var(--es-content-max-width);
+  margin: 0 auto;
+}
+
+/* ─── Skip link（§4.9.3）─── body 第一个子元素，聚焦时才可见 */
+.es-skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 1010;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--es-color-primary);
+  color: var(--es-color-text-light-solid);
+  font-size: 13px;
+  text-decoration: none;
+}
+.es-skip-link:focus {
+  left: 12px;
+  top: 12px;
 }
 
 /* ─── AI Chat Layout Fix ─── */
 .ai-chat-container {
   display: flex;
-  height: var(--content-inner-height);
+  height: var(--es-content-inner-height);
   width: 100%;
   overflow: hidden;
 }
 
 .ai-chat-sidebar {
-  width: var(--chat-sidebar-width);
-  min-width: var(--chat-sidebar-width);
+  width: var(--es-chat-sidebar-width);
+  min-width: var(--es-chat-sidebar-width);
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -369,34 +403,33 @@ body {
   40% { transform: scale(1); opacity: 1; }
 }
 
-/* ─── Responsive: Mobile Sidebar ─── */
-@media (max-width: 768px) {
+/* ─── Responsive: Mobile Sidebar（xs / sm / md：<768，与 useResponsive 的 isMobile 同界）─── */
+@media (max-width: 767px) {
   :root {
-    --content-padding: 12px;
-    --chat-sidebar-width: 100%;
+    --es-content-padding: 12px;
+    --es-chat-sidebar-width: 100%;
   }
-  
+
   .main-layout-content {
-    margin: var(--content-padding);
-    height: calc(100vh - var(--header-height) - var(--content-padding) * 2);
+    height: calc(100vh - var(--es-header-height) - var(--es-content-padding) * 2);
   }
-  
+
   .ai-chat-container {
     flex-direction: column;
   }
-  
+
   .ai-chat-sidebar {
     width: 100%;
     min-width: 100%;
     height: 100%;
     border-right: none;
   }
-  
+
   .ai-chat-main {
     flex: 1;
     min-height: 0;
   }
-  
+
   .ai-chat-messages {
     padding: 12px 16px;
   }
@@ -408,7 +441,7 @@ body {
 }
 
 .mobile-nav-drawer .sidebar-header {
-  height: var(--header-height);
+  height: var(--es-header-height);
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -427,44 +460,44 @@ body {
 }
 
 /* ─── Responsive Table Styles ─── */
-@media (max-width: 768px) {
+@media (max-width: 767px) {
   .ant-pro-table-list-toolbar {
     flex-wrap: wrap;
     gap: 8px;
     padding: 12px 0 !important;
   }
-  
+
   .ant-pro-table-list-toolbar-container {
     flex-wrap: wrap;
     gap: 8px;
   }
-  
+
   .ant-pro-table-list-toolbar-left {
     flex: 1 1 100%;
     margin-bottom: 8px;
   }
-  
+
   .ant-pro-table-list-toolbar-right {
     flex: 1 1 100%;
     justify-content: flex-start !important;
     flex-wrap: wrap;
     gap: 8px;
   }
-  
+
   .ant-table-wrapper {
     overflow-x: auto;
   }
-  
+
   .ant-table {
     min-width: 600px;
   }
-  
+
   .ant-pagination {
     flex-wrap: wrap;
     justify-content: center;
     gap: 8px;
   }
-  
+
   .ant-pagination-options {
     display: none;
   }
@@ -473,7 +506,7 @@ body {
 /* ─── Responsive Modal Styles ─── */
 /* .ant-modal 的 max-width/margin 由 AntD 6 自带媒体查询提供（§4.10.1 :511/:512）；
    卡片圆角与内边距不再随断点降档，统一由全局 borderRadiusLG:10 / Card.bodyPadding 提供（:500/:504） */
-@media (max-width: 768px) {
+@media (max-width: 767px) {
   .ant-modal-content {
     padding: 16px !important;
   }
@@ -483,16 +516,16 @@ body {
   }
 }
 
-/* ─── Responsive: Tablet ─── */
-@media (min-width: 769px) and (max-width: 992px) {
+/* ─── Responsive: Tablet（lg：768–991，与 useResponsive 的 isTablet 同界）─── */
+@media (min-width: 768px) and (max-width: 991px) {
   :root {
-    --chat-sidebar-width: 240px;
+    --es-chat-sidebar-width: 240px;
   }
 }
 
 /* ─── Responsive: Desktop ─── */
 @media (min-width: 1600px) {
   :root {
-    --chat-sidebar-width: 320px;
+    --es-chat-sidebar-width: 320px;
   }
 }

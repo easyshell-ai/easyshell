@@ -19,6 +19,7 @@ import {
   CloudUploadOutlined,
   DeleteOutlined,
   EditOutlined,
+  PartitionOutlined,
   PlusOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
@@ -41,9 +42,10 @@ import type { ValidationIssue, WorkflowDefinition, WorkflowSummary } from './typ
 import { TriggerModal } from './editor/modals';
 import { PublishModal } from './editor/modals';
 import { formatDateTime } from '../../utils/format';
+import PageShell from '../../layouts/PageShell';
 import './workflow.css';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 interface PublishTarget {
   id: number;
@@ -310,11 +312,10 @@ const WorkflowListPage: React.FC = () => {
   );
 
   return (
-    <div style={{ padding: 24 }}>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Title level={4} style={{ margin: 0, color: token.colorText }}>
-          {t('workflow.list.title')}
-        </Title>
+    <PageShell
+      title={t('workflow.list.title')}
+      icon={<PartitionOutlined />}
+      extra={
         <Space>
           <Input.Search
             allowClear
@@ -332,8 +333,8 @@ const WorkflowListPage: React.FC = () => {
             {t('workflow.list.create')}
           </Button>
         </Space>
-      </div>
-
+      }
+    >
       <Card style={{ borderRadius: 12 }} styles={{ body: { padding: 0 } }}>
         <Table<WorkflowSummary>
           columns={columns}
@@ -408,7 +409,7 @@ const WorkflowListPage: React.FC = () => {
       {page.content.length === 0 && !loading && (
         <Alert style={{ marginTop: 16 }} type="info" showIcon message={t('workflow.list.emptyHint')} />
       )}
-    </div>
+    </PageShell>
   );
 };
 
