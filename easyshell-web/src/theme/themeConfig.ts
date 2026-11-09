@@ -11,8 +11,13 @@ import { theme } from 'antd';
  * - 深色为默认（运维场景），light 为备用。
  */
 
+// 'Noto Sans CJK SC' 必须显式列出且排在 PingFang/YaHei 之前：Linux 上 fontconfig
+// 对 :lang=zh 的默认回退是 Noto Sans CJK JP（本机实测），而 CI runner 的
+// fonts-noto-cjk 包默认启用 SC。同一个汉字在 JP 与 SC 下字形不同，整表累积下来
+// 就是几千像素的截图差异——视觉回归会把它报成回归，实际只是字体回退不一致。
+// 写清楚之后，开发机与 CI 都稳定落到 SC。
 const FONT_SANS =
-  "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', 'PingFang SC', 'Microsoft YaHei', sans-serif";
+  "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', 'Noto Sans CJK SC', 'PingFang SC', 'Microsoft YaHei', sans-serif";
 const FONT_MONO =
   "ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Monaco, Consolas, 'Cascadia Code', 'Noto Sans Mono CJK SC', 'Courier New', monospace";
 
