@@ -253,6 +253,107 @@ The skill bundles `resources/tool-catalog.md` (every tool with parameters and ex
 
 If that is your use case, add it to the discussion in [issue #6](https://github.com/easyshell-ai/easyshell/issues/6) ("how do the mcp and skill modules work?"), or open a feature request.
 
+### 9. Workflow Engine
+
+> Drag your runbook onto a canvas. Pass values between nodes. Put a human gate in front of anything destructive.
+
+The Workflow Engine turns a sequence of operational steps into a **visual, versioned, replayable-by-audit workflow**: a directed acyclic graph of nodes on an interactive canvas, where each node does one thing and hands its output to the nodes downstream. A run is triggered with typed inputs, executed by the same engine that already dispatches scripts to agents, and recorded node-by-node for audit.
+
+<p align="center">
+  <img src="docs/images/workflow-canvas.png" alt="Workflow canvas — nodes, edges and a run in progress" width="90%" />
+</p>
+
+<!-- TODO(1.2.0 release): add docs/images/workflow-canvas.png. Suggested shot: the
+     editor with a 4-node DAG on the canvas (one script-exec, one condition with
+     both handles wired, one approval, one notify), the node palette on the left,
+     the config form open on the right, and at least one node showing a run
+     status colour. Dark theme, 1440x900. Remember: *.png is gitignored, so this
+     file needs `git add -f`. -->
+
+**How it works:**
+1. **Compose** — drag nodes onto the canvas, wire them into a DAG, configure each one in the form panel
+2. **Publish** — validation runs server-side; an ERROR blocks publishing, a WARNING only flags it
+3. **Trigger** — provide typed run inputs, optionally with an idempotency key so a retry returns the same run
+4. **Watch** — live node status, per-node input/output, durations, and the Task each `script-exec` produced
+
+#### The five node types
+
+| Node | What it does |
+|------|--------------|
+| `script-exec` | Runs a script on target hosts (explicit agents, a cluster, or a tag) — it lands on a real **Task**, so audit, live logs, the timeout watchdog and agent-disconnect handling are inherited rather than rebuilt |
+| `condition` | Evaluates an expression (`nodes.check.output.usage > 90`) and writes the boolean to `output.result`; the **edge condition** — not the node — decides which branch is taken |
+| `notify` | Pushes a rendered message to the bot channels you already configured (Telegram, Discord, Slack, DingTalk, Feishu, WeCom) |
+| `approval` | Suspends the run and waits for an administrator to approve or reject, with a timeout, an optional mandatory comment, and an immutable detail snapshot |
+| `wait` | Sleeps for `durationSec` (1–3600) and continues, checking for cancellation every 500 ms so a cancel is never stuck behind a sleep |
+
+`approval` also has a `mode: "human-confirm"` configuration variant — a lighter "just confirm" gate that reuses the same approval row and the same suspend/resume state machine rather than adding a second mechanism.
+
+#### How nodes talk to each other
+
+Values travel along the edges through **three channels**:
+
+- **Scalar variables** — run inputs (`run.input.<name>`), node outputs (`nodes.<key>.output.<path>`), and `outputVar` aliases. Values are visible only to a node's topological successors, snapshotted at the end of each scheduling wave into `workflow_run.variables_json`. A single value is capped at 8192 UTF-8 bytes; anything larger is stored as a head+tail preview with `truncated: true` plus a warning.
+- **Artifact references** — **planned, not implemented**. 1.2.0 keeps the truncated preview instead of a dedicated artifact table.
+- **Secrets** — **deliberately not implemented**. There is no `secret` variable type and no way to inject a credential into a script. The agent protocol only carries the script body, so a secret injected here would be written into the task's script column and printed by any `env`-like command. Until the agent has a side channel, secret injection is a decoration, not a feature. Structured data should go through JSON output; anything that must stay secret should stay in the host's own credential store.
+
+Script interpolation is where the safety model earns its keep, because values arrive from remote hosts and are therefore untrusted. Four independent layers, each with its own tests:
+
+1. **Value policy** — a whitelist character set (letters, digits, marks and an audited set of ASCII punctuation, ≤256 chars). Empty values, newlines and control characters are always refused.
+2. **Reference rendering** — `{{NAME}}` renders as a **single-quoted** value, so `$`, backticks, `${}` and backslashes lose their meaning; `{{NAME:raw}}` renders the bare value and must be declared in `rawParams`.
+3. **Segment-level substitution guard** — the rendered script is refused if a substituted value contains `$(`, a backtick or `${`; raw values additionally may not contain command-structure characters or start with `-`.
+4. **The command risk gate** — the rendered script is assessed at the dispatch chokepoint, exactly like any other script.
+
+Anything that *looks* like a slot but does not match the contract (`{{msg}}`, `{{MSG-X}}`) is refused outright, because the looser legacy substitution would otherwise run afterwards and undo layers 1–3.
+
+**Honest limits**: a value containing shell structure characters (`; & | < > ( ) $ { }`) has no legal path in 1.2.0 — restructure the script instead. Passing a glob pattern is what `raw` exists for.
+
+#### Failure policies
+
+Each edge (and the definition as a whole) chooses what happens to a downstream node when an upstream one fails:
+
+| Policy | Effect |
+|--------|--------|
+| `abort` | The node and everything not yet started is cancelled; the run ends `failed` |
+| `skip` (default) | The node is marked `skipped` and its own downstream follows its own policy |
+| `partial` | The node executes anyway, treating the failed upstream's output as absent |
+
+When several incoming edges disagree, the **strictest** wins (`abort > skip > partial`). An unrecognised policy is treated as `abort` — the failure mode is closed, never open.
+
+#### Approvals and the human in the loop
+
+An `approval` node suspends the run **without holding a thread**: the approval row in the database is the single source of truth, the engine wakes the run on a decision (same-JVM event, plus a 10-second scanner as a backstop), and nothing depends on the browser that opened the run staying connected. That is why a run can stay `waiting` across a restart and be approved days later from another machine.
+
+Two consequences worth knowing:
+
+- **A high-risk script needs an approved `approval` ancestor.** The risk gate is the same chokepoint every script goes through; the one legal way past a non-LOW assessment is a human approval that is a topological ancestor of the `script-exec`. A workflow with no `approval` node cannot dispatch a HIGH script — under any `riskPolicy`.
+- **Cancelling means "I am not waiting", not "it stopped".** An agent has no cancel message, so an already-dispatched job keeps running on the host and its result is discarded. The UI states this verbatim rather than hiding it in a tooltip.
+
+#### The canvas
+
+The editor is a full interactive canvas, not a read-only diagram:
+
+- **Box selection** (drag on empty space), **alignment guides with snapping**, and **snap-to-grid** (20 px)
+- **Undo / redo** (`Ctrl+Z` / `Ctrl+Shift+Z` / `Ctrl+Y`) covering structural edits, not just text
+- **Minimap**, zoom controls, and **auto layout** (layered by depth, reusing the depth algorithm from the AI plan view — no layout library)
+- **Copy / paste / duplicate** with key regeneration, so pasting a subtree yields a valid graph
+- **Keyboard map**: `Delete` (with a confirmation listing what will be removed), `Ctrl+A`, `Ctrl+S`, arrow keys to nudge 20 px (4 px with `Shift`), `Enter` to open the selected node's config, `Esc` to close, `Space`+drag to pan
+
+One rule holds the editor together: **the canvas is the only editor of structure, and the form is the only editor of a selected node's configuration**. With two write paths for the same definition, conflict handling and dirty tracking both become unsound — so the node palette can only add, never delete.
+
+Connections are validated client-side (no self-loops, no duplicates, no cycles, no condition on a `condition` node's false branch) with the server remaining authoritative. Condition nodes get two output handles (`true` / `false`).
+
+#### Monitoring and audit
+
+The run detail page is a read-only canvas coloured by what actually happened, next to a node table with status, attempt count, duration, output, error and warning messages, and the linked Task. A variable panel shows the end-of-wave snapshot. Script output still streams over the task-log channel, per node.
+
+Every run records enough to reconstruct what happened and why: the immutable definition version and its SHA-256, the full input snapshot, per-node input and output with their fingerprints, the attempt number, the Task id, the agent versions at dispatch time, and a snapshot of the risk rules in force when the run started. (Some of these — the agent-version snapshot, for instance — live in the database rather than the UI today.) High-risk events — publish, approve, reject, trigger, cancel — are audited synchronously, so a failed audit write fails the operation.
+
+#### Current boundary — read this before you plan a setup
+
+1.2.0 ships the engine and the editor. The following are **on the roadmap, not implemented**: cron and webhook triggers, the `parallel` / `ai-analyze` / `http-request` node types, dry-run, replay, the template market, artifact storage, secret injection, resume-after-restart for running runs, and fan-in variable merging. The single-node test-run endpoint exists on the server but is not surfaced in the UI yet. Run more than one server instance against the same database at your own risk: the engine is written for a single executor (the instance that starts a run is recorded on it), and there is no cross-instance lock yet.
+
+See the [Workflow guide](https://docs.easyshell.ai/guides/workflow/) for a from-zero walkthrough, or open a feature request for what is missing.
+
 ---
 
 ## Quick Start
@@ -309,7 +410,7 @@ Local web development and dependency checks require Node.js `^20.19.0 || >=22.12
 | Category | Features |
 |----------|----------|
 | **AI Intelligence** | AI Script Assistant (generate / modify / diff / summary), AI Task Orchestration (multi-step plans, parallel execution, analysis), AI Scheduled Inspections (cron-based, AI output analysis, intelligent alert decisions, multi-channel bot push), AI Chat, Inspection Reports, Operation Approvals |
-| **Operations** | Script library, batch execution, real-time streaming logs, Web SSH terminal with file manager |
+| **Operations** | Script library, batch execution, real-time streaming logs, Web SSH terminal with file manager, **Workflow Engine** (visual DAG canvas, node parameter passing, failure policies, human approvals, run monitoring) |
 | **Infrastructure** | Host management, real-time monitoring, cluster grouping, agent auto-deployment |
 | **Administration** | User management, system config, AI model settings (OpenAI / Gemini / Copilot / Custom), risk control |
 | **Platform** | i18n (EN / ZH), dark/light theme, responsive design, audit logging |
