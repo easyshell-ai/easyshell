@@ -100,6 +100,16 @@ public class WorkflowRunService {
         WorkflowDefinition def = parseDefinition(version.getDefinitionJson());
         Map<String, Object> normalizedInput = validateInput(def, input, userId);
 
+        // 幂等①：同 userId 同 key 已触发过 → 返回首个 run。
+        // 必须排在最小间隔检查之前：客户端重试（网络超时/双击）带着同一个 key 再来，
+        // 拿到的一定得是首个 run，而不是一条"触发过于频繁"——否则幂等对调用方不可观测。
+        if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+            Optional<WorkflowRun> existing = runRepository.findByStartedByAndIdempotencyKey(userId, idempotencyKey);
+            if (existing.isPresent()) {
+                return replayOrConflict(existing.get(), normalizedInput);
+            }
+        }
+
         // 同工作流触发最小间隔（§3.9 trigger.min-interval-sec）
         int minInterval = properties.getEngine().getMinTriggerIntervalSec();
         if (minInterval > 0) {
@@ -110,14 +120,6 @@ public class WorkflowRunService {
                 if (last != null && last.plusSeconds(minInterval).isAfter(LocalDateTime.now())) {
                     throw new BusinessException(429, "WORKFLOW_CONCURRENCY_LIMIT: 同一工作流触发过于频繁");
                 }
-            }
-        }
-
-        // 幂等①：同 userId 同 key 已触发过 → 返回首个 run
-        if (idempotencyKey != null && !idempotencyKey.isBlank()) {
-            Optional<WorkflowRun> existing = runRepository.findByStartedByAndIdempotencyKey(userId, idempotencyKey);
-            if (existing.isPresent()) {
-                return existing.get();
             }
         }
 
@@ -138,6 +140,7 @@ public class WorkflowRunService {
             // 并发同 key：唯一键兜底，重查后返回首个 run（§3.5）
             if (idempotencyKey != null && !idempotencyKey.isBlank()) {
                 return runRepository.findByStartedByAndIdempotencyKey(userId, idempotencyKey)
+                        .map(first -> replayOrConflict(first, normalizedInput))
                         .orElseThrow(() -> new BusinessException(409, "IDEMPOTENCY_CONFLICT"));
             }
             throw e;
@@ -201,6 +204,22 @@ public class WorkflowRunService {
         } else {
             action.run();
         }
+    }
+
+    /**
+     * 幂等重放（§3.5 幂等① / §6.2 {@code IDEMPOTENCY_CONFLICT}）。
+     *
+     * <p>同 userId 同 key 重复触发返回<b>首个</b> run；但入参不同时绝不静默返回首个——
+     * 那会让调用方以为"我这次的入参已经跑过了"，而实际上跑的是另一份入参。
+     * 入参快照是规范化后写库的（{@code validateInput} 的输出），因此同一次入参的
+     * 序列化结果逐字节稳定，可以直接比对。</p>
+     */
+    private WorkflowRun replayOrConflict(WorkflowRun first, Map<String, Object> normalizedInput) {
+        if (!toJson(normalizedInput).equals(first.getInputJson())) {
+            throw new BusinessException(400,
+                    "IDEMPOTENCY_CONFLICT: 同一幂等键已用于不同入参的触发，请更换幂等键");
+        }
+        return first;
     }
 
     /**

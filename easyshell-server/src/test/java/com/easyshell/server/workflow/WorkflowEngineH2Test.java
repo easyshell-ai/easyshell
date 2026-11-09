@@ -129,6 +129,8 @@ class WorkflowEngineH2Test {
     private JobRepository jobRepository;
     @Autowired
     private PlatformTransactionManager transactionManager;
+    @Autowired
+    private jakarta.persistence.EntityManager entityManager;
 
     @MockitoBean
     private AuditLogService auditLogService;
@@ -202,7 +204,7 @@ class WorkflowEngineH2Test {
         expressionEvaluator = new ExpressionEvaluator(objectMapper);
         dagValidator = new DagValidator(expressionEvaluator);
         attemptAllocator = new AttemptAllocator(nodeRunRepository, transactionManager);
-        approvalStore = new WorkflowApprovalStore(approvalRepository, transactionManager);
+        approvalStore = new WorkflowApprovalStore(approvalRepository, entityManager, transactionManager);
         properties = new WorkflowProperties();
         properties.getEngine().setDefaultRunTimeoutSec(3600);
         properties.getEngine().setDefaultNodeTimeoutSec(300);
@@ -691,7 +693,7 @@ class WorkflowEngineH2Test {
                 .orElseThrow();
 
         // 绕过 decide() 的事件路径，直接改库（模拟"事件丢了"）
-        assertThat(approvalStore.decide(approval.getId(), "approved", 9L, "同意")).isTrue();
+        assertThat(approvalStore.decide(approval.getId(), "approved", 9L, "同意")).isNotNull();
 
         resumeService.resumeIfReady(run.getId());
         WorkflowRun terminal = awaitTerminal(run.getId());

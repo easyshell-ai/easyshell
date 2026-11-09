@@ -26,6 +26,18 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class WorkflowEngineConfig {
 
     /**
+     * 表达式求值器（§2.5）：{@code ExpressionEvaluator} 本身不是 bean（纯函数工具类），
+     * 而 {@code DagValidator} / 五个节点执行器 / {@code WorkflowEngine} 的构造函数都要它。
+     * 在这里显式声明，否则整个 Spring 上下文起不来（内核落地时漏登记，全量上下文测试
+     * 又是 @Disabled，所以 559 个单测全绿也盖不住这个启动即失败）。
+     */
+    @Bean
+    public com.easyshell.server.workflow.expression.ExpressionEvaluator expressionEvaluator(
+            com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
+        return new com.easyshell.server.workflow.expression.ExpressionEvaluator(objectMapper);
+    }
+
+    /**
      * {@code workflow-engine} 池：跑 drive() 主循环与 runNode()。
      * 守护线程工厂照搬 {@code DagExecutor.java:48-52} 的形状，前缀改为 workflow-engine-。
      */
