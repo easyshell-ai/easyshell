@@ -24,3 +24,97 @@
   --xy-minimap-node-background-color: var(--es-color-border);
   --xy-attribution-background-color: transparent;
 }
+
+/* ── 工作流节点（220×72 / 审批与条件 220×96，尺寸由 JS 常量 NODE_WIDTH/NODE_HEIGHT 控制）── */
+.wf-node {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 10px 12px;
+  box-sizing: border-box;
+  background: var(--es-color-bg-container);
+  border: 1px solid var(--es-color-border);
+  border-radius: var(--es-border-radius);
+  color: var(--es-color-text);
+  font-size: 12px;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.wf-node[data-selected='true'] {
+  box-shadow: 0 0 0 3px var(--es-color-primary-bg);
+}
+.wf-node[data-status='running'] {
+  border-style: dashed;
+}
+.wf-node-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.wf-node-icon {
+  display: inline-flex;
+  font-size: 14px;
+}
+.wf-node-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.wf-node-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--es-color-text-tertiary);
+  font-size: 11px;
+}
+.wf-node-key {
+  font-family: var(--es-font-family-code, monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wf-node-type {
+  flex-shrink: 0;
+}
+/* 键盘可达性：焦点环（nodesFocusable 下 Tab 移动） */
+.react-flow__node:focus-visible {
+  outline: 2px solid var(--es-color-primary);
+  outline-offset: 2px;
+}
+/* condition 双出把手的 T/F 标记 */
+.wf-handle-label {
+  position: absolute;
+  left: 9px;
+  top: -8px;
+  font-size: 9px;
+  line-height: 12px;
+  color: var(--es-color-text-tertiary);
+  pointer-events: none;
+}
+/* 对齐辅助线：ViewportPortal 里流坐标的 SVG 覆盖层 */
+.wf-alignment-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  overflow: visible;
+  pointer-events: none;
+}
+.wf-canvas-hint {
+  font-size: 11px;
+  color: var(--es-color-text-tertiary);
+  background: var(--es-color-bg-elevated);
+  border: 1px solid var(--es-color-border-secondary);
+  border-radius: 6px;
+  padding: 2px 8px;
+}
+.wf-canvas {
+  width: 100%;
+  height: 100%;
+  min-height: 480px;
+}

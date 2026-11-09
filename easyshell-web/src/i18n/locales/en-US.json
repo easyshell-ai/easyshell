@@ -73,7 +73,11 @@
     "system_memory": "Memory Store",
     "system_sop": "SOP Manager",
     "terminal": "Terminal",
-    "host_detail": "Host Detail"
+    "host_detail": "Host Detail",
+    "workflow": "Workflows",
+    "workflow_editor": "Workflow editor",
+    "workflow_run": "Runs",
+    "workflow_approvals": "Workflow approvals"
   },
   "header": {
     "switch_to_en": "Switch to English",
@@ -1518,6 +1522,276 @@
       "cancel": "Cancel",
       "approvalSubmitted": "Submitted for approval. Please wait for admin review.",
       "approvalFailed": "Failed to submit for approval"
+    }
+  },
+  "workflow": {
+    "list": {
+      "title": "Workflows",
+      "create": "New workflow",
+      "created": "Workflow created",
+      "createFailed": "Failed to create workflow",
+      "edit": "Edit",
+      "fetchFailed": "Failed to load workflows",
+      "searchPlaceholder": "Search name / category",
+      "empty": "No workflows yet",
+      "emptyHint": "Start with “New workflow”, or import a DAG plan from AI Ops.",
+      "nameRequired": "Please enter a workflow name",
+      "description": "Description",
+      "archiveConfirm": "Archive this workflow? (soft delete, recoverable)",
+      "archived": "Archived",
+      "archiveFailed": "Archive failed",
+      "col": {
+        "name": "Name",
+        "visibility": "Visibility",
+        "category": "Category",
+        "version": "Version",
+        "runs": "Runs / succeeded",
+        "lastRunAt": "Last run"
+      }
+    },
+    "status": {
+      "draft": "Draft",
+      "published": "Published",
+      "archived": "Archived"
+    },
+    "visibility": {
+      "private": "Private",
+      "public": "Public"
+    },
+    "palette": {
+      "title": "Node palette",
+      "add": "Add",
+      "handles": "{{in}} in / {{out}} out",
+      "hint": "Drag onto the canvas, or focus and press Enter"
+    },
+    "node": {
+      "type": {
+        "script-exec": "Script exec",
+        "condition": "Condition",
+        "notify": "Notify",
+        "approval": "Approval",
+        "wait": "Wait"
+      },
+      "desc": {
+        "script-exec": "Run a script on target hosts via a real Task",
+        "condition": "Evaluate an expression with true / false branches",
+        "notify": "Push a message via webhook / email / bot",
+        "approval": "Suspend the run until an admin approves",
+        "wait": "Continue after a delay in seconds"
+      }
+    },
+    "nodeStatus": {
+      "pending": "Pending",
+      "running": "Running",
+      "succeeded": "Succeeded",
+      "failed": "Failed",
+      "skipped": "Skipped",
+      "suspended": "Suspended",
+      "cancelled": "Cancelled",
+      "timeout": "Timeout",
+      "interrupted": "Interrupted"
+    },
+    "canvas": {
+      "ariaLabel": "Workflow canvas: Tab to move between nodes, Enter opens config, arrows move, Delete removes",
+      "hint": "Drag empty space to box-select · Space+drag pans · Ctrl+Z undo",
+      "reject": {
+        "SELF_CONNECTION": "A node cannot connect to itself",
+        "DUPLICATE_EDGE": "This connection already exists",
+        "CYCLE": "Cycles are not allowed (workflows must be a DAG)",
+        "ENDPOINT_MISSING": "Connection endpoint does not exist"
+      },
+      "deleteTitle": "Confirm delete",
+      "deleteConfirm": "This removes {{nodes}} node(s) and {{edges}} edge(s). Ctrl+Z undoes it.",
+      "deleteNodes": "Nodes affected",
+      "deleted": "Deleted",
+      "copied": "Copied {{count}} node(s)",
+      "autoLayoutDone": "Re-laid out by depth"
+    },
+    "form": {
+      "title": "Node config",
+      "empty": "Select a node on the canvas",
+      "name": "Node name",
+      "nameRequired": "Please enter a node name",
+      "scriptId": "Script ID (optional, reuse from library)",
+      "scriptIdPlaceholder": "Leave empty to write the script inline",
+      "scriptContent": "Script content",
+      "scriptContentRequired": "Please enter the script content",
+      "scriptContentHint": "Supports {{NAME}} interpolation; raw:true params are declared",
+      "riskHint": "Non-LOW scripts are gated; an approval ancestor lets an admin clear them",
+      "expression": "Condition expression",
+      "expressionRequired": "Please enter a condition expression",
+      "expressionHint": "Example: nodes.n1.output.count > 0",
+      "channel": "Channel",
+      "message": "Message",
+      "approvalMode": "Approval mode",
+      "approvalModeConfirm": "Confirm only",
+      "approvalModeInput": "Confirm with input",
+      "approvalTitle": "Approval title",
+      "durationSec": "Duration",
+      "advanced": "Advanced",
+      "outputVar": "Output variable",
+      "outputVarHint": "Referenced downstream as nodes.<key>.output; must differ from the node key",
+      "retryMax": "Retries",
+      "retryInterval": "Retry interval",
+      "timeout": "Timeout (s)",
+      "onFailure": "On failure",
+      "onUnsafeValue": "Unsafe value",
+      "riskPolicy": "Risk policy",
+      "nodeShape": "Size {{width}}×{{height}}",
+      "handles": "{{in}} in / {{out}} out"
+    },
+    "edge": {
+      "title": "Edge: {{from}} → {{to}}",
+      "condition": "Condition (empty = always true)",
+      "conditionHint": "Only the true branch of a condition node may carry a condition",
+      "dualHandleHint": "Condition node: the true branch may carry a condition, the false branch must stay empty",
+      "falseBranchLocked": "Edges from the false handle cannot carry a condition",
+      "onUpstreamFailure": "When upstream fails"
+    },
+    "json": {
+      "title": "Definition JSON (read-only)",
+      "meta": "{{nodes}} nodes / {{edges}} edges / schema v{{version}}"
+    },
+    "editor": {
+      "dirty": "Unsaved",
+      "saved": "Saved",
+      "lastSaved": "Saved at {{time}}",
+      "selectedCount": "{{count}} node(s) selected",
+      "selectedEdges": "{{count}} edge(s) selected",
+      "undo": "Undo (Ctrl+Z)",
+      "redo": "Redo (Ctrl+Shift+Z)",
+      "autoLayout": "Auto layout",
+      "nothingToUndo": "Nothing to undo",
+      "nothingToRedo": "Nothing to redo",
+      "saveFailed": "Failed to save the draft",
+      "saveFailedOffline": "Save failed; changes kept in the local draft",
+      "localDraftFound": "A local draft was found (left by a failed save)",
+      "localDraftRestore": "Restore local draft",
+      "localDraftDiscard": "Discard",
+      "localDraftRestored": "Local draft restored"
+    },
+    "publish": {
+      "action": "Publish",
+      "title": "Publish workflow",
+      "confirm": "Publish",
+      "blocked": "ERRORs present — cannot publish",
+      "revalidate": "Re-validate",
+      "noIssues": "Validation passed — ready to publish",
+      "errorCount": "{{count}} ERROR(s)",
+      "errorHint": "Fix the structural issues on the canvas and retry; ERRORs block publishing.",
+      "success": "Published",
+      "failed": "Publish failed",
+      "riskBlocked": "Risk gate blocked: approval required or adjust the script"
+    },
+    "trigger": {
+      "action": "Trigger",
+      "title": "Trigger run: {{name}}",
+      "submit": "Trigger",
+      "success": "Run triggered",
+      "failed": "Trigger failed",
+      "notPublished": "The workflow is not published yet — publish first",
+      "concurrency": "Global concurrency is full; the run is queued",
+      "noVariables": "This workflow declares no input variables",
+      "required": "required",
+      "idempotencyKey": "Idempotency-Key",
+      "idempotencyHint": "Same user + same key returns the first run; different inputs → 409"
+    },
+    "conflict": {
+      "title": "Version conflict (409)",
+      "message": "The server draft was changed by another session (base_version mismatch). Nothing is merged automatically — choose how to proceed:",
+      "overwrite": "Overwrite (audited as WORKFLOW_OVERWRITE)",
+      "overwriteDone": "Overwritten",
+      "saveCopy": "Save as a copy (keeps my changes)",
+      "copyCreated": "Copy created",
+      "copyFailed": "Failed to create the copy",
+      "discard": "Discard my changes and reload the server draft",
+      "discarded": "Server draft reloaded"
+    },
+    "run": {
+      "title": "Runs",
+      "monitor": "Monitor",
+      "empty": "No runs yet",
+      "fetchFailed": "Failed to load runs",
+      "filtered": "Workflow #{{id}} only",
+      "canvasTitle": "Run graph (read-only)",
+      "nodes": "Node runs",
+      "info": "Run info",
+      "input": "Trigger input",
+      "variables": "Variables snapshot",
+      "variablesTruncated": "Variables snapshot truncated",
+      "output": "Run output",
+      "logs": "Live logs",
+      "noLogs": "No logs yet",
+      "logLabel": "Workflow run log",
+      "ws": {
+        "idle": "Connecting",
+        "connected": "Connected",
+        "disconnected": "Disconnected"
+      },
+      "cancel": "Cancel run",
+      "cancelConfirm": "Cancel this run?",
+      "cancelHint": "Cancellation propagates at the next checkpoint; started scripts still finish.",
+      "cancelRequested": "Cancellation requested",
+      "cancelFailed": "Cancel failed",
+      "ariaRunning": "Running: {{nodes}}",
+      "ariaStatus": "Run status: {{status}}",
+      "col": {
+        "id": "Run ID",
+        "workflow": "Workflow",
+        "version": "Version",
+        "trigger": "Trigger",
+        "currentNodes": "Current nodes",
+        "nodeKey": "Node",
+        "nodeType": "Type",
+        "attempt": "Attempt",
+        "task": "Task",
+        "error": "Error"
+      },
+      "trigger": {
+        "manual": "Manual",
+        "scheduled": "Scheduled",
+        "replay": "Replay"
+      }
+    },
+    "approval": {
+      "title": "Workflow approvals",
+      "fetchError": "Failed to load pending approvals",
+      "empty": "Nothing to approve",
+      "approve": "Approve",
+      "reject": "Reject",
+      "approveSuccess": "Approved",
+      "rejectSuccess": "Rejected",
+      "decideFailed": "Decision failed",
+      "decided": "This approval was already decided",
+      "confirmApprove": "Approve this request?",
+      "confirmApproveDesc": "The suspended run resumes after approval",
+      "confirmReject": "Reject this request?",
+      "confirmRejectDesc": "The run follows its onRejection policy",
+      "detailTitle": "Approval detail",
+      "detail": "Detail snapshot",
+      "auditHint": "Every decision is audited (who and when)",
+      "status": {
+        "pending": "Pending",
+        "approved": "Approved",
+        "rejected": "Rejected",
+        "timeout": "Timed out",
+        "cancelled": "Cancelled"
+      },
+      "col": {
+        "title": "Title",
+        "nodeType": "Node type",
+        "risk": "Risk level",
+        "expiresAt": "Expires at"
+      }
+    },
+    "error": {
+      "403": "You cannot access this workflow",
+      "403Desc": "Only the owner or an admin can access it.",
+      "404": "Workflow not found",
+      "404Desc": "It may have been deleted or archived.",
+      "run404": "Run not found",
+      "backToList": "Back to workflows",
+      "generic": "Failed to load"
     }
   }
 }

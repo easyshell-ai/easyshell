@@ -1,6 +1,6 @@
 /**
  * Browsers cannot set headers on the WebSocket API, so the access token travels in the
- * query string; the server validates it during the handshake. Kept as a pure function
+ * query string; the server validates it during the handshake. Kept as pure functions
  * (no window/document access) so the URL contract stays unit-testable.
  */
 export function buildTaskLogWsUrl(
@@ -11,4 +11,15 @@ export function buildTaskLogWsUrl(
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const query = token ? `?token=${encodeURIComponent(token)}` : '';
   return `${protocol}//${location.host}/ws/task/log/${taskId}${query}`;
+}
+
+/** 工作流运行事件通道（§6.4：token 同样走 query，越权在 afterConnectionEstablished 关闭） */
+export function buildWorkflowRunWsUrl(
+  runId: string,
+  token: string | null,
+  location: { protocol: string; host: string }
+): string {
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const query = token ? `?token=${encodeURIComponent(token)}` : '';
+  return `${protocol}//${location.host}/ws/workflow/run/${runId}${query}`;
 }
