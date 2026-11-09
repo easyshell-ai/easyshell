@@ -1,6 +1,7 @@
 package com.easyshell.server.workflow;
 
 import com.easyshell.server.ai.channel.ChannelMessageRouter;
+import com.easyshell.server.ai.channel.PushOutcome;
 import com.easyshell.server.ai.security.SensitiveDataFilter;
 import com.easyshell.server.common.exception.BusinessException;
 import com.easyshell.server.model.dto.JobResultRequest;
@@ -69,6 +70,8 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
 import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.List;
@@ -95,6 +98,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /**
  * 执行内核集成测试（真实 H2，MODE=MySQL；{@code @Transactional(NOT_SUPPORTED)} 因为
@@ -134,6 +138,11 @@ class WorkflowEngineH2Test {
 
     @MockitoBean
     private AuditLogService auditLogService;
+
+    /**
+     * 取消路径标记：让仓储装饰代理只闩取消线程的写入，不闩引擎线程的同键写入
+     */
+    private static final ThreadLocal<Boolean> CANCEL_PATH = new ThreadLocal<>();
 
     private ObjectMapper objectMapper;
     private ExpressionEvaluator expressionEvaluator;
@@ -221,6 +230,10 @@ class WorkflowEngineH2Test {
         retryScheduler.initialize();
 
         channelMessageRouter = mock(ChannelMessageRouter.class);
+        // notify 节点的推送结果：默认按"已交付"打桩（P-3 之后 pushMessage 返回 PushOutcome，
+        // 不打桩会拿到 null；需要"渠道不可用"的用例在方法内重新打桩）
+        lenient().when(channelMessageRouter.pushMessage(anyString(), anyString()))
+                .thenReturn(PushOutcome.DELIVERED);
         Consumer<WorkflowEvent> sink = events::add;
 
         engine = new WorkflowEngine(runRepository, nodeRunRepository, approvalRepository, versionRepository,
@@ -499,6 +512,57 @@ class WorkflowEngineH2Test {
     }
 
     @Test
+    @DisplayName("MF-13 / P-1：触发入参与节点渲染参数都快照落库（两级 input_json 均非空）")
+    void inputJsonSnapshotsArePersistedAtRunAndNodeLevel() {
+        // 执行体在 attempt 行 INSERT 之后才回填 inputJson（真实 ScriptExecNodeExecutor 的时序），
+        // 这里用桩复现该时序：只有 finishAttemptAtomically 带上 inputJson，库里的列才非空
+        stub(NodeType.SCRIPT_EXEC).behavior = ctx -> {
+            ctx.nodeRun().setInputJson("{\"parameters\":{\"UPSTREAM\":\"PASS-42\"},\"rawParams\":[]}");
+            ctx.variables().putNodeOutput(ctx.node().getKey(), ctx.node().getOutputVar(),
+                    Map.of("maxPcent", 93.2));
+            return NodeOutcome.SUCCEEDED;
+        };
+
+        WorkflowRun run = startRun(linearDefinition("skip"), Map.of("threshold", 90));
+        awaitTerminal(run.getId());
+
+        // run 级：触发入参全量快照（§5.2 / 可复现性），规范化后的形态
+        WorkflowRun reloaded = runRepository.findById(run.getId()).orElseThrow();
+        assertThat(reloaded.getInputJson()).as(dumpRun()).isNotNull();
+        assertThat(reloaded.getInputJson()).contains("\"threshold\"");
+
+        // 节点级：渲染后的 parameters Map + rawParams 声明（MF-13），不含渲染后脚本全文
+        WorkflowNodeRun check = nodeRun(run.getId(), "check");
+        assertThat(check.getInputJson()).as(dumpRun()).isNotNull();
+        assertThat(check.getInputJson()).contains("\"UPSTREAM\":\"PASS-42\"");
+        assertThat(check.getInputJson()).contains("\"rawParams\"");
+        assertThat(check.getInputJson()).doesNotContain("echo");
+    }
+
+    @Test
+    @DisplayName("P-3：notify 渠道未启用时 output_json 如实记 skipped，不谎报 delivered")
+    void notifyChannelUnavailable_isRecordedAsSkipped() {
+        stub(NodeType.SCRIPT_EXEC).behavior = ctx -> {
+            ctx.variables().putNodeOutput(ctx.node().getKey(), ctx.node().getOutputVar(),
+                    Map.of("maxPcent", 93.2));
+            return NodeOutcome.SUCCEEDED;
+        };
+        when(channelMessageRouter.pushMessage(anyString(), anyString()))
+                .thenReturn(PushOutcome.CHANNEL_NOT_RUNNING);
+
+        WorkflowRun run = startRun(linearDefinition("skip"), Map.of("threshold", 90));
+        WorkflowRun terminal = awaitTerminal(run.getId());
+
+        assertThat(terminal.getStatus()).as(dumpRun()).isEqualTo("succeeded");
+        assertThat(statusOf(run.getId(), "notify")).isEqualTo("succeeded");
+        WorkflowNodeRun notify = nodeRun(run.getId(), "notify");
+        assertThat(notify.getOutputJson()).as(dumpRun()).isNotNull();
+        assertThat(notify.getOutputJson()).contains("\"delivered\":[]");
+        assertThat(notify.getOutputJson()).contains("\"channel\":\"telegram\"");
+        assertThat(notify.getOutputJson()).contains("\"reason\":\"channel_not_running\"");
+    }
+
+    @Test
     @DisplayName("幂等重投：同一 run 并发 drive 两次，节点只执行一次（per-run 锁）")
     void concurrentDriveIsIdempotent() throws Exception {
         AtomicInteger executions = new AtomicInteger();
@@ -772,6 +836,170 @@ class WorkflowEngineH2Test {
                 .satisfies(e -> assertThat(((BusinessException) e).getCode()).isEqualTo(409));
         assertThat(runRepository.findById(run.getId()).orElseThrow().getStatus()).isEqualTo("cancelled");
         assertThat(statusOf(run.getId(), "notify")).isEqualTo("cancelled");
+    }
+
+    @Test
+    @DisplayName("取消 vs 引擎并发 attempt：uk_node_run 撞键不许把取消路径炸成 500")
+    void cancelRacingEngineAttemptInsert_stillCancels() throws Exception {
+        // 两个独立根节点 a / b。全部闩点落在仓储装饰代理上（不靠 sleep 赌时序）：
+        //   ① 引擎线程给 b 插 attempt=1（running）——停在 INSERT 之前；
+        //   ② 取消线程按 latestByKey 判定 b 从未开始——停在它的终态留痕 INSERT 之前。
+        // 放行顺序：先放①让 b#1 落库并提交，再放②，于是②的 INSERT 撞同一个 uk_node_run。
+        // 这正是生产时序：取消请求与引擎 drive 同时想给同一个 attempt=1 落库。
+        CountDownLatch aExecuting = new CountDownLatch(1);
+        CountDownLatch releaseA = new CountDownLatch(1);
+        CountDownLatch bExecuting = new CountDownLatch(1);
+        CountDownLatch releaseB = new CountDownLatch(1);
+
+        // ① 引擎线程的 attempt INSERT / ② 取消线程的终态留痕 INSERT：分别闩住，放行时机交给主线程
+        CountDownLatch engineAtAttemptInsert = new CountDownLatch(1);
+        CountDownLatch releaseEngineAttempt = new CountDownLatch(1);
+        CountDownLatch cancelAtTerminalInsert = new CountDownLatch(1);
+        CountDownLatch releaseCancelTerminal = new CountDownLatch(1);
+
+        // registry() 会重建桩集合，必须先建再灌行为，否则 behavior 被新桩覆盖
+        NodeExecutorRegistry raceRegistry = registry();
+        WorkflowNodeRunRepository latchingRepo = latchingNodeRunRepository("b",
+                engineAtAttemptInsert, releaseEngineAttempt,
+                cancelAtTerminalInsert, releaseCancelTerminal);
+        AttemptAllocator raceAllocator = new AttemptAllocator(latchingRepo, transactionManager);
+        WorkflowEngine raceEngine = new WorkflowEngine(runRepository, latchingRepo,
+                approvalRepository, versionRepository, jobRepository, raceRegistry, dagValidator,
+                expressionEvaluator, raceAllocator, auditLogService, new SensitiveDataFilter(),
+                Optional.of(events::add), enginePool, retryScheduler, properties, objectMapper,
+                transactionManager);
+        WorkflowRunService raceRunService = new WorkflowRunService(workflowRepository,
+                versionRepository, runRepository, latchingRepo, approvalRepository,
+                raceEngine, auditLogService, properties, objectMapper, transactionManager);
+
+        stub(NodeType.SCRIPT_EXEC).behavior = ctx -> {
+            switch (ctx.node().getKey()) {
+                case "a" -> {
+                    aExecuting.countDown();
+                    awaitQuietly(releaseA);
+                }
+                case "b" -> {
+                    bExecuting.countDown();
+                    awaitQuietly(releaseB);
+                }
+                default -> {
+                }
+            }
+            return NodeOutcome.SUCCEEDED;
+        };
+
+        Long versionId = publishNodes(
+                List.of(node("a", "script-exec", Map.of("script", "echo a")),
+                        node("b", "script-exec", Map.of("script", "echo b"))),
+                List.of());
+        WorkflowRun run = raceRunService.startRun(workflowId, versionId, Map.of(), 42L, null, "manual");
+        // a 的执行体在跑（run 活着），b 的 attempt=1 已停在 INSERT 之前
+        assertThat(aExecuting.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(engineAtAttemptInsert.await(5, TimeUnit.SECONDS)).isTrue();
+
+        AtomicReference<Throwable> cancelFailure = new AtomicReference<>();
+        Thread canceller = new Thread(() -> {
+            CANCEL_PATH.set(true);
+            try {
+                raceEngine.requestCancel(run.getId(), 42L);
+            } catch (Throwable t) {
+                cancelFailure.set(t);
+            } finally {
+                CANCEL_PATH.remove();
+            }
+        }, "cancel-racer");
+        canceller.start();
+        // 取消线程此刻已读完 latestByKey（b 无行），正停在它的留痕 INSERT 上
+        assertThat(cancelAtTerminalInsert.await(5, TimeUnit.SECONDS)).isTrue();
+
+        // 引擎侧先落库并提交 b#1，取消线程的 INSERT 随即撞同一个唯一键
+        releaseEngineAttempt.countDown();
+        assertThat(bExecuting.await(5, TimeUnit.SECONDS)).isTrue();
+        releaseCancelTerminal.countDown();
+        canceller.join(15_000);
+
+        if (cancelFailure.get() != null) {
+            cancelFailure.get().printStackTrace(System.out);
+        }
+        assertThat(cancelFailure.get())
+                .as("取消路径撞 uk_node_run 只能按'已有 attempt 行'作废本次留痕，不能抛异常（对外即 500）")
+                .isNull();
+
+        releaseB.countDown();
+        releaseA.countDown();
+        WorkflowRun terminal = awaitTerminal(run.getId());
+        assertThat(terminal.getStatus()).as(dumpRun()).isEqualTo("cancelled");
+        assertThat(terminal.getErrorMessage()).contains("user_cancelled");
+        // run 已终态不代表两个执行体都已收尾：它们的 finishNode 在放行后才跑，
+        // 必须各自等到终态再断言，否则读到的是抢跑中的 running 行
+        awaitNodeStatus(run.getId(), "a", "cancelled");
+        awaitNodeStatus(run.getId(), "b", "cancelled");
+        assertThat(statusOf(run.getId(), "a")).isEqualTo("cancelled");
+        assertThat(statusOf(run.getId(), "b")).isEqualTo("cancelled");
+        // 幂等语义：同一节点同一 attempt 只允许一行，且取消不得覆盖引擎侧已写的那条
+        List<WorkflowNodeRun> bRows = nodeRunRepository.findByRunId(run.getId()).stream()
+                .filter(r -> r.getNodeKey().equals("b")).toList();
+        assertThat(bRows).as(dumpRun()).hasSize(1);
+        assertThat(bRows.get(0).getAttempt()).isEqualTo(1);
+    }
+
+    /**
+     * node_run 仓储装饰代理：把指定节点的 attempt INSERT / 终态留痕 INSERT 闩住，放行时机
+     * 交给测试线程——"取消 vs 引擎并发 attempt"的竞态不能靠 sleep 赌。
+     *
+     * <p>为什么用 JDK 动态代理而不是 {@code @MockitoSpyBean}：后者对 Spring Data 仓储接口
+     * 造出的间谍没法 {@code callRealMethod()}（Mockito 报 "Cannot call abstract real method"），
+     * 代理则原样转发给真身，异常也原样透传（不包一层反射异常）。</p>
+     */
+    private WorkflowNodeRunRepository latchingNodeRunRepository(
+            String nodeKey,
+            CountDownLatch engineAtAttemptInsert, CountDownLatch releaseEngineAttempt,
+            CountDownLatch cancelAtTerminalInsert, CountDownLatch releaseCancelTerminal) {
+        return (WorkflowNodeRunRepository) Proxy.newProxyInstance(
+                WorkflowNodeRunRepository.class.getClassLoader(),
+                new Class<?>[]{WorkflowNodeRunRepository.class},
+                (proxy, method, args) -> {
+                    Object entity = args != null && args.length == 1 ? args[0] : null;
+                    if (entity instanceof WorkflowNodeRun row
+                            && ("save".equals(method.getName()) || "saveAndFlush".equals(method.getName()))) {
+                        if (!Boolean.TRUE.equals(CANCEL_PATH.get()) && isRunningRow(row, nodeKey)) {
+                            engineAtAttemptInsert.countDown();
+                            awaitQuietly(releaseEngineAttempt);
+                        } else if (Boolean.TRUE.equals(CANCEL_PATH.get()) && isTerminalRow(row, nodeKey)) {
+                            cancelAtTerminalInsert.countDown();
+                            awaitQuietly(releaseCancelTerminal);
+                        }
+                    }
+                    try {
+                        return method.invoke(nodeRunRepository, args);
+                    } catch (InvocationTargetException e) {
+                        throw e.getCause() == null ? e : e.getCause();
+                    }
+                });
+    }
+
+    /** attempt 抢占行：引擎侧 startAttempt 写的 status=running 行 */
+    private static boolean isRunningRow(Object candidate, String nodeKey) {
+        if (!(candidate instanceof WorkflowNodeRun row)) {
+            return false;
+        }
+        return nodeKey.equals(row.getNodeKey()) && "running".equals(row.getStatus());
+    }
+
+    /** 终态留痕行：取消/收尾路径给"从未开始"的节点写的 attempt=1 cancelled/skipped 行 */
+    private static boolean isTerminalRow(Object candidate, String nodeKey) {
+        if (!(candidate instanceof WorkflowNodeRun row)) {
+            return false;
+        }
+        return nodeKey.equals(row.getNodeKey()) && Set.of("cancelled", "skipped").contains(row.getStatus());
+    }
+
+    private static void awaitQuietly(CountDownLatch latch) {
+        try {
+            latch.await(10, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     @Test
