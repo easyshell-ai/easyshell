@@ -688,6 +688,191 @@ class DagValidatorTest {
     }
 
     // ------------------------------------------------------------------
+    // 工作流 2.1：classifier / code / llm
+    // ------------------------------------------------------------------
+
+    @Nested
+    @DisplayName("工作流 2.1 节点 — classifier 动态 handle / code / llm 配置")
+    class Workflow21Nodes {
+
+        private WorkflowEdge handleEdge(String from, String to, String handle) {
+            WorkflowEdge edge = edge(from, to);
+            edge.setSourceHandle(handle);
+            return edge;
+        }
+
+        private WorkflowNode classifier(boolean validClasses) {
+            WorkflowNode classify = node("classify", "classifier");
+            List<Object> classes = validClasses
+                    ? List.of(Map.of("name", "disk", "description", "磁盘"),
+                    Map.of("name", "network", "description", "网络"))
+                    : List.of(Map.of("name", "Disk", "description", "大写非法"),
+                    Map.of("name", "disk"), Map.of("name", "disk"));
+            classify.setConfig(new LinkedHashMap<>(Map.of(
+                    "input", "${nodes.begin.output}",
+                    "classes", classes)));
+            return classify;
+        }
+
+        private List<WorkflowNode> classifierGraphNodes(WorkflowNode classify) {
+            return List.of(node("begin", "start"), classify,
+                    node("disk_branch", "notify"), node("network_branch", "notify"),
+                    node("default_branch", "notify"), node("finish", "end"));
+        }
+
+        private List<WorkflowEdge> classifierGraphEdges() {
+            return List.of(
+                    edge("begin", "classify"),
+                    handleEdge("classify", "disk_branch", "disk"),
+                    handleEdge("classify", "network_branch", "network"),
+                    handleEdge("classify", "default_branch", "default"),
+                    edge("disk_branch", "finish"),
+                    edge("network_branch", "finish"),
+                    edge("default_branch", "finish"));
+        }
+
+        private boolean hasAnyError(List<ValidationIssue> issues) {
+            return issues.stream().anyMatch(i -> i.severity() == ValidationIssue.Severity.ERROR);
+        }
+
+        @Test
+        @DisplayName("classifier：合法类别 + 动态 handle 0 ERROR")
+        void validClassifierHandles() {
+            List<ValidationIssue> issues = validate(classifierGraphNodes(classifier(true)),
+                    classifierGraphEdges());
+            assertThat(hasAnyError(issues)).as(issues.toString()).isFalse();
+        }
+
+        @Test
+        @DisplayName("classifier：sourceHandle 不是配置类别/default → EDGE_TYPE_INCOMPATIBLE")
+        void unknownHandleIsRejected() {
+            List<WorkflowEdge> edges = new ArrayList<>(classifierGraphEdges());
+            edges.set(1, handleEdge("classify", "disk_branch", "storage"));
+            List<ValidationIssue> issues = validate(classifierGraphNodes(classifier(true)), edges);
+            assertThat(hasError(issues, "EDGE_TYPE_INCOMPATIBLE")).isTrue();
+            assertThat(issues).anySatisfy(i -> assertThat(i.message()).contains("storage"));
+        }
+
+        @Test
+        @DisplayName("classifier：同一 class 两条出边 → EDGE_TYPE_INCOMPATIBLE")
+        void duplicateClassHandleIsRejected() {
+            List<WorkflowEdge> edges = new ArrayList<>(classifierGraphEdges());
+            edges.add(handleEdge("classify", "finish", "disk"));
+            List<ValidationIssue> issues = validate(classifierGraphNodes(classifier(true)), edges);
+            assertThat(hasError(issues, "EDGE_TYPE_INCOMPATIBLE")).isTrue();
+        }
+
+        @Test
+        @DisplayName("classifier：类别名非法/重复 → NODE_CONFIG_INVALID")
+        void invalidClassNamesAreRejected() {
+            List<ValidationIssue> issues = validate(classifierGraphNodes(classifier(false)),
+                    classifierGraphEdges());
+            assertThat(hasError(issues, "NODE_CONFIG_INVALID")).isTrue();
+        }
+
+        private WorkflowNode codeNode(Map<String, Object> overrides) {
+            WorkflowNode code = node("code", "code");
+            Map<String, Object> config = new LinkedHashMap<>();
+            config.put("language", "javascript");
+            config.put("code", "function main(input) { return input; }");
+            config.put("inputs", Map.of("a", "${run.input.value}"));
+            config.put("timeoutSec", 5);
+            config.putAll(overrides);
+            code.setConfig(config);
+            return code;
+        }
+
+        @Test
+        @DisplayName("code：合法配置 0 ERROR；language/code 长度/inputs/timeout 越界 → NODE_CONFIG_INVALID")
+        void codeConfigRules() {
+            assertThat(hasAnyError(validate(List.of(codeNode(Map.of())), List.of()))).isFalse();
+
+            assertThat(hasError(validate(List.of(codeNode(Map.of("language", "java"))), List.of()),
+                    "NODE_CONFIG_INVALID")).isTrue();
+            assertThat(hasError(validate(List.of(codeNode(Map.of("code", "x".repeat(20001)))), List.of()),
+                    "NODE_CONFIG_INVALID")).isTrue();
+            assertThat(hasError(validate(List.of(codeNode(Map.of("inputs", Map.of("bad-name", "${run.input.x}")))),
+                    List.of()), "NODE_CONFIG_INVALID")).isTrue();
+            assertThat(hasError(validate(List.of(codeNode(Map.of("timeoutSec", 16))), List.of()),
+                    "NODE_CONFIG_INVALID")).isTrue();
+            assertThat(hasError(validate(List.of(codeNode(Map.of("inputs", List.of("x")))), List.of()),
+                    "NODE_CONFIG_INVALID")).isTrue();
+        }
+
+        private WorkflowNode llmNode(Map<String, Object> overrides) {
+            WorkflowNode llm = node("llm", "llm");
+            Map<String, Object> config = new LinkedHashMap<>();
+            config.put("userPrompt", "总结 ${run.input.value}");
+            config.put("outputMode", "text");
+            config.put("temperature", 0.3);
+            config.put("maxInputChars", 8000);
+            config.putAll(overrides);
+            llm.setConfig(config);
+            return llm;
+        }
+
+        @Test
+        @DisplayName("llm：userPrompt/outputMode/temperature/maxInputChars 规则；非法 schema 只 WARNING")
+        void llmConfigRules() {
+            assertThat(hasAnyError(validate(List.of(llmNode(Map.of())), List.of()))).isFalse();
+
+            assertThat(hasError(validate(List.of(llmNode(Map.of("userPrompt", ""))), List.of()),
+                    "NODE_CONFIG_INVALID")).isTrue();
+            assertThat(hasError(validate(List.of(llmNode(Map.of("outputMode", "yaml"))), List.of()),
+                    "NODE_CONFIG_INVALID")).isTrue();
+            assertThat(hasError(validate(List.of(llmNode(Map.of("temperature", 2.5))), List.of()),
+                    "NODE_CONFIG_INVALID")).isTrue();
+            assertThat(hasError(validate(List.of(llmNode(Map.of("maxInputChars", 999))), List.of()),
+                    "NODE_CONFIG_INVALID")).isTrue();
+
+            List<ValidationIssue> schemaIssues = validate(
+                    List.of(llmNode(Map.of("outputMode", "json", "jsonSchema", "{not json"))), List.of());
+            assertThat(hasWarning(schemaIssues, "NODE_CONFIG_INVALID")).isTrue();
+            assertThat(hasError(schemaIssues, "NODE_CONFIG_INVALID")).isFalse();
+        }
+
+        @Test
+        @DisplayName("llm：rawParams 直引 llm 输出 → AI_OUTPUT_RAW_FORBIDDEN")
+        void rawParamsCannotReferenceLlmOutput() {
+            WorkflowNode begin = node("begin", "start");
+            WorkflowNode llm = llmNode(Map.of());
+            WorkflowNode run = node("run", "script-exec");
+            run.setConfig(new LinkedHashMap<>(Map.of(
+                    "script", "run {{BODY:raw}}",
+                    "rawParams", List.of("BODY"),
+                    "parameters", Map.of("BODY", "${nodes.llm.output.text}"))));
+            WorkflowNode finish = node("finish", "end");
+            List<ValidationIssue> issues = validate(List.of(begin, llm, run, finish),
+                    List.of(edge("begin", "llm"), edge("llm", "run"), edge("run", "finish")));
+            assertThat(hasError(issues, "AI_OUTPUT_RAW_FORBIDDEN")).isTrue();
+        }
+
+        @Test
+        @DisplayName("llm/classifier/code 模板都做祖先校验")
+        void templatesReferenceAncestors() {
+            WorkflowNode begin = node("begin", "start");
+            WorkflowNode llm = llmNode(Map.of("userPrompt", "${nodes.other.output}"));
+            WorkflowNode classify = classifier(true);
+            classify.getConfig().put("input", "${nodes.other.output}");
+            WorkflowNode code = codeNode(Map.of("inputs", Map.of("x", "${nodes.other.output}")));
+            WorkflowNode other = node("other", "script-exec");
+            WorkflowNode finish = node("finish", "end");
+            List<ValidationIssue> issues = validate(
+                    List.of(begin, llm, classify, code, other,
+                            node("disk_branch", "notify"), node("default_branch", "notify"), finish),
+                    List.of(edge("begin", "llm"), edge("llm", "classify"),
+                            handleEdge("classify", "disk_branch", "disk"),
+                            handleEdge("classify", "default_branch", "default"),
+                            edge("disk_branch", "code"), edge("default_branch", "code"),
+                            edge("begin", "other"), edge("other", "finish"),
+                            edge("code", "finish")));
+            assertThat(issues.stream()
+                    .filter(i -> "EXPRESSION_REFERENCE_NOT_ANCESTOR".equals(i.code()))
+                    .count()).isGreaterThanOrEqualTo(3);
+        }
+    }
+
+    // ------------------------------------------------------------------
     // 祖先集合
     // ------------------------------------------------------------------
 

@@ -32,7 +32,7 @@ public class WorkflowNodeRun extends BaseEntity {
     @Column(name = "node_key", nullable = false, length = 64)
     private String nodeKey;
 
-    /** start / script-exec / transform / condition / ai-analyze / approval / notify / wait / end */
+    /** start / script-exec / transform / condition / ai-analyze / llm / classifier / code / approval / notify / wait / end */
     @Column(name = "node_type", nullable = false, length = 32)
     private String nodeType;
 

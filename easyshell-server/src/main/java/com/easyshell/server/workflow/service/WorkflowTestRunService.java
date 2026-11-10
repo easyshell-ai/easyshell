@@ -115,6 +115,14 @@ public class WorkflowTestRunService {
                     .riskMatches(List.of())
                     .warnings(List.of("AI 节点试运行不会调用模型，请在真实运行中验证"))
                     .build();
+            case LLM, CLASSIFIER, CODE -> WorkflowTestRunVO.builder()
+                    .nodeKey(nodeKey)
+                    .nodeType(node.nodeType().code())
+                    .status("ok")
+                    .riskLevel(RiskLevel.LOW.name())
+                    .riskMatches(List.of())
+                    .warnings(List.of("试运行不会调用模型/执行代码"))
+                    .build();
             case NOTIFY -> previewNotify(node);
             case APPROVAL, WAIT -> WorkflowTestRunVO.builder()
                     .nodeKey(nodeKey)

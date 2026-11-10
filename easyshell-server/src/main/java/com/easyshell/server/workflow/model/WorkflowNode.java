@@ -18,7 +18,7 @@ public class WorkflowNode {
     /** ^[a-z][a-z0-9_]{0,63}$，图内稳定 ID */
     private String key;
 
-    /** start / script-exec / transform / condition / ai-analyze / approval / notify / wait / end */
+    /** start / script-exec / transform / condition / ai-analyze / llm / classifier / code / approval / notify / wait / end */
     private String type;
 
     private String name;
@@ -98,6 +98,22 @@ public class WorkflowNode {
             }
         }
         return fallback;
+    }
+
+    /** config 取 double；缺失/非法返回 null（便于区分"未配置"与 0） */
+    public Double configDouble(String key) {
+        Object value = config == null ? null : config.get(key);
+        if (value instanceof Number n) {
+            return n.doubleValue();
+        }
+        if (value instanceof String s) {
+            try {
+                return Double.parseDouble(s.trim());
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
     }
 
     public boolean configBoolean(String key, boolean fallback) {

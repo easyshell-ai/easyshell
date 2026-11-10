@@ -25,7 +25,7 @@ public class WorkflowNodeRunVO {
 
     private String nodeKey;
 
-    /** start / script-exec / transform / condition / ai-analyze / approval / notify / wait / end */
+    /** start / script-exec / transform / condition / ai-analyze / llm / classifier / code / approval / notify / wait / end */
     private String nodeType;
 
     /** 从 1 开始，每次重试 +1 */

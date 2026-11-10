@@ -2,7 +2,9 @@ package com.easyshell.server.workflow;
 
 import com.easyshell.server.ai.channel.ChannelMessageRouter;
 import com.easyshell.server.ai.channel.PushOutcome;
+import com.easyshell.server.ai.security.AiQuotaService;
 import com.easyshell.server.ai.security.SensitiveDataFilter;
+import com.easyshell.server.ai.service.ChatModelFactory;
 import com.easyshell.server.common.exception.BusinessException;
 import com.easyshell.server.model.dto.JobResultRequest;
 import com.easyshell.server.model.dto.TaskCreateRequest;
@@ -50,8 +52,11 @@ import com.easyshell.server.workflow.model.WorkflowDefinition;
 import com.easyshell.server.workflow.model.WorkflowEdge;
 import com.easyshell.server.workflow.model.WorkflowNode;
 import com.easyshell.server.workflow.node.ApprovalNodeExecutor;
+import com.easyshell.server.workflow.node.ClassifierNodeExecutor;
+import com.easyshell.server.workflow.node.CodeNodeExecutor;
 import com.easyshell.server.workflow.node.ConditionNodeExecutor;
 import com.easyshell.server.workflow.node.EndNodeExecutor;
+import com.easyshell.server.workflow.node.LlmNodeExecutor;
 import com.easyshell.server.workflow.node.NotifyNodeExecutor;
 import com.easyshell.server.workflow.node.StartNodeExecutor;
 import com.easyshell.server.workflow.node.TransformNodeExecutor;
@@ -65,6 +70,11 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.model.Generation;
+import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
@@ -99,6 +109,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -161,6 +172,11 @@ class WorkflowEngineH2Test {
     private WorkflowResumeService resumeService;
     private WorkflowWatchdog watchdog;
     private ChannelMessageRouter channelMessageRouter;
+    private ChatModelFactory chatModelFactory;
+    private ChatModel chatModel;
+    private AiQuotaService aiQuotaService;
+    private ExecutorService workflowAiPool;
+    private CodeNodeExecutor codeExecutor;
 
     private final List<WorkflowEvent> events = new CopyOnWriteArrayList<>();
     private final List<StubExecutor> stubs = new CopyOnWriteArrayList<>();
@@ -233,6 +249,18 @@ class WorkflowEngineH2Test {
         retryScheduler.setThreadNamePrefix("workflow-scheduler-test");
         retryScheduler.initialize();
 
+        chatModelFactory = mock(ChatModelFactory.class);
+        chatModel = mock(ChatModel.class);
+        aiQuotaService = mock(AiQuotaService.class);
+        lenient().when(chatModelFactory.getChatModel(nullable(String.class), nullable(String.class),
+                nullable(Double.class))).thenReturn(chatModel);
+        workflowAiPool = Executors.newFixedThreadPool(2, runnable -> {
+            Thread thread = new Thread(runnable, "workflow-ai-test");
+            thread.setDaemon(true);
+            return thread;
+        });
+        codeExecutor = new CodeNodeExecutor(expressionEvaluator, objectMapper, new SensitiveDataFilter());
+
         channelMessageRouter = mock(ChannelMessageRouter.class);
         // notify 节点的推送结果：默认按"已交付"打桩（P-3 之后 pushMessage 返回 PushOutcome，
         // 不打桩会拿到 null；需要"渠道不可用"的用例在方法内重新打桩）
@@ -262,6 +290,8 @@ class WorkflowEngineH2Test {
     @AfterEach
     void tearDown() {
         enginePool.shutdownNow();
+        workflowAiPool.shutdownNow();
+        codeExecutor.close();
         retryScheduler.shutdown();
     }
 
@@ -280,6 +310,11 @@ class WorkflowEngineH2Test {
                 new EndNodeExecutor(expressionEvaluator),
                 new NotifyNodeExecutor(channelMessageRouter, expressionEvaluator, new SensitiveDataFilter()),
                 new ApprovalNodeExecutor(approvalStore, expressionEvaluator, properties),
+                new LlmNodeExecutor(chatModelFactory, new SensitiveDataFilter(), aiQuotaService,
+                        expressionEvaluator, workflowAiPool, properties, objectMapper),
+                new ClassifierNodeExecutor(chatModelFactory, new SensitiveDataFilter(), aiQuotaService,
+                        expressionEvaluator, workflowAiPool, properties, objectMapper),
+                codeExecutor,
                 wait));
     }
 
@@ -592,6 +627,100 @@ class WorkflowEngineH2Test {
         Map<String, Object> output = objectMapper.readValue(terminal.getOutputJson(), Map.class);
         assertThat(output.get("ok")).isEqualTo(false);
         assertThat(((Number) output.get("usage")).doubleValue()).isEqualTo(5.0);
+    }
+
+    private static ChatResponse chatResponse(String text) {
+        return new ChatResponse(List.of(new Generation(new AssistantMessage(text))));
+    }
+
+    /** start -> classifier -> {disk, network, default} -> end（工作流 2.1 动态 handle） */
+    private String classifierDefinition() {
+        return """
+                {"schemaVersion":1,"defaultOnUpstreamFailure":"skip","onRejection":"abort",
+                 "variables":{"question":{"type":"string","required":true}},
+                 "nodes":[
+                   {"key":"begin","type":"start","name":"begin","config":{}},
+                   {"key":"classify","type":"classifier","name":"classify","config":{
+                     "input":"${nodes.begin.output.question}",
+                     "classes":[{"name":"disk","description":"磁盘/容量"},{"name":"network","description":"网络/端口"}]}},
+                   {"key":"disk_branch","type":"transform","name":"disk","config":{"mappings":[
+                     {"name":"branch","value":"disk"}]}},
+                   {"key":"network_branch","type":"transform","name":"network","config":{"mappings":[
+                     {"name":"branch","value":"network"}]}},
+                   {"key":"default_branch","type":"transform","name":"default","config":{"mappings":[
+                     {"name":"branch","value":"default"}]}},
+                   {"key":"finish","type":"end","name":"finish","config":{"outputs":[
+                     {"name":"branch","value":"${nodes.disk_branch.output.branch}"}]}}],
+                 "edges":[
+                   {"id":"e1","from":"begin","to":"classify"},
+                   {"id":"e2","from":"classify","to":"disk_branch","sourceHandle":"disk"},
+                   {"id":"e3","from":"classify","to":"network_branch","sourceHandle":"network"},
+                   {"id":"e4","from":"classify","to":"default_branch","sourceHandle":"default"},
+                   {"id":"e5","from":"disk_branch","to":"finish"},
+                   {"id":"e6","from":"network_branch","to":"finish"},
+                   {"id":"e7","from":"default_branch","to":"finish"}]}
+                """;
+    }
+
+    private String llmCodeDefinition() {
+        return """
+                {"schemaVersion":1,"defaultOnUpstreamFailure":"skip","onRejection":"abort",
+                 "variables":{"question":{"type":"string","required":true}},
+                 "nodes":[
+                   {"key":"begin","type":"start","name":"begin","config":{}},
+                   {"key":"llm","type":"llm","name":"llm","config":{
+                     "userPrompt":"分析 ${nodes.begin.output.question}",
+                     "outputMode":"json","maxInputChars":1000}},
+                   {"key":"code","type":"code","name":"code","config":{
+                     "language":"javascript",
+                     "code":"function main(input) { return { score: input.data.score, doubled: input.data.score * 2 }; }",
+                     "inputs":{"data":"${nodes.llm.output.json}"},"timeoutSec":5}},
+                   {"key":"finish","type":"end","name":"finish","config":{"outputs":[
+                     {"name":"score","value":"${nodes.code.output.score}"}]}}],
+                 "edges":[
+                   {"id":"e1","from":"begin","to":"llm"},
+                   {"id":"e2","from":"llm","to":"code"},
+                   {"id":"e3","from":"code","to":"finish"}]}
+                """;
+    }
+
+    @Test
+    @DisplayName("工作流 2.1：classifier 按 output.class 精确路由，其他分支 skipped")
+    void classifierRoutesByClass() {
+        when(chatModel.call(any(Prompt.class)))
+                .thenReturn(chatResponse("{\"class\":\"disk\",\"reason\":\"磁盘容量告警\"}"));
+
+        WorkflowRun run = startRun(classifierDefinition(), Map.of("question", "磁盘满了怎么办"));
+        WorkflowRun terminal = awaitTerminal(run.getId());
+
+        assertThat(terminal.getStatus()).as(dumpRun()).isEqualTo("succeeded");
+        assertThat(statusOf(run.getId(), "classify")).as(dumpRun()).isEqualTo("succeeded");
+        assertThat(nodeRun(run.getId(), "classify").getOutputJson())
+                .contains("\"class\":\"disk\"").contains("\"reason\"");
+        assertThat(statusOf(run.getId(), "disk_branch")).as(dumpRun()).isEqualTo("succeeded");
+        assertThat(statusOf(run.getId(), "network_branch")).as(dumpRun()).isEqualTo("skipped");
+        assertThat(statusOf(run.getId(), "default_branch")).as(dumpRun()).isEqualTo("skipped");
+        assertThat(statusOf(run.getId(), "finish")).isEqualTo("succeeded");
+    }
+
+    @Test
+    @DisplayName("工作流 2.1：llm JSON 输出 → code 沙箱变换 → end 输出")
+    void llmAndCodeProduceOutputs() throws Exception {
+        when(chatModel.call(any(Prompt.class)))
+                .thenReturn(chatResponse("```json\n{\"summary\":\"disk ok\",\"score\":90}\n```"));
+
+        WorkflowRun run = startRun(llmCodeDefinition(), Map.of("question", "检查磁盘"));
+        WorkflowRun terminal = awaitTerminal(run.getId());
+
+        assertThat(terminal.getStatus()).as(dumpRun()).isEqualTo("succeeded");
+        assertThat(nodeRun(run.getId(), "llm").getOutputJson())
+                .contains("\"structured\":true").contains("\"score\":90");
+        assertThat(nodeRun(run.getId(), "code").getOutputJson())
+                .contains("\"score\":90").contains("\"doubled\":180");
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> output = objectMapper.readValue(terminal.getOutputJson(), Map.class);
+        assertThat(((Number) output.get("score")).intValue()).isEqualTo(90);
     }
 
     @Test

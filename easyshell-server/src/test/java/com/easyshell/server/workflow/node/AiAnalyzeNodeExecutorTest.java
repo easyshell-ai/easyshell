@@ -64,9 +64,10 @@ class AiAnalyzeNodeExecutorTest {
             thread.setDaemon(true);
             return thread;
         });
+        ObjectMapper objectMapper = new ObjectMapper();
         executor = new AiAnalyzeNodeExecutor(chatModelFactory, new SensitiveDataFilter(),
-                aiQuotaService, new ExpressionEvaluator(new ObjectMapper()), aiPool,
-                new WorkflowProperties());
+                aiQuotaService, new ExpressionEvaluator(objectMapper), aiPool,
+                new WorkflowProperties(), objectMapper);
     }
 
     @AfterEach
@@ -145,6 +146,26 @@ class AiAnalyzeNodeExecutorTest {
         assertThat((String) output.get("text")).contains("***");
 
         verify(aiQuotaService).checkAndIncrement(eq(42L), eq("workflow-ai-analyze"));
+    }
+
+    @Test
+    @DisplayName("outputMode=json：剥离围栏解析，output 增加 json/structured")
+    void jsonOutputModeAddsStructuredFields() {
+        when(chatModelFactory.getChatModel((String) null)).thenReturn(chatModel);
+        when(chatModel.call(any(Prompt.class)))
+                .thenReturn(response("```json\n{\"risk\":\"high\",\"score\":90}\n```"));
+
+        WorkflowNode node = node("分析", "", 1000, 60);
+        node.getConfig().put("outputMode", "json");
+        VariableStore variables = new VariableStore();
+        executor.execute(context(node, variables));
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> output = (Map<String, Object>) variables.nodeOutput("ai").value();
+        assertThat(output.get("structured")).isEqualTo(true);
+        assertThat(output.get("json")).isInstanceOf(Map.class);
+        assertThat(output.get("truncated")).isEqualTo(false);
+        assertThat(output.get("text")).isInstanceOf(String.class);
     }
 
     @Test

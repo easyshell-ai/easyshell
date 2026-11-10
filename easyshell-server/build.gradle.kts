@@ -87,6 +87,12 @@ dependencies {
     implementation("io.github.java-diff-utils:java-diff-utils:4.12")
     implementation("com.jayway.jsonpath:json-path:2.9.0")
 
+    // Workflow 2.1 code 节点：GraalVM Polyglot 沙箱（JS / Python 社区运行时）
+    // 23.1.2 是最后一个支持 JDK 17 的 23.1.x 版本；只引入语言运行时，不引入编译器。
+    implementation("org.graalvm.polyglot:polyglot:23.1.2")
+    implementation("org.graalvm.polyglot:js-community:23.1.2")
+    implementation("org.graalvm.polyglot:python-community:23.1.2")
+
     // Dev Tools
     developmentOnly("org.springframework.boot:spring-boot-devtools")
     annotationProcessor("org.springframework.boot:spring-boot-configuration-processor")
