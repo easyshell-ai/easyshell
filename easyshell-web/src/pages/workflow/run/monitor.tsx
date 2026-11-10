@@ -6,8 +6,11 @@ import {
   Card,
   Col,
   Descriptions,
+  Drawer,
+  Empty,
   Popconfirm,
   Row,
+  Select,
   Space,
   Spin,
   Table,
@@ -15,12 +18,12 @@ import {
   Typography,
   message,
 } from 'antd';
-import { ArrowLeftOutlined, ReloadOutlined, StopOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, ReloadOutlined, StopOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { theme } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { cancelWorkflowRun, getWorkflowRun, getWorkflowVersion } from '../api';
-import type { WorkflowDefinition, WorkflowNodeRun, WorkflowRunDetail } from '../types';
+import { cancelWorkflowRun, getWorkflowRun, getWorkflowVersion, testRunNode } from '../api';
+import type { WorkflowDefinition, WorkflowNodeRun, WorkflowRunDetail, WorkflowTestRun } from '../types';
 import { definitionToFlow } from '../graph';
 import { nodeRunStatusMap } from '../status';
 import { formatDateTime } from '../../../utils/format';
@@ -46,6 +49,11 @@ const WorkflowRunMonitorPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState('');
+  const [selectedNodeKey, setSelectedNodeKey] = useState<string | null>(null);
+  const [onlyFailed, setOnlyFailed] = useState(false);
+  const [testRunning, setTestRunning] = useState(false);
+  const [testResult, setTestResult] = useState<WorkflowTestRun | null>(null);
+  const [testError, setTestError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!runId) return;
@@ -116,11 +124,41 @@ const WorkflowRunMonitorPage: React.FC = () => {
     return {
       nodes: flow.nodes.map((node) => ({
         ...node,
+        selected: node.id === selectedNodeKey,
         data: { ...node.data, status: statuses[node.id] || 'pending' },
       })),
       edges: flow.edges,
     };
-  }, [definition, statuses]);
+  }, [definition, statuses, selectedNodeKey]);
+
+  const selectedNodeRun = useMemo(
+    () => (detail?.nodeRuns || []).find((nodeRun) => nodeRun.nodeKey === selectedNodeKey) || null,
+    [detail?.nodeRuns, selectedNodeKey]
+  );
+
+  const visibleNodeRuns = useMemo(
+    () => (detail?.nodeRuns || []).filter((nodeRun) => !onlyFailed || nodeRun.status === 'failed'),
+    [detail?.nodeRuns, onlyFailed]
+  );
+
+  const runNodeTest = useCallback(async () => {
+    if (!detail?.run.id || !selectedNodeRun) return;
+    setTestRunning(true);
+    setTestError(null);
+    setTestResult(null);
+    try {
+      const res = await testRunNode(detail.run.id, selectedNodeRun.nodeKey);
+      if (res.code === 200 && res.data) {
+        setTestResult(res.data);
+      } else {
+        setTestError(res.message || t('workflow.run.testRunFailed'));
+      }
+    } catch {
+      setTestError(t('workflow.run.testRunFailed'));
+    } finally {
+      setTestRunning(false);
+    }
+  }, [detail, selectedNodeRun, t]);
 
   const nodeColumns: ColumnsType<WorkflowNodeRun> = useMemo(
     () => [
@@ -297,32 +335,40 @@ const WorkflowRunMonitorPage: React.FC = () => {
 
       <Row gutter={[12, 12]} style={{ marginTop: 12 }}>
         <Col xs={24} lg={12}>
-          <Card size="small" title={t('workflow.run.nodes')} styles={{ body: { padding: 0 } }}>
+          <Card
+            size="small"
+            title={t('workflow.run.nodes')}
+            styles={{ body: { padding: 0 } }}
+            extra={
+              <Select
+                size="small"
+                value={onlyFailed ? 'failed' : 'all'}
+                onChange={(value) => setOnlyFailed(value === 'failed')}
+                options={[
+                  { value: 'all', label: t('workflow.run.filter.all') },
+                  { value: 'failed', label: t('workflow.run.filter.failed') },
+                ]}
+                aria-label={t('workflow.run.filter.label')}
+                style={{ width: 130 }}
+              />
+            }
+          >
             <Table<WorkflowNodeRun>
               columns={nodeColumns}
-              dataSource={detail.nodeRuns || []}
+              dataSource={visibleNodeRuns}
               rowKey="id"
               size="small"
               pagination={false}
               scroll={{ x: 900 }}
-              expandable={{
-                expandedRowRender: (record) => (
-                  <Space direction="vertical" size={4} style={{ width: '100%' }}>
-                    {record.input && (
-                      <div>
-                        <Text type="secondary">input: </Text>
-                        <pre className="wf-inline-json">{JSON.stringify(record.input, null, 2)}</pre>
-                      </div>
-                    )}
-                    {record.output && (
-                      <div>
-                        <Text type="secondary">output: </Text>
-                        <pre className="wf-inline-json">{JSON.stringify(record.output, null, 2)}</pre>
-                      </div>
-                    )}
-                  </Space>
-                ),
-              }}
+              onRow={(record) => ({
+                onClick: () => {
+                  setSelectedNodeKey(record.nodeKey);
+                  setTestResult(null);
+                  setTestError(null);
+                },
+                style: { cursor: 'pointer' },
+              })}
+              locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('workflow.run.filter.empty')} /> }}
             />
           </Card>
         </Col>
@@ -360,6 +406,117 @@ const WorkflowRunMonitorPage: React.FC = () => {
           </Space>
         </Col>
       </Row>
+
+      <Drawer
+        title={t('workflow.run.inspector.title')}
+        open={!!selectedNodeRun}
+        onClose={() => setSelectedNodeKey(null)}
+        width={520}
+        styles={{ body: { padding: 0 } }}
+      >
+        {selectedNodeRun && (
+          <div className="wf-run-inspector" data-testid="run-node-inspector">
+            <Descriptions size="small" column={1} bordered>
+              <Descriptions.Item label={t('workflow.run.col.nodeKey')}>
+                <Text code>{selectedNodeRun.nodeKey}</Text>
+              </Descriptions.Item>
+              <Descriptions.Item label={t('workflow.run.col.nodeType')}>
+                {t(`workflow.node.type.${selectedNodeRun.nodeType}`)}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('common.status')}>
+                <Tag color={nodeRunStatusMap[selectedNodeRun.status]?.color}>
+                  {t(nodeRunStatusMap[selectedNodeRun.status]?.text || 'workflow.nodeStatus.pending')}
+                </Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label={t('workflow.run.col.attempt')}>{selectedNodeRun.attempt}</Descriptions.Item>
+              <Descriptions.Item label={t('workflow.run.col.task')}>
+                {selectedNodeRun.taskId ? (
+                  <Typography.Link href={`/task?taskId=${selectedNodeRun.taskId}`}>{selectedNodeRun.taskId}</Typography.Link>
+                ) : (
+                  '-'
+                )}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('workflow.run.inspector.input')}>
+                <pre className="wf-inline-json">{JSON.stringify(selectedNodeRun.input || {}, null, 2)}</pre>
+              </Descriptions.Item>
+              <Descriptions.Item label={t('workflow.run.inspector.output')}>
+                <pre className="wf-inline-json">{JSON.stringify(selectedNodeRun.output || {}, null, 2)}</pre>
+              </Descriptions.Item>
+              <Descriptions.Item label={t('workflow.run.col.error')}>
+                {selectedNodeRun.errorMessage ? <Text type="danger">{selectedNodeRun.errorMessage}</Text> : '-'}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('workflow.run.inspector.warning')}>
+                {selectedNodeRun.warningMessage ? <Text type="warning">{selectedNodeRun.warningMessage}</Text> : '-'}
+              </Descriptions.Item>
+            </Descriptions>
+
+            <div className="wf-run-test">
+              <Space>
+                <Button
+                  type="primary"
+                  icon={<ThunderboltOutlined />}
+                  loading={testRunning}
+                  onClick={() => void runNodeTest()}
+                  data-testid="run-node-test"
+                >
+                  {t('workflow.run.inspector.testRun')}
+                </Button>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {t('workflow.run.inspector.testRunHint')}
+                </Text>
+              </Space>
+
+              {testError && <Alert style={{ marginTop: 10 }} type="error" showIcon message={testError} />}
+
+              {testResult && (
+                <div className="wf-test-result" data-testid="run-node-test-result">
+                  <Descriptions size="small" column={1} bordered title={t('workflow.run.inspector.testResult')}>
+                    <Descriptions.Item label={t('workflow.run.inspector.testStatus')}>
+                      <Tag color={testResult.status === 'ok' ? 'green' : 'red'}>{testResult.status}</Tag>
+                    </Descriptions.Item>
+                    <Descriptions.Item label={t('workflow.run.inspector.riskLevel')}>
+                      {testResult.riskLevel || '-'}
+                    </Descriptions.Item>
+                    <Descriptions.Item label={t('workflow.run.inspector.riskPolicy')}>
+                      {testResult.riskPolicy || '-'}
+                    </Descriptions.Item>
+                    <Descriptions.Item label={t('workflow.run.inspector.conditionResult')}>
+                      {testResult.conditionResult == null
+                        ? '-'
+                        : testResult.conditionResult
+                          ? t('common.yes')
+                          : t('common.no')}
+                    </Descriptions.Item>
+                    <Descriptions.Item label={t('workflow.run.inspector.targetCount')}>
+                      {testResult.targetAgentCount ?? '-'}
+                    </Descriptions.Item>
+                    <Descriptions.Item label={t('workflow.run.inspector.renderedScript')}>
+                      {testResult.renderedScript ? (
+                        <pre className="wf-inline-json">{testResult.renderedScript}</pre>
+                      ) : (
+                        '-'
+                      )}
+                    </Descriptions.Item>
+                    <Descriptions.Item label={t('workflow.run.inspector.warnings')}>
+                      {testResult.warnings && testResult.warnings.length > 0 ? (
+                        <Space direction="vertical" size={2}>
+                          {testResult.warnings.map((warning, index) => (
+                            <Text key={index} type="warning">
+                              {warning}
+                            </Text>
+                          ))}
+                        </Space>
+                      ) : (
+                        '-'
+                      )}
+                    </Descriptions.Item>
+                  </Descriptions>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </Drawer>
     </div>
   );
 };

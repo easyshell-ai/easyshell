@@ -34,6 +34,7 @@ import {
   getWorkflowDetail,
   getWorkflowPage,
   publishWorkflow,
+  saveWorkflowDraft,
   triggerWorkflowRun,
   validateWorkflow,
   type WorkflowPageResult,
@@ -41,6 +42,8 @@ import {
 import type { ValidationIssue, WorkflowDefinition, WorkflowSummary } from './types';
 import { TriggerModal } from './editor/modals';
 import { PublishModal } from './editor/modals';
+import { createStartAndEndNodes } from './graph';
+import { templateById, WORKFLOW_TEMPLATES } from './editor/templates';
 import { formatDateTime } from '../../utils/format';
 import PageShell from '../../layouts/PageShell';
 import './workflow.css';
@@ -62,9 +65,16 @@ const WorkflowListPage: React.FC = () => {
     content: [], totalElements: 0, totalPages: 0, size: 20, number: 0,
   });
   const [keyword, setKeyword] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'active' | 'draft' | 'published' | 'archived'>('active');
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [createForm] = Form.useForm<{ name: string; description?: string; category?: string; visibility?: 'private' | 'public' }>();
+  const [createForm] = Form.useForm<{
+    name: string;
+    description?: string;
+    category?: string;
+    visibility?: 'private' | 'public';
+    template?: string;
+  }>();
 
   const [triggerTarget, setTriggerTarget] = useState<{ id: number; name: string; definition: WorkflowDefinition } | null>(null);
   const [triggerLoading, setTriggerLoading] = useState(false);
@@ -72,10 +82,10 @@ const WorkflowListPage: React.FC = () => {
   const [publishIssues, setPublishIssues] = useState<ValidationIssue[]>([]);
   const [publishLoading, setPublishLoading] = useState(false);
 
-  const fetchPage = useCallback(async (current = 0, search = keyword) => {
+  const fetchPage = useCallback(async (current = 0, search = keyword, status = statusFilter) => {
     setLoading(true);
     try {
-      const res = await getWorkflowPage({ page: current, size: 20, keyword: search || undefined });
+      const res = await getWorkflowPage({ page: current, size: 20, keyword: search || undefined, status });
       if (res.code === 200 && res.data) {
         setPage(res.data);
       } else if (res.code === 403) {
@@ -88,10 +98,10 @@ const WorkflowListPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [keyword, t]);
+  }, [keyword, statusFilter, t]);
 
   useEffect(() => {
-    void fetchPage(0, '');
+    void fetchPage(0, '', 'active');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -99,19 +109,45 @@ const WorkflowListPage: React.FC = () => {
     const values = await createForm.validateFields();
     setCreating(true);
     try {
-      const res = await createWorkflow(values);
+      // template 只是前端字段，不发给创建接口（未知字段会被服务端 DTO 拒绝/忽略）
+      const { template: templateId, ...payload } = values;
+      const res = await createWorkflow(payload);
       if (res.code === 200 && res.data) {
+        const workflow = res.data;
+        // 新建后立刻落一份草稿：默认 start+end，或用户选的模板。
+        // 失败仍进入编辑器（编辑器有空态引导/补全横幅），只是给一次警告。
+        const template = templateById(templateId);
+        const { start, end } = createStartAndEndNodes();
+        const definition: WorkflowDefinition = template
+          ? template.build()
+          : {
+              schemaVersion: 1,
+              defaultOnUpstreamFailure: 'skip',
+              onRejection: 'abort',
+              variables: {},
+              nodes: [
+                { ...start, name: t('workflow.node.type.start') },
+                { ...end, name: t('workflow.node.type.end') },
+              ],
+              edges: [],
+            };
+        try {
+          const seeded = await saveWorkflowDraft(workflow.id, { definition, baseVersion: 0 });
+          if (seeded.code !== 200) message.warning(t('workflow.list.seedFailed'));
+        } catch {
+          message.warning(t('workflow.list.seedFailed'));
+        }
         message.success(t('workflow.list.created'));
         setCreateOpen(false);
         createForm.resetFields();
-        navigate(`/workflow/editor/${res.data.id}`);
+        navigate(`/workflow/editor/${workflow.id}`);
       } else {
         message.error(res.message || t('workflow.list.createFailed'));
       }
     } finally {
       setCreating(false);
     }
-  }, [createForm, navigate]);
+  }, [createForm, navigate, t]);
 
   const openTrigger = useCallback(
     async (workflow: WorkflowSummary) => {
@@ -331,17 +367,32 @@ const WorkflowListPage: React.FC = () => {
       title={t('workflow.list.title')}
       icon={<PartitionOutlined />}
       extra={
-        <Space>
+        <Space wrap>
+          <Select
+            value={statusFilter}
+            onChange={(value) => {
+              setStatusFilter(value);
+              void fetchPage(0, keyword, value);
+            }}
+            options={[
+              { value: 'active', label: t('workflow.list.statusFilter.active') },
+              { value: 'draft', label: t('workflow.status.draft') },
+              { value: 'published', label: t('workflow.status.published') },
+              { value: 'archived', label: t('workflow.status.archived') },
+            ]}
+            style={{ width: 130 }}
+            aria-label={t('workflow.list.statusFilter.label')}
+          />
           <Input.Search
             allowClear
             placeholder={t('workflow.list.searchPlaceholder')}
             onSearch={(value) => {
               setKeyword(value);
-              void fetchPage(0, value);
+              void fetchPage(0, value, statusFilter);
             }}
             style={{ width: 240 }}
           />
-          <Button icon={<ReloadOutlined />} onClick={() => void fetchPage(page.number, keyword)} loading={loading}>
+          <Button icon={<ReloadOutlined />} onClick={() => void fetchPage(page.number, keyword, statusFilter)} loading={loading}>
             {t('common.refresh')}
           </Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)} data-testid="create-workflow">
@@ -378,7 +429,7 @@ const WorkflowListPage: React.FC = () => {
         okText={t('common.create')}
         cancelText={t('common.cancel')}
       >
-        <Form form={createForm} layout="vertical" initialValues={{ visibility: 'private' }}>
+        <Form form={createForm} layout="vertical" initialValues={{ visibility: 'private', template: '' }}>
           <Form.Item name="name" label={t('workflow.list.col.name')} rules={[{ required: true, message: t('workflow.list.nameRequired') }]}>
             <Input />
           </Form.Item>
@@ -393,6 +444,17 @@ const WorkflowListPage: React.FC = () => {
               options={[
                 { value: 'private', label: t('workflow.visibility.private') },
                 { value: 'public', label: t('workflow.visibility.public') },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item name="template" label={t('workflow.list.template')} extra={t('workflow.list.templateHint')}>
+            <Select
+              options={[
+                { value: '', label: t('workflow.list.templateNone') },
+                ...WORKFLOW_TEMPLATES.map((template) => ({
+                  value: template.id,
+                  label: t(`workflow.template.${template.id}.name`),
+                })),
               ]}
             />
           </Form.Item>

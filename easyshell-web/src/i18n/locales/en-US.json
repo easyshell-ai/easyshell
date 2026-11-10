@@ -1548,6 +1548,14 @@
         "version": "Version",
         "runs": "Runs / succeeded",
         "lastRunAt": "Last run"
+      },
+      "template": "Starter template",
+      "templateNone": "Blank (Start/End only)",
+      "templateHint": "A starter draft is saved after creation, so the editor opens with the Start/End contract.",
+      "seedFailed": "Failed to save the starter draft; save manually after opening the editor.",
+      "statusFilter": {
+        "label": "Workflow status",
+        "active": "Active"
       }
     },
     "status": {
@@ -1563,7 +1571,9 @@
       "title": "Node palette",
       "add": "Add",
       "handles": "{{in}} in / {{out}} out",
-      "hint": "Drag onto the canvas, or focus and press Enter"
+      "hint": "Drag onto the canvas, or focus and press Enter",
+      "search": "Search nodes",
+      "noResult": "No matching nodes"
     },
     "node": {
       "type": {
@@ -1571,14 +1581,94 @@
         "condition": "Condition",
         "notify": "Notify",
         "approval": "Approval",
-        "wait": "Wait"
+        "wait": "Wait",
+        "start": "Start",
+        "transform": "Transform",
+        "ai-analyze": "AI analyze",
+        "end": "End"
       },
       "desc": {
         "script-exec": "Run a script on target hosts via a real Task",
         "condition": "Evaluate an expression with true / false branches",
         "notify": "Push a message via webhook / email / bot",
         "approval": "Suspend the run until an admin approves",
-        "wait": "Continue after a delay in seconds"
+        "wait": "Continue after a delay in seconds",
+        "start": "Declare workflow inputs; a run starts here",
+        "transform": "Reshape upstream output into named fields",
+        "ai-analyze": "Read upstream output and produce a text conclusion; never executes",
+        "end": "Aggregate final outputs; the run result comes from here"
+      },
+      "category": {
+        "entry": "Entry",
+        "execute": "Execute",
+        "flow": "Flow",
+        "human": "Human"
+      },
+      "fixed": "Fixed",
+      "docs": {
+        "start": {
+          "purpose": "Workflow entry; declares run inputs.",
+          "when": "Every workflow has exactly one start node.",
+          "input": "None (start has no incoming edges).",
+          "output": "Each definition.variables entry: run.input.<name> or nodes.start.output.<name>.",
+          "example": "variables:\n  targets: { type: json, required: true }\n  mount:   { type: string, default: \"/\" }"
+        },
+        "end": {
+          "purpose": "Aggregate the final workflow output.",
+          "when": "Use when downstream needs a stable result; at most one, with no outgoing edges.",
+          "input": "Output of any upstream node.",
+          "output": "The config.outputs {name, value} map, i.e. workflow_run.output.",
+          "example": "outputs:\n  - { name: summary, value: \"${nodes.report.output.text}\" }"
+        },
+        "script-exec": {
+          "purpose": "Run a script on target hosts as a real Task.",
+          "when": "Host inspection, operations or changes are needed.",
+          "input": "Upstream output can be injected into script slots through parameters.",
+          "output": "Script stdout (text or JSON, no fixed schema).",
+          "example": "script: df -h {{MOUNT}}\nparameters:\n  MOUNT: ${run.input.mount}"
+        },
+        "transform": {
+          "purpose": "Map upstream output into named fields.",
+          "when": "Downstream needs stable names or a composed summary.",
+          "input": "Upstream node output.",
+          "output": "The config.mappings {name, value} object.",
+          "example": "mappings:\n  - { name: usage, value: \"${nodes.check.output.usage}\" }"
+        },
+        "condition": {
+          "purpose": "Branch on an expression result.",
+          "when": "Two IF / ELSE paths are needed.",
+          "input": "Upstream node output.",
+          "output": "{ result: boolean }; true takes the IF edge, false takes ELSE.",
+          "example": "expression: nodes.check.output.count > 0"
+        },
+        "ai-analyze": {
+          "purpose": "Read upstream output and produce a conclusion.",
+          "when": "Summaries or risk conclusions are needed without executing commands.",
+          "input": "The input template, truncated to maxInputChars.",
+          "output": "{ text, model, truncated }.",
+          "example": "instructions: Find mounts over the threshold and conclude\ninput: ${nodes.check.output}\nmaxInputChars: 8000"
+        },
+        "approval": {
+          "purpose": "Suspend the run until an admin decides.",
+          "when": "High-risk operations or explicit human confirmation.",
+          "input": "Upstream output can be embedded in title/detail templates.",
+          "output": "{ decision, comment, decidedBy }.",
+          "example": "title: Approve restart of {{SERVICE}}\ntimeoutSec: 3600\nonTimeout: reject"
+        },
+        "notify": {
+          "purpose": "Push the result to configured channels.",
+          "when": "People need to be told or an audit trail is desired.",
+          "input": "Upstream output can be embedded in the message template.",
+          "output": "{ delivered, failed, skipped }.",
+          "example": "channels: [telegram]\nmessageTemplate: \"Disk alert: ${nodes.check.output.usage}%\""
+        },
+        "wait": {
+          "purpose": "Wait for a number of seconds, then continue.",
+          "when": "Cool-down, delay or spreading load.",
+          "input": "Upstream output (passed through).",
+          "output": "{ waitedMs }.",
+          "example": "durationSec: 60"
+        }
       }
     },
     "nodeStatus": {
@@ -1599,14 +1689,26 @@
         "SELF_CONNECTION": "A node cannot connect to itself",
         "DUPLICATE_EDGE": "This connection already exists",
         "CYCLE": "Cycles are not allowed (workflows must be a DAG)",
-        "ENDPOINT_MISSING": "Connection endpoint does not exist"
+        "ENDPOINT_MISSING": "Connection endpoint does not exist",
+        "START_HAS_INPUT": "Start nodes cannot have incoming edges",
+        "END_HAS_OUTPUT": "End nodes cannot have outgoing edges"
       },
       "deleteTitle": "Confirm delete",
       "deleteConfirm": "This removes {{nodes}} node(s) and {{edges}} edge(s). Ctrl+Z undoes it.",
       "deleteNodes": "Nodes affected",
       "deleted": "Deleted",
       "copied": "Copied {{count}} node(s)",
-      "autoLayoutDone": "Re-laid out by depth"
+      "autoLayoutDone": "Re-laid out by depth",
+      "fixedNodeOnly": "Start/End nodes are system-managed and cannot be dropped in",
+      "empty": {
+        "title": "Build your first workflow in 4 steps",
+        "step1": "Declare inputs on the Start node (e.g. targets / threshold)",
+        "step2": "Drag execution nodes from the left and connect them",
+        "step3": "Use “Insert variable” next to a field to pick upstream output",
+        "step4": "Declare final outputs on the End node",
+        "useTemplate": "Start from a template",
+        "dragHint": "You can also drag nodes from the left palette"
+      }
     },
     "form": {
       "title": "Node config",
@@ -1695,7 +1797,12 @@
       "riskPolicy": "Risk policy",
       "riskPolicyHint": "block = MEDIUM always goes to approval / allow_medium = MEDIUM allowed / strict = stricter",
       "nodeShape": "Size {{width}}×{{height}}",
-      "handles": "{{in}} in / {{out}} out"
+      "handles": "{{in}} in / {{out}} out",
+      "agentIdsPlaceholder": "Select hosts",
+      "clusterIdsPlaceholder": "Select clusters",
+      "tagIdsPlaceholder": "Select tags",
+      "conditionBranchHint": "IF / ELSE is controlled by the outgoing handles",
+      "conditionBranchDesc": "Condition edges are gated by the source handle: true runs IF, false runs ELSE. No need to duplicate the expression on the edge."
     },
     "edge": {
       "title": "Edge: {{from}} → {{to}}",
@@ -1703,7 +1810,10 @@
       "conditionHint": "Only the true branch of a condition node may carry a condition",
       "dualHandleHint": "Condition node: the true branch may carry a condition, the false branch must stay empty",
       "falseBranchLocked": "Edges from the false handle cannot carry a condition",
-      "onUpstreamFailure": "When upstream fails"
+      "onUpstreamFailure": "When upstream fails",
+      "conditionGatedTitle": "IF / ELSE is gated by the outgoing handle",
+      "conditionGatedDesc": "The branch is determined by sourceHandle: true runs IF, false runs ELSE. The expression is no longer edited here.",
+      "sourceBranch": "Branch"
     },
     "json": {
       "title": "Definition JSON (read-only)",
@@ -1752,7 +1862,8 @@
       "required": "required",
       "validationFailed": "Please fix the form errors and try again",
       "idempotencyKey": "Idempotency-Key",
-      "idempotencyHint": "Same user + same key returns the first run; different inputs → 409"
+      "idempotencyHint": "Same user + same key returns the first run; different inputs → 409",
+      "invalidJson": "Enter valid JSON (for example [\"agent-1\"])"
     },
     "conflict": {
       "title": "Version conflict (409)",
@@ -1809,6 +1920,29 @@
         "manual": "Manual",
         "scheduled": "Scheduled",
         "replay": "Replay"
+      },
+      "testRunFailed": "Single-node test run failed",
+      "filter": {
+        "label": "Node filter",
+        "all": "All nodes",
+        "failed": "Failed only",
+        "empty": "No nodes match the filter"
+      },
+      "inspector": {
+        "title": "Node run details",
+        "input": "Input",
+        "output": "Output",
+        "warning": "Warning",
+        "testRun": "Test this node",
+        "testRunHint": "Replays this node with the current version and input; downstream is not run.",
+        "testResult": "Test run result",
+        "testStatus": "Status",
+        "riskLevel": "Risk level",
+        "riskPolicy": "Risk policy",
+        "conditionResult": "Condition result",
+        "targetCount": "Target hosts",
+        "renderedScript": "Rendered script",
+        "warnings": "Warnings"
       }
     },
     "approval": {
@@ -1850,6 +1984,180 @@
       "run404": "Run not found",
       "backToList": "Back to workflows",
       "generic": "Failed to load"
+    },
+    "inspector": {
+      "title": "Node inspector",
+      "tabs": {
+        "config": "Config",
+        "data": "Data",
+        "docs": "Docs"
+      },
+      "saved": "Node saved",
+      "deleteDisabled": "Start/End nodes cannot be deleted",
+      "emptyTitle": "Canvas overview",
+      "emptyDesc": "Select a node to see its config, upstream variables and docs. Click a node or press Enter.",
+      "docs": {
+        "when": "When to use",
+        "input": "Input",
+        "output": "Output",
+        "example": "Minimal example",
+        "security": {
+          "ai-analyze": "AI only analyzes text; it never executes commands or dispatches tasks.",
+          "approval": "Approval is the only human authorization path; expiry follows the node config.",
+          "script-exec": "Scripts still pass the shared risk gate; non-LOW scripts need an approval ancestor."
+        }
+      },
+      "data": {
+        "upstream": "Available upstream variables",
+        "copy": "Copy",
+        "copied": "Variable reference copied",
+        "outputPath": "This node's output path",
+        "opaqueOutput": "This node has no fixed field schema; reference the whole JSON output.",
+        "contract": "Input contract"
+      }
+    },
+    "variable": {
+      "insert": "Insert variable",
+      "search": "Search variables",
+      "empty": "No upstream variables available",
+      "emptyHint": "Declare inputs on the Start node, or connect nodes upstream of this one.",
+      "noMatch": "No matching variables",
+      "opaque": "Whole output",
+      "required": "required",
+      "group": {
+        "input": "Workflow inputs",
+        "start": "Start node",
+        "node": "Upstream nodes",
+        "alias": "Output aliases"
+      },
+      "type": {
+        "string": "Text",
+        "number": "Number",
+        "boolean": "Boolean",
+        "json": "JSON"
+      }
+    },
+    "start": {
+      "addVariable": "Add input",
+      "empty": "No inputs yet. The trigger form is rendered from these declarations.",
+      "name": "Name",
+      "namePlaceholder": "e.g. targets",
+      "type": "Type",
+      "required": "Required",
+      "default": "Default",
+      "defaultPlaceholder": "optional",
+      "description": "Description",
+      "descriptionPlaceholder": "What does this input control?",
+      "invalidName": "Names must match ^[a-z][a-z0-9_]*$ and be unique:"
+    },
+    "end": {
+      "hint": "End outputs become workflow_run.output; a pure ${path} keeps its original type.",
+      "empty": "No output mappings yet.",
+      "addOutput": "Add output",
+      "name": "Output name",
+      "namePlaceholder": "e.g. summary",
+      "value": "Value"
+    },
+    "transform": {
+      "hint": "Mappings produce { name: value }; values may be literals or ${path}.",
+      "empty": "No mappings yet.",
+      "addMapping": "Add mapping",
+      "name": "Field name",
+      "namePlaceholder": "e.g. usage",
+      "value": "Value"
+    },
+    "ai": {
+      "warning": "AI analyze reads upstream output and produces text only. It cannot execute commands or dispatch tasks.",
+      "instructions": "Instructions",
+      "instructionsHint": "Tell the model what to analyze and what conclusion to produce.",
+      "instructionsRequired": "Please enter instructions",
+      "input": "Input template",
+      "inputHint": "Reference upstream output with ${path}; long input is truncated to the max characters.",
+      "maxInputChars": "Max input chars",
+      "maxInputCharsHint": "1000..32000; default 8000."
+    },
+    "entryExit": {
+      "bannerTitle": "This workflow is missing Start/End nodes",
+      "bannerDesc": "Complete old workflows in one click: Start/End nodes are inserted and current entries/sinks are wired to them.",
+      "action": "Complete Start/End",
+      "done": "Start/End nodes completed"
+    },
+    "validate": {
+      "action": "Validate",
+      "title": "Validation result",
+      "ok": "Validation passed — ready to publish"
+    },
+    "help": {
+      "action": "Help",
+      "title": "Workflow help",
+      "intro": "Four steps to get going, then variable syntax and security boundaries.",
+      "steps": {
+        "title": "Four-step tour",
+        "declare": {
+          "title": "Declare inputs",
+          "desc": "On the Start node, say what the run needs: name, type, required, default."
+        },
+        "connect": {
+          "title": "Drag and connect nodes",
+          "desc": "Drag execution nodes from the palette and connect them in business order; conditions use IF/ELSE outputs."
+        },
+        "variables": {
+          "title": "Insert variables",
+          "desc": "Click “Insert variable” next to a field and pick upstream output; templates insert ${path}, expressions insert a bare path."
+        },
+        "outputs": {
+          "title": "Declare outputs on End",
+          "desc": "Write {name, value} on the End node; that becomes workflow_run.output."
+        }
+      },
+      "syntax": {
+        "title": "Variable syntax",
+        "form": "Form",
+        "example": "Example",
+        "where": "Where used",
+        "template": "Template",
+        "expression": "Expression",
+        "script": "Script slot",
+        "templateWhere": "Script parameters, notify/approval templates, transform, AI input, end outputs",
+        "expressionWhere": "Condition nodes and legacy edge conditions",
+        "scriptWhere": "{{NAME}} inside a script; values come from parameters"
+      },
+      "nodes": {
+        "title": "Nine-node quick reference"
+      },
+      "example": {
+        "title": "Full example",
+        "desc": "start → script → transform → condition → notify → end"
+      },
+      "security": {
+        "title": "Security boundaries",
+        "ai": "AI analyze only produces a text conclusion; it never executes commands.",
+        "approval": "Approval is the only human authorization path; high-risk scripts need an approval ancestor.",
+        "script": "Scripts still pass the shared risk gate; wrapping them in a workflow does not bypass it."
+      }
+    },
+    "template": {
+      "action": "Templates",
+      "title": "Template gallery",
+      "intro": "Applying a template replaces the canvas (with confirmation); adjust and save afterwards.",
+      "badge": "Example",
+      "apply": "Apply template",
+      "applied": "Template applied: {{name}}",
+      "replaceTitle": "Replace the current canvas?",
+      "replaceBody": "The canvas already has nodes. Applying a template replaces the whole graph (undo is available).",
+      "replaceConfirm": "Replace and apply",
+      "disk": {
+        "name": "Disk check and alert",
+        "desc": "Start → collect disk usage → normalize → alert over threshold → End."
+      },
+      "restart": {
+        "name": "Service restart approval",
+        "desc": "Approve, restart the service, then notify the result."
+      },
+      "health": {
+        "name": "Batch health check",
+        "desc": "Probe target hosts, notify on any output, otherwise wait briefly."
+      }
     }
   }
 }

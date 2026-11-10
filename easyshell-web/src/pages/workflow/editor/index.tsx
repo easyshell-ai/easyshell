@@ -5,6 +5,7 @@ import {
   Button,
   Card,
   Col,
+  Drawer,
   Modal,
   Row,
   Space,
@@ -15,10 +16,14 @@ import {
   message,
 } from 'antd';
 import {
+  AppstoreOutlined,
   ArrowLeftOutlined,
+  CheckCircleOutlined,
   CloudUploadOutlined,
   DeploymentUnitOutlined,
+  FileTextOutlined,
   PlayCircleOutlined,
+  QuestionCircleOutlined,
   RedoOutlined,
   SaveOutlined,
   UndoOutlined,
@@ -27,26 +32,28 @@ import { useTranslation } from 'react-i18next';
 import { theme } from 'antd';
 import {
   getWorkflowDetail,
+  getWorkflowVersion,
   issuesOf,
   publishWorkflow,
   triggerWorkflowRun,
   validateWorkflow,
 } from '../api';
 import type {
+  ValidationIssue,
   WorkflowDefinition,
   WorkflowDetail,
   WorkflowNode,
   WorkflowNodeType,
   WorkflowVersionDetail,
-  ValidationIssue,
+  VariableSpec,
 } from '../types';
 import {
   autoLayoutPositions,
   checkConnection,
   computeDeleteImpact,
   createWorkflowNode,
-  edgeHandleOf,
   edgeIdFor,
+  ensureEntryExit,
   flowNodeOf,
   nextNodeKey,
   type WorkflowFlowEdge,
@@ -54,11 +61,14 @@ import {
 } from '../graph';
 import WorkflowCanvas from './canvas/WorkflowCanvas';
 import NodePalette from './NodePalette';
-import NodeFormPanel from './NodeFormPanel';
 import DefinitionJsonView from './DefinitionJsonView';
 import { EdgeEditModal, PublishModal, TriggerModal, VersionConflictModal } from './modals';
-import { useWorkflowEditor } from './useWorkflowEditor';
+import { snapshotOf, useWorkflowEditor } from './useWorkflowEditor';
 import { buildClipboardPayload, writeClipboard } from './canvas/clipboard';
+import { NodeInspector } from './inspector/NodeInspector';
+import { HelpDrawer } from './inspector/HelpDrawer';
+import { TemplateGallery } from './templates/TemplateGallery';
+import type { WorkflowTemplateId } from './templates';
 import '../workflow.css';
 
 const { Title, Text } = Typography;
@@ -81,19 +91,35 @@ const EMPTY_DRAFT: WorkflowVersionDetail = {
   definition: EMPTY_DEFINITION,
 };
 
+const FIXED_TYPES: WorkflowNodeType[] = ['start', 'end'];
+
+function isFixedNode(node: WorkflowNode): boolean {
+  return FIXED_TYPES.includes(node.type);
+}
+
+/** 窄屏（<1200）检查器走 Drawer；窗口尺寸变化实时切换 */
+function useNarrowLayout(): boolean {
+  const [narrow, setNarrow] = useState(() => typeof window !== 'undefined' && window.innerWidth < 1200);
+  useEffect(() => {
+    const onChange = () => setNarrow(window.innerWidth < 1200);
+    window.addEventListener('resize', onChange);
+    return () => window.removeEventListener('resize', onChange);
+  }, []);
+  return narrow;
+}
+
 const WorkflowEditorPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const workflowId = Number(id);
   const navigate = useNavigate();
   const { t } = useTranslation();
   const { token } = theme.useToken();
+  const narrow = useNarrowLayout();
 
   const [detail, setDetail] = useState<WorkflowDetail | null>(null);
   const [draft, setDraft] = useState<WorkflowVersionDetail>(EMPTY_DRAFT);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [formKey, setFormKey] = useState<string | null>(null);
-  const [formOpen, setFormOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<{ nodeKeys: string[]; edgeIds: string[] } | null>(null);
   const [editingEdgeId, setEditingEdgeId] = useState<string | null>(null);
   const [publishOpen, setPublishOpen] = useState(false);
@@ -103,6 +129,11 @@ const WorkflowEditorPage: React.FC = () => {
   const [triggerLoading, setTriggerLoading] = useState(false);
   const [conflictOpen, setConflictOpen] = useState(false);
   const [conflictBusy, setConflictBusy] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+  const [validateOpen, setValidateOpen] = useState(false);
+  const [validateIssues, setValidateIssues] = useState<ValidationIssue[]>([]);
+  const [validateLoading, setValidateLoading] = useState(false);
 
   const loadDetail = useCallback(async () => {
     setLoading(true);
@@ -111,7 +142,27 @@ const WorkflowEditorPage: React.FC = () => {
       const res = await getWorkflowDetail(workflowId);
       if (res.code === 200 && res.data) {
         setDetail(res.data);
-        setDraft(res.data.draft || EMPTY_DRAFT);
+        if (res.data.draft) {
+          setDraft(res.data.draft);
+        } else if (res.data.workflow.currentVersionId) {
+          // 已发布但没有草稿：先展示当前发布版本，用户下一次保存会由服务端新建草稿行。
+          const versionRes = await getWorkflowVersion(workflowId, res.data.workflow.currentVersionId);
+          if (versionRes.code === 200 && versionRes.data) {
+            setDraft({
+              ...versionRes.data,
+              // id 必须是"非草稿"的哨兵，否则与 EMPTY_DRAFT 的 0:0 key 相同，
+              // useWorkflowEditor 不会采纳这份已发布定义。
+              id: -1,
+              version: 0,
+              baseVersion: 0,
+              isValid: true,
+            });
+          } else {
+            setDraft(EMPTY_DRAFT);
+          }
+        } else {
+          setDraft(EMPTY_DRAFT);
+        }
       } else if (res.code === 404) {
         setLoadError('404');
       } else if (res.code === 403) {
@@ -146,6 +197,7 @@ const WorkflowEditorPage: React.FC = () => {
     definition,
     commit,
     updateNode,
+    updateMeta,
     saveNow,
     undo,
     redo,
@@ -153,6 +205,7 @@ const WorkflowEditorPage: React.FC = () => {
     saveDraftAsCopy,
     reloadFromServer,
     getSnapshot,
+    exportDefinition,
   } = editor;
 
   // 连接校验只需要节点类型/边结构；definition 只在结构提交时换身份
@@ -161,8 +214,44 @@ const WorkflowEditorPage: React.FC = () => {
     [definition]
   );
 
-  const selectedNodeCount = useMemo(() => editor.nodes.filter((node) => node.selected).length, [editor.nodes]);
+  const selectedNodeKeys = useMemo(() => editor.nodes.filter((node) => node.selected).map((node) => node.id), [editor.nodes]);
   const selectedEdgeCount = useMemo(() => editor.edges.filter((edge) => edge.selected).length, [editor.edges]);
+  const activeNodeKey = selectedNodeKeys.length === 1 ? selectedNodeKeys[0] : null;
+  const activeNode = useMemo(
+    () => definition.nodes.find((node) => node.key === activeNodeKey) || null,
+    [definition.nodes, activeNodeKey]
+  );
+
+  const selectNode = useCallback(
+    (key: string) => {
+      editor.onNodesChange(
+        editor.nodes.map((node) => ({ id: node.id, type: 'select' as const, selected: node.id === key }))
+      );
+    },
+    [editor.nodes, editor.onNodesChange]
+  );
+
+  /** Escape 关闭检查器：焦点在 Data/Docs Tab 或表单里时，画布的键盘处理器收不到事件。 */
+  const clearSelection = useCallback(() => {
+    editor.onNodesChange(
+      editor.nodes.map((node) => ({ id: node.id, type: 'select' as const, selected: false }))
+    );
+  }, [editor.nodes, editor.onNodesChange]);
+
+  useEffect(() => {
+    const modalOpen =
+      helpOpen || templatesOpen || publishOpen || triggerOpen || conflictOpen || validateOpen ||
+      !!editingEdgeId || !!pendingDelete;
+    if (modalOpen) return;
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') clearSelection();
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [
+    clearSelection, helpOpen, templatesOpen, publishOpen, triggerOpen, conflictOpen, validateOpen,
+    editingEdgeId, pendingDelete,
+  ]);
 
   /* ── 结构变更：全部经 commit → 进撤销栈 + 标 dirty + 防抖保存 ───── */
 
@@ -199,6 +288,10 @@ const WorkflowEditorPage: React.FC = () => {
 
   const handleDropNode = useCallback(
     (type: WorkflowNodeType, position: { x: number; y: number }) => {
+      if (FIXED_TYPES.includes(type)) {
+        message.info(t('workflow.canvas.fixedNodeOnly'));
+        return;
+      }
       const key = nextNodeKey(definition.nodes.map((n) => n.key));
       const node = createWorkflowNode(type, key, position, t(`workflow.node.type.${type}`));
       // 选中态只存在 React Flow 节点上（selected: true），不写 definition
@@ -234,47 +327,70 @@ const WorkflowEditorPage: React.FC = () => {
     [commit, getSnapshot]
   );
 
-  const handleRequestDelete = useCallback((nodeKeys: string[], edgeIds: string[]) => {
-    if (nodeKeys.length === 0 && edgeIds.length === 0) return;
-    setPendingDelete({ nodeKeys, edgeIds });
-  }, []);
+  const handleRequestDelete = useCallback(
+    (nodeKeys: string[], edgeIds: string[]) => {
+      if (nodeKeys.length === 0 && edgeIds.length === 0) return;
+      const fixedKeys = new Set(definition.nodes.filter(isFixedNode).map((node) => node.key));
+      const deletableKeys = nodeKeys.filter((key) => !fixedKeys.has(key));
+      if (deletableKeys.length === 0 && edgeIds.length === 0) {
+        message.info(t('workflow.inspector.deleteDisabled'));
+        return;
+      }
+      setPendingDelete({ nodeKeys: deletableKeys, edgeIds });
+    },
+    [definition.nodes, t]
+  );
 
   const confirmDelete = useCallback(() => {
     if (!pendingDelete) return;
-    const nodeSet = new Set(pendingDelete.nodeKeys);
+    const fixedKeys = new Set(definition.nodes.filter(isFixedNode).map((node) => node.key));
+    const nodeSet = new Set(pendingDelete.nodeKeys.filter((key) => !fixedKeys.has(key)));
+    const edgeSet = new Set(pendingDelete.edgeIds);
     const current = getSnapshot();
     commit('delete', {
       ...current,
       nodes: current.nodes.filter((n) => !nodeSet.has(n.id)),
-      edges: current.edges.filter((e) => !nodeSet.has(e.source) && !nodeSet.has(e.target)),
+      edges: current.edges.filter(
+        (e) => !edgeSet.has(e.id) && !nodeSet.has(e.source) && !nodeSet.has(e.target)
+      ),
       configs: Object.fromEntries(Object.entries(current.configs).filter(([key]) => !nodeSet.has(key))),
     });
-    setFormOpen(false);
     setPendingDelete(null);
     message.success(t('workflow.canvas.deleted'));
-  }, [pendingDelete, commit, getSnapshot, t]);
+  }, [pendingDelete, definition.nodes, commit, getSnapshot, t]);
 
   const handleCopyNodes = useCallback(
     (nodeKeys: string[]) => {
-      if (nodeKeys.length === 0) return;
-      const nodes = definition.nodes.filter((n) => nodeKeys.includes(n.key));
+      const fixedKeys = new Set(definition.nodes.filter(isFixedNode).map((node) => node.key));
+      const copyable = nodeKeys.filter((key) => !fixedKeys.has(key));
+      if (copyable.length === 0) {
+        message.info(t('workflow.inspector.deleteDisabled'));
+        return;
+      }
+      const nodes = definition.nodes.filter((n) => copyable.includes(n.key));
       void writeClipboard(buildClipboardPayload(nodes, definition.edges));
       message.success(t('workflow.canvas.copied', { count: nodes.length }));
     },
     [definition, t]
   );
 
-  /** 粘贴 / 复制：key 全部重生成（n1/n2……跳过既有），位置整体偏移 */
+  /** 粘贴 / 复制：key 全部重生成（n1/n2……跳过既有），位置整体偏移；start/end 不参与 */
   const pasteNodes = useCallback(
     (payload: { nodes: WorkflowNode[]; edges: WorkflowDefinition['edges'] }) => {
       const used = new Set(definition.nodes.map((n) => n.key));
       const keyMap: Record<string, string> = {};
-      const nodes = payload.nodes.map((node) => {
-        const key = nextNodeKey(used);
-        used.add(key);
-        keyMap[node.key] = key;
-        return { ...node, key, position: { x: node.position.x + 40, y: node.position.y + 40 } };
-      });
+      const nodes = payload.nodes
+        .filter((node) => !isFixedNode(node))
+        .map((node) => {
+          const key = nextNodeKey(used);
+          used.add(key);
+          keyMap[node.key] = key;
+          return { ...node, key, position: { x: node.position.x + 40, y: node.position.y + 40 } };
+        });
+      if (nodes.length === 0) {
+        message.info(t('workflow.inspector.deleteDisabled'));
+        return;
+      }
 
       // 选中态切到粘贴出来的节点：清掉旧选中，新增节点 selected: true
       const pastedNodes: WorkflowFlowNode[] = nodes.map((node) => ({
@@ -286,12 +402,8 @@ const WorkflowEditorPage: React.FC = () => {
         .map((edge) => {
           const from = keyMap[edge.from];
           const to = keyMap[edge.to];
-          const handle = edgeHandleOf(nodes, {
-            from,
-            sourceHandle: edge.sourceHandle,
-            condition: edge.condition,
-          });
           const sourceType = nodes.find((node) => node.key === from)?.type;
+          const handle = edge.sourceHandle || (sourceType === 'condition' ? 'true' : 'out');
           return {
             id: edgeIdFor(from, handle, to),
             source: from,
@@ -323,18 +435,24 @@ const WorkflowEditorPage: React.FC = () => {
         },
       });
     },
-    [commit, definition.nodes, definition.variables, getSnapshot]
+    [commit, definition.nodes, definition.variables, getSnapshot, t]
   );
 
   const handleDuplicateNodes = useCallback(
     (nodeKeys: string[]) => {
       if (nodeKeys.length === 0) return;
+      const fixedKeys = new Set(definition.nodes.filter(isFixedNode).map((node) => node.key));
+      const copyable = nodeKeys.filter((key) => !fixedKeys.has(key));
+      if (copyable.length === 0) {
+        message.info(t('workflow.inspector.deleteDisabled'));
+        return;
+      }
       pasteNodes({
-        nodes: definition.nodes.filter((n) => nodeKeys.includes(n.key)),
+        nodes: definition.nodes.filter((n) => copyable.includes(n.key)),
         edges: definition.edges,
       });
     },
-    [definition, pasteNodes]
+    [definition, pasteNodes, t]
   );
 
   const handleAutoLayout = useCallback(() => {
@@ -356,25 +474,76 @@ const WorkflowEditorPage: React.FC = () => {
     message.success(t('workflow.canvas.autoLayoutDone'));
   }, [commit, definition, getSnapshot, t]);
 
-  /* ── 发布 / 触发 ───────────────────────────────────────────────── */
+  /* ── 旧工作流补全入口/出口 ─────────────────────────────────────── */
+
+  const missingStart = !definition.nodes.some((node) => node.type === 'start');
+  const missingEnd = !definition.nodes.some((node) => node.type === 'end');
+
+  const completeEntryExit = useCallback(() => {
+    const current = exportDefinition();
+    const { definition: ensured, addedKeys, changed } = ensureEntryExit(current);
+    if (!changed) return;
+    const nodes = ensured.nodes.map((node) =>
+      addedKeys.includes(node.key)
+        ? {
+            ...node,
+            name:
+              node.type === 'start'
+                ? t('workflow.node.type.start')
+                : node.type === 'end'
+                  ? t('workflow.node.type.end')
+                  : node.name,
+          }
+        : node
+    );
+    const startNode = nodes.find((node) => node.type === 'start');
+    const endNode = nodes.find((node) => node.type === 'end');
+    const contentNodes = nodes.filter((node) => node.type !== 'start' && node.type !== 'end');
+    const incoming = new Set(ensured.edges.map((edge) => edge.to));
+    const outgoing = new Set(ensured.edges.map((edge) => edge.from));
+    const entries = contentNodes.filter((node) => !incoming.has(node.key));
+    const sinks = contentNodes.filter((node) => !outgoing.has(node.key));
+    const edges = [...ensured.edges];
+    const hasEdge = (from: string, to: string) =>
+      edges.some((edge) => edge.from === from && edge.to === to);
+
+    if (startNode && !edges.some((edge) => edge.from === startNode.key)) {
+      // start 是普通单出节点（DagValidator：非 condition 只能 1 条出边），
+      // 多个入口时只接第一个，其余入口保持独立由用户/校验提示处理。
+      for (const entry of entries.slice(0, 1)) {
+        if (entry.key === startNode.key || entry.key === endNode?.key || hasEdge(startNode.key, entry.key)) continue;
+        edges.push({ id: edgeIdFor(startNode.key, null, entry.key), from: startNode.key, to: entry.key });
+      }
+    }
+    if (endNode && !edges.some((edge) => edge.to === endNode.key)) {
+      for (const sink of sinks) {
+        if (sink.key === endNode.key || sink.key === startNode?.key || hasEdge(sink.key, endNode.key)) continue;
+        edges.push({ id: edgeIdFor(sink.key, null, endNode.key), from: sink.key, to: endNode.key });
+      }
+    }
+
+    commit('complete-entry-exit', snapshotOf({ ...ensured, nodes, edges }));
+    message.success(t('workflow.entryExit.done'));
+  }, [commit, exportDefinition, t]);
+
+  /* ── 发布 / 触发 / 校验 ───────────────────────────────────────── */
 
   const openPublish = useCallback(async () => {
     setPublishLoading(true);
     setPublishOpen(true);
     try {
-      // 校验本地草稿（含未保存改动）：预校验要回答的是"用户眼前这份定义能不能发布"。
-      // 空 body 会让服务端返回 400，而这里会把非 200 一律当成"无 issues"——
-      // 那正是 ERROR 工作流被显示成"校验通过"的原因。
-      const res = await validateWorkflow(workflowId, definition);
+      await saveNow();
+      const res = await validateWorkflow(workflowId, exportDefinition());
       setPublishIssues(res.code === 200 ? issuesOf(res.data) : []);
     } finally {
       setPublishLoading(false);
     }
-  }, [workflowId, definition]);
+  }, [workflowId, saveNow, exportDefinition]);
 
   const confirmPublish = useCallback(async () => {
     setPublishLoading(true);
     try {
+      await saveNow();
       const res = await publishWorkflow(workflowId, {});
       if (res.code === 200) {
         message.success(t('workflow.publish.success'));
@@ -390,7 +559,7 @@ const WorkflowEditorPage: React.FC = () => {
     } finally {
       setPublishLoading(false);
     }
-  }, [workflowId, loadDetail, t]);
+  }, [workflowId, loadDetail, saveNow, t]);
 
   const handleTrigger = useCallback(
     async (inputs: Record<string, unknown>, idempotencyKey: string) => {
@@ -413,6 +582,33 @@ const WorkflowEditorPage: React.FC = () => {
       }
     },
     [workflowId, navigate, t]
+  );
+
+  const openTrigger = useCallback(async () => {
+    await saveNow();
+    setTriggerOpen(true);
+  }, [saveNow]);
+
+  const runValidate = useCallback(async () => {
+    setValidateOpen(true);
+    setValidateLoading(true);
+    try {
+      const res = await validateWorkflow(workflowId, exportDefinition());
+      setValidateIssues(res.code === 200 ? issuesOf(res.data) : []);
+    } finally {
+      setValidateLoading(false);
+    }
+  }, [workflowId, exportDefinition]);
+
+  /* ── 模板 ──────────────────────────────────────────────────────── */
+
+  const applyTemplate = useCallback(
+    (next: WorkflowDefinition, templateId: WorkflowTemplateId) => {
+      commit('template', snapshotOf(next));
+      setTemplatesOpen(false);
+      message.success(t('workflow.template.applied', { name: t(`workflow.template.${templateId}.name`) }));
+    },
+    [commit, t]
   );
 
   /* ── 409 三选一 ────────────────────────────────────────────────── */
@@ -459,11 +655,6 @@ const WorkflowEditorPage: React.FC = () => {
 
   /* ── 渲染 ──────────────────────────────────────────────────────── */
 
-  const selectedNode = useMemo(
-    () => definition.nodes.find((n) => n.key === formKey) || null,
-    [definition.nodes, formKey]
-  );
-
   const editingEdge = useMemo(() => {
     if (!editingEdgeId) return null;
     const edge = editor.edges.find((e) => e.id === editingEdgeId);
@@ -483,23 +674,36 @@ const WorkflowEditorPage: React.FC = () => {
     [pendingDelete, definition.edges]
   );
 
-  const handleOpenNodeConfig = useCallback((key: string) => {
-    setFormKey(key);
-    setFormOpen(true);
-  }, []);
+  const handleOpenNodeConfig = useCallback(
+    (key: string) => {
+      selectNode(key);
+    },
+    [selectNode]
+  );
 
   const handleSaveDraft = useCallback(() => {
     void saveNow();
   }, [saveNow]);
 
-  // Escape 关闭配置抽屉（画布内 Escape 由画布自己消费）
-  useEffect(() => {
-    const handler = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && formOpen) setFormOpen(false);
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [formOpen]);
+  const handleSaveStartVariables = useCallback(
+    (variables: Record<string, VariableSpec>, label = 'start-variables') => {
+      updateMeta({ variables }, label);
+    },
+    [updateMeta]
+  );
+
+  const canvasEmpty = definition.nodes.filter((node) => node.type !== 'start' && node.type !== 'end').length === 0;
+
+  const inspector = activeNode ? (
+    <NodeInspector
+      node={activeNode}
+      definition={definition}
+      onSave={updateNode}
+      onSaveMeta={handleSaveStartVariables}
+      onRequestDelete={(key) => handleRequestDelete([key], [])}
+      remoteOptions
+    />
+  ) : null;
 
   if (loading) {
     return (
@@ -527,12 +731,12 @@ const WorkflowEditorPage: React.FC = () => {
   }
 
   return (
-    <div style={{ padding: 16 }}>
-      <Card size="small" style={{ marginBottom: 12 }} styles={{ body: { padding: '12px 16px' } }}>
+    <div className="wf-editor-page" style={{ padding: 16 }}>
+      <Card size="small" className="wf-editor-toolbar" styles={{ body: { padding: '10px 16px' } }}>
         <Row gutter={[12, 12]} align="middle">
           <Col flex="auto">
-            <Space size={12} wrap>
-              <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/workflow')} />
+            <Space size={10} wrap>
+              <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/workflow')} aria-label={t('workflow.error.backToList')} />
               <Title level={5} style={{ margin: 0, color: token.colorText }}>
                 {detail?.workflow.name || `#${workflowId}`}
               </Title>
@@ -545,9 +749,9 @@ const WorkflowEditorPage: React.FC = () => {
                   {t('workflow.editor.lastSaved', { time: new Date(editor.lastSavedAt).toLocaleTimeString() })}
                 </Text>
               )}
-              {selectedNodeCount > 0 && (
+              {selectedNodeKeys.length > 1 && (
                 <Text type="secondary" style={{ fontSize: 12 }}>
-                  {t('workflow.editor.selectedCount', { count: selectedNodeCount })}
+                  {t('workflow.editor.selectedCount', { count: selectedNodeKeys.length })}
                 </Text>
               )}
               {selectedEdgeCount > 0 && (
@@ -568,62 +772,118 @@ const WorkflowEditorPage: React.FC = () => {
               <Tooltip title={t('workflow.editor.autoLayout')}>
                 <Button icon={<DeploymentUnitOutlined />} onClick={handleAutoLayout} data-testid="auto-layout" />
               </Tooltip>
+              <Button icon={<CheckCircleOutlined />} onClick={() => void runValidate()} loading={validateLoading} data-testid="validate-workflow">
+                {t('workflow.validate.action')}
+              </Button>
+              <Button icon={<QuestionCircleOutlined />} onClick={() => setHelpOpen(true)} data-testid="workflow-help">
+                {t('workflow.help.action')}
+              </Button>
+              <Button icon={<AppstoreOutlined />} onClick={() => setTemplatesOpen(true)} data-testid="workflow-templates">
+                {t('workflow.template.action')}
+              </Button>
               <Button icon={<SaveOutlined />} loading={editor.saving} onClick={handleSaveDraft} data-testid="save-draft">
                 {t('common.save')}
               </Button>
               <Button type="primary" icon={<CloudUploadOutlined />} onClick={() => void openPublish()} data-testid="open-publish">
                 {t('workflow.publish.action')}
               </Button>
-              <Button icon={<PlayCircleOutlined />} onClick={() => setTriggerOpen(true)} data-testid="open-trigger">
+              <Button icon={<PlayCircleOutlined />} onClick={() => void openTrigger()} data-testid="open-trigger">
                 {t('workflow.trigger.action')}
               </Button>
-              <Button onClick={() => navigate(`/workflow/run?workflowId=${workflowId}`)}>
+              <Button icon={<FileTextOutlined />} onClick={() => navigate(`/workflow/run?workflowId=${workflowId}`)}>
                 {t('workflow.run.title')}
               </Button>
             </Space>
           </Col>
         </Row>
+        <DefinitionJsonView definition={definition} />
       </Card>
 
-      <Row gutter={[12, 12]}>
-        <Col flex="220px" style={{ minWidth: 200 }}>
-          <NodePalette />
-        </Col>
-        <Col flex="auto">
-          <Card size="small" className="wf-editor-canvas-card">
-            <WorkflowCanvas
-              nodes={editor.nodes}
-              edges={editor.edges}
-              onNodesChange={editor.onNodesChange}
-              onEdgesChange={editor.onEdgesChange}
-              onConnect={handleConnect}
-              connectionContext={connectionContext}
-              onDropNode={handleDropNode}
-              onMoveNodes={handleMoveNodes}
-              onRequestDelete={handleRequestDelete}
-              onCopyNodes={handleCopyNodes}
-              onPasteNodes={pasteNodes}
-              onDuplicateNodes={handleDuplicateNodes}
-              onOpenNodeConfig={handleOpenNodeConfig}
-              onEditEdge={setEditingEdgeId}
-              onUndo={undo}
-              onRedo={redo}
-              onSave={handleSaveDraft}
-            />
-          </Card>
-        </Col>
-      </Row>
+      {(missingStart || missingEnd) && (
+        <Alert
+          className="wf-entry-exit-banner"
+          type="warning"
+          showIcon
+          message={t('workflow.entryExit.bannerTitle')}
+          description={t('workflow.entryExit.bannerDesc')}
+          action={
+            <Button size="small" type="primary" onClick={completeEntryExit} data-testid="complete-entry-exit">
+              {t('workflow.entryExit.action')}
+            </Button>
+          }
+        />
+      )}
 
-      <div style={{ marginTop: 12 }}>
-        <DefinitionJsonView definition={definition} />
+      <div className="wf-editor-main">
+        <div className="wf-editor-palette">
+          <NodePalette />
+        </div>
+        <div className="wf-editor-canvas-shell">
+          <WorkflowCanvas
+            nodes={editor.nodes}
+            edges={editor.edges}
+            onNodesChange={editor.onNodesChange}
+            onEdgesChange={editor.onEdgesChange}
+            onConnect={handleConnect}
+            connectionContext={connectionContext}
+            onDropNode={handleDropNode}
+            onMoveNodes={handleMoveNodes}
+            onRequestDelete={handleRequestDelete}
+            onCopyNodes={handleCopyNodes}
+            onPasteNodes={pasteNodes}
+            onDuplicateNodes={handleDuplicateNodes}
+            onOpenNodeConfig={handleOpenNodeConfig}
+            onEditEdge={setEditingEdgeId}
+            onUndo={undo}
+            onRedo={redo}
+            onSave={handleSaveDraft}
+          />
+          {canvasEmpty && (
+            <div className="wf-canvas-empty" data-testid="canvas-empty-state">
+              <div className="wf-canvas-empty-card">
+                <Title level={5} style={{ marginTop: 0 }}>
+                  {t('workflow.canvas.empty.title')}
+                </Title>
+                <ol className="wf-canvas-empty-steps">
+                  <li>{t('workflow.canvas.empty.step1')}</li>
+                  <li>{t('workflow.canvas.empty.step2')}</li>
+                  <li>{t('workflow.canvas.empty.step3')}</li>
+                  <li>{t('workflow.canvas.empty.step4')}</li>
+                </ol>
+                <Space>
+                  <Button type="primary" size="small" onClick={() => setTemplatesOpen(true)}>
+                    {t('workflow.canvas.empty.useTemplate')}
+                  </Button>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {t('workflow.canvas.empty.dragHint')}
+                  </Text>
+                </Space>
+              </div>
+            </div>
+          )}
+        </div>
+        {!narrow && activeNode && <aside className="wf-editor-inspector-shell">{inspector}</aside>}
       </div>
 
-      <NodeFormPanel
-        node={selectedNode}
-        open={formOpen && !!selectedNode}
-        onClose={() => setFormOpen(false)}
-        onSave={updateNode}
-        onRequestDelete={(key) => handleRequestDelete([key], [])}
+      {narrow && (
+        <Drawer
+          open={!!activeNode}
+          onClose={() => editor.onNodesChange(editor.nodes.map((node) => ({ id: node.id, type: 'select' as const, selected: false })))}
+          placement="right"
+          width={480}
+          title={activeNode?.name}
+          styles={{ body: { padding: 0 } }}
+        >
+          {inspector}
+        </Drawer>
+      )}
+
+      <HelpDrawer open={helpOpen} onClose={() => setHelpOpen(false)} />
+      <TemplateGallery
+        open={templatesOpen}
+        definition={definition}
+        onCancel={() => setTemplatesOpen(false)}
+        onApply={applyTemplate}
       />
 
       <PublishModal
@@ -674,6 +934,48 @@ const WorkflowEditorPage: React.FC = () => {
           setEditingEdgeId(null);
         }}
       />
+
+      <Modal
+        title={t('workflow.validate.title')}
+        open={validateOpen}
+        onCancel={() => setValidateOpen(false)}
+        footer={<Button onClick={() => setValidateOpen(false)}>{t('common.close')}</Button>}
+        width={640}
+      >
+        {validateLoading ? (
+          <Spin />
+        ) : validateIssues.length === 0 ? (
+          <Alert type="success" showIcon message={t('workflow.validate.ok')} />
+        ) : (
+          <div className="wf-issue-list" data-testid="validate-issues">
+            {validateIssues.map((issue, index) => (
+              <div
+                key={`${issue.code}-${issue.nodeKey || 'definition'}-${index}`}
+                className={`wf-issue wf-issue-${issue.severity.toLowerCase()}`}
+                role="button"
+                tabIndex={0}
+                onClick={() => {
+                  if (!issue.nodeKey) return;
+                  handleOpenNodeConfig(issue.nodeKey);
+                  setValidateOpen(false);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter' || !issue.nodeKey) return;
+                  handleOpenNodeConfig(issue.nodeKey);
+                  setValidateOpen(false);
+                }}
+              >
+                <Space size={8} wrap>
+                  <Tag color={issue.severity === 'ERROR' ? 'red' : 'orange'}>{issue.severity}</Tag>
+                  <Text code>{issue.code}</Text>
+                  {issue.nodeKey && <Tag>{issue.nodeKey}</Tag>}
+                </Space>
+                <div>{issue.message}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Modal>
 
       <Modal
         title={t('workflow.canvas.deleteTitle')}

@@ -22,9 +22,13 @@ const ROUTES: Array<{ name: string; path: string; anchor: (page: import('@playwr
     path: '/workflow/editor/2',
     anchor: async (page) => {
       await expect(page.getByTestId('workflow-canvas')).toBeVisible();
-      // React Flow 渲染出 6 个节点 / 6 条边（含 condition 双出把手）
-      await expect(page.locator('.react-flow__node')).toHaveCount(6);
-      await expect(page.locator('.react-flow__edge')).toHaveCount(6);
+      // 工作流 v2：start/end + script/condition/approval/notify/wait/transform
+      await expect(page.locator('.react-flow__node')).toHaveCount(8);
+      await expect(page.locator('.react-flow__edge')).toHaveCount(8);
+      await expect(page.locator('.react-flow__node[data-id="start"]')).toBeVisible();
+      await expect(page.locator('.react-flow__node[data-id="end"]')).toBeVisible();
+      await expect(page.locator('.wf-edge-pill--if')).toBeVisible();
+      await expect(page.locator('.wf-edge-pill--else')).toBeVisible();
       await expect(page.getByTestId('palette-script-exec')).toBeVisible();
     },
   },
@@ -41,7 +45,7 @@ const ROUTES: Array<{ name: string; path: string; anchor: (page: import('@playwr
     path: '/workflow/run/run-demo-001',
     anchor: async (page) => {
       await expect(page.getByTestId('workflow-canvas')).toBeVisible();
-      await expect(page.locator('.react-flow__node')).toHaveCount(6);
+      await expect(page.locator('.react-flow__node')).toHaveCount(8);
       // 运行态节点按 nodeRun 状态着色（succeeded 走语义色）
       await expect(page.locator('.wf-node[data-status="succeeded"]').first()).toBeVisible();
       await expect(page.getByTestId('run-log')).toBeVisible();

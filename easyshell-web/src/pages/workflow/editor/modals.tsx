@@ -16,7 +16,7 @@ import {
 import { ReloadOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import type { ValidationIssue, WorkflowDefinition, WorkflowNode } from '../types';
-import { canSetEdgeCondition, sourceHandles } from '../graph';
+import { sourceHandles } from '../graph';
 
 const { Text } = Typography;
 
@@ -116,6 +116,17 @@ function isValidationRejection(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'errorFields' in error;
 }
 
+/** JSON 入参编辑框的初值：对象/数组序列化成文本，字符串原样展示 */
+function jsonInitialValue(value: unknown): string {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return '';
+  }
+}
+
 export const TriggerModal: React.FC<TriggerModalProps> = ({
   open, definition, workflowName, onCancel, onSubmit, loading,
 }) => {
@@ -132,7 +143,16 @@ export const TriggerModal: React.FC<TriggerModalProps> = ({
   const handleOk = async () => {
     try {
       // 无入参变量时表单同样已挂载（至少含幂等键字段），validateFields 直接放行，inputs 为 {}
-      const { __idem, ...inputs } = await form.validateFields();
+      const { __idem, ...raw } = await form.validateFields();
+      const inputs: Record<string, unknown> = { ...raw };
+      // JSON 字段在 TextArea 里是文本；提交前转成对象/数组，空串表示未提供
+      for (const [name, spec] of variables) {
+        if (spec.type !== 'json') continue;
+        const value = inputs[name];
+        if (typeof value === 'string') {
+          inputs[name] = value.trim() ? JSON.parse(value) : undefined;
+        }
+      }
       onSubmit(inputs, __idem ?? '');
     } catch (error) {
       // 校验失败（含幂等键被清空）或提交回调抛错：都必须给用户可见反馈，绝不再静默吞掉
@@ -169,8 +189,25 @@ export const TriggerModal: React.FC<TriggerModalProps> = ({
               </Space>
             }
             tooltip={spec.description}
-            rules={[{ required: spec.required, message: t('workflow.trigger.required') }]}
-            initialValue={spec.default}
+            rules={[
+              { required: spec.required, message: t('workflow.trigger.required') },
+              ...(spec.type === 'json'
+                ? [
+                    {
+                      validator: (_rule: unknown, value: unknown) => {
+                        if (typeof value !== 'string' || !value.trim()) return Promise.resolve();
+                        try {
+                          JSON.parse(value);
+                          return Promise.resolve();
+                        } catch {
+                          return Promise.reject(new Error(t('workflow.trigger.invalidJson')));
+                        }
+                      },
+                    },
+                  ]
+                : []),
+            ]}
+            initialValue={spec.type === 'json' ? jsonInitialValue(spec.default) : spec.default}
           >
             {spec.type === 'number' ? (
               <InputNumber style={{ width: '100%' }} />
@@ -275,8 +312,9 @@ export const EdgeEditModal: React.FC<EdgeEditModalProps> = ({ open, edge, nodes,
   }, [open, edge]);
 
   const sourceType = nodes.find((n) => n.key === edge?.from)?.type;
-  const conditionLocked =
-    !!edge && !!sourceType && !canSetEdgeCondition(nodes, { from: edge.from, sourceHandle: edge.sourceHandle });
+  // condition 的 IF/ELSE 由 sourceHandle 真实门控（§2.2）：不再要求用户把表达式写两遍，
+  // 边编辑弹窗直接展示分支；其他边保留旧语义 condition 表达式编辑。
+  const conditionGated = sourceType === 'condition';
   const handleCount = sourceType ? sourceHandles(sourceType).length : 1;
 
   return (
@@ -284,25 +322,55 @@ export const EdgeEditModal: React.FC<EdgeEditModalProps> = ({ open, edge, nodes,
       title={t('workflow.edge.title', { from: edge?.from, to: edge?.to })}
       open={open}
       onCancel={onCancel}
-      onOk={() => edge && onSave(edge.id, { condition: condition.trim() || undefined, onUpstreamFailure })}
+      onOk={() =>
+        edge &&
+        onSave(edge.id, {
+          condition: conditionGated ? undefined : condition.trim() || undefined,
+          onUpstreamFailure,
+        })
+      }
       okText={t('common.save')}
       cancelText={t('common.cancel')}
     >
-      {conditionLocked && <Alert type="info" showIcon message={t('workflow.edge.falseBranchLocked')} style={{ marginBottom: 12 }} />}
+      {conditionGated && (
+        <Alert
+          type="info"
+          showIcon
+          message={t('workflow.edge.conditionGatedTitle')}
+          description={
+            <Space direction="vertical" size={4}>
+              <span>{t('workflow.edge.conditionGatedDesc')}</span>
+              <Space size={6}>
+                <span>{t('workflow.edge.sourceBranch')}:</span>
+                <Tag color={edge?.sourceHandle === 'false' ? 'orange' : 'green'}>
+                  {edge?.sourceHandle === 'false' ? 'ELSE' : 'IF'}
+                </Tag>
+                <Text code>{edge?.sourceHandle || 'true'}</Text>
+              </Space>
+            </Space>
+          }
+          style={{ marginBottom: 12 }}
+        />
+      )}
+      {!conditionGated && (
+        <Alert type="info" showIcon message={t('workflow.edge.conditionHint')} style={{ marginBottom: 12 }} />
+      )}
       <Form layout="vertical">
-        <Form.Item
-          label={t('workflow.edge.condition')}
-          tooltip={t('workflow.edge.conditionHint')}
-          extra={handleCount > 1 ? t('workflow.edge.dualHandleHint') : undefined}
-        >
-          <Input
-            value={condition}
-            disabled={conditionLocked}
-            onChange={(event) => setCondition(event.target.value)}
-            placeholder="nodes.n1.output.count > 0"
-            style={{ fontFamily: 'monospace' }}
-          />
-        </Form.Item>
+        {!conditionGated && (
+          <Form.Item
+            label={t('workflow.edge.condition')}
+            tooltip={t('workflow.edge.conditionHint')}
+            extra={handleCount > 1 ? t('workflow.edge.dualHandleHint') : undefined}
+          >
+            <Input
+              value={condition}
+              onChange={(event) => setCondition(event.target.value)}
+              placeholder="nodes.n1.output.count > 0"
+              style={{ fontFamily: 'monospace' }}
+              aria-label={t('workflow.edge.condition')}
+            />
+          </Form.Item>
+        )}
         <Form.Item label={t('workflow.edge.onUpstreamFailure')}>
           <Select
             value={onUpstreamFailure}

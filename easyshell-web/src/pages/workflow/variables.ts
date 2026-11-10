@@ -63,14 +63,14 @@ interface KnownField {
 const KNOWN_OUTPUT_FIELDS: Partial<Record<WorkflowNodeType, KnownField[]>> = {
   condition: [{ name: 'result', type: 'boolean', description: '条件表达式结果' }],
   notify: [
-    { name: 'delivered', type: 'number', description: '成功送达渠道数' },
-    { name: 'failed', type: 'number', description: '失败渠道数' },
-    { name: 'skipped', type: 'number', description: '未启用/无目标的渠道数' },
+    { name: 'delivered', type: 'json', description: '成功送达的渠道列表' },
+    { name: 'failed', type: 'json', description: '推送失败的渠道列表' },
+    { name: 'skipped', type: 'json', description: '未启用/无目标的渠道列表' },
   ],
   approval: [
     { name: 'decision', type: 'string', description: 'approved / rejected' },
     { name: 'comment', type: 'string', description: '审批意见' },
-    { name: 'decidedBy', type: 'string', description: '审批人' },
+    { name: 'decidedBy', type: 'number', description: '审批人' },
   ],
   wait: [{ name: 'waitedMs', type: 'number', description: '实际等待毫秒数' }],
   'ai-analyze': [
