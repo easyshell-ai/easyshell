@@ -40,14 +40,42 @@ public class WorkflowEngineConfig {
     /**
      * {@code workflow-engine} 池：跑 drive() 主循环与 runNode()。
      * 守护线程工厂照搬 {@code DagExecutor.java:48-52} 的形状，前缀改为 workflow-engine-。
+     *
+     * <p><b>为什么池大小要从并发配置推导，而不是只用 {@code poolCore}</b>：
+     * {@code WorkflowEngine} 在同一个池里做<b>三级嵌套</b>，每一级都阻塞在下一级的
+     * future 上：</p>
+     * <ol>
+     *   <li>{@code drive()}（{@code submitDrive} 提交）整个波期间阻塞在
+     *       {@code runWave} 的 {@code future.join()}；</li>
+     *   <li>{@code runNode()}（同一池）阻塞在 {@code executeWithTimeout} 的
+     *       {@code future.get(timeoutSec)}——节点级超时必须在另一个线程上等；</li>
+     *   <li>{@code executor.execute(ctx)}（同一池）是唯一真正干活的阶段。</li>
+     * </ol>
+     * <p>于是<b>每个在飞节点占 3 个池线程</b>（1 个 drive + 1 个 runNode + 1 个 executor），
+     * 同时可存在的线程数上限 = {@code maxConcurrentRuns × (1 + 2 × maxConcurrentNodes)}。
+     * 池线程一旦低于这本账，全部线程都会停在 join/get 上，而它们等的任务还排在
+     * {@code poolQueue} 里——<b>同池嵌套死锁</b>：没有线程能去取队列里的任务，
+     * 也没有任务能完成来释放线程。表现是 run 卡在 running 不前、审批行永不出现，
+     * awaitility 超时（契约测试两条审批用例 40s 超时即此，见
+     * {@code WorkflowApiContractTest} 的审批三例；生产上 {@code maxConcurrentRuns=3}
+     * 配 {@code poolCore=5} 同样在射程内）。</p>
+     *
+     * <p>线程是按需创建的（不预启动），把账做够不会常驻占用；{@code poolCore} /
+     * {@code poolMax} 保留为<b>下限</b>，运维显式调大仍然生效。</p>
      */
     @Bean(name = "workflowEnginePool")
     public ExecutorService workflowEnginePool(WorkflowProperties properties) {
         WorkflowProperties.Engine engine = properties.getEngine();
+        int runs = Math.max(1, engine.getMaxConcurrentRuns());
+        int nodesPerWave = Math.max(1, engine.getMaxConcurrentNodes());
+        // 唤醒路径（审批 afterCommit 的 resume、扫描器泵回、退避重试）也会往池里提交
+        // drive 级任务，与触发路径并发，留一份余量
+        int nestedThreads = runs * (1 + 2 * nodesPerWave) + runs;
+        int core = Math.max(Math.max(1, engine.getPoolCore()), nestedThreads);
         org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor executor =
                 new org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(Math.max(1, engine.getPoolCore()));
-        executor.setMaxPoolSize(Math.max(engine.getPoolCore(), engine.getPoolMax()));
+        executor.setCorePoolSize(core);
+        executor.setMaxPoolSize(Math.max(core, engine.getPoolMax()));
         executor.setQueueCapacity(Math.max(1, engine.getPoolQueue()));
         executor.setThreadFactory(daemonFactory("workflow-engine-"));
         executor.setWaitForTasksToCompleteOnShutdown(true);
