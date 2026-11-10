@@ -6,7 +6,16 @@
  * 前端镜像仅供编辑体验；权威校验在服务端。
  */
 
-export type WorkflowNodeType = 'script-exec' | 'condition' | 'notify' | 'approval' | 'wait';
+export type WorkflowNodeType =
+  | 'start'
+  | 'script-exec'
+  | 'transform'
+  | 'condition'
+  | 'ai-analyze'
+  | 'approval'
+  | 'notify'
+  | 'wait'
+  | 'end';
 
 export type VariableValueType = 'string' | 'number' | 'boolean' | 'json';
 
@@ -103,6 +112,41 @@ export interface ConditionConfig {
   expression?: string;
 }
 
+/**
+ * start 的入参不在 config 里：工作流入参统一写 definition.variables（§2.1）。
+ * 保留空接口是为了让 NodeFormPanel / inspector 的按类型分派有一致的类型出口。
+ */
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export interface StartConfig {}
+
+export interface TransformMapping {
+  name: string;
+  /** 字面量或 ${path}；纯 ${path} 保留原类型 */
+  value: string;
+}
+
+export interface TransformConfig {
+  mappings?: TransformMapping[];
+}
+
+export interface AiAnalyzeConfig {
+  instructions?: string;
+  /** 上游输入表达式，如 ${nodes.check.output}；可截断到 maxInputChars */
+  input?: string;
+  /** 8000 默认；AI 只做分析，不执行命令 */
+  maxInputChars?: number;
+}
+
+export interface EndOutput {
+  name: string;
+  /** 字面量或 ${path}；纯 ${path} 保留原类型 */
+  value: string;
+}
+
+export interface EndConfig {
+  outputs?: EndOutput[];
+}
+
 export interface WorkflowNode {
   /** ^[a-z][a-z0-9_]{0,63}$，图内稳定 ID */
   key: string;
@@ -127,7 +171,12 @@ export interface WorkflowEdge {
   id: string;
   from: string;
   to: string;
-  /** 缺省 = 恒真（唯一门控）；condition 的 false handle 连出的边必须为空 */
+  /**
+   * 出边语义（§2.2）：condition 节点写 `true` / `false`；其他节点写 `out`（可省略）。
+   * 旧定义没有该字段时，condition 节点回落到 condition 表达式映射。
+   */
+  sourceHandle?: string;
+  /** 旧语义门控；condition 的 true/false handle 优先于它 */
   condition?: string;
   onUpstreamFailure?: 'abort' | 'skip' | 'partial';
 }

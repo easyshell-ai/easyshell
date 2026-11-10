@@ -1,7 +1,40 @@
 /* src/theme/reactflow.css（新建）—— 唯一允许出现 --xy-* 的地方（设计文档 §7.1）。
  * @xyflow/react 没有 theme object，靠 --xy-* CSS 变量 + colorMode 属性（内部加 .react-flow.dark class）。
  * 变量值全部派生自 --es-*（AntD cssVar 同源），画布组件必须传 colorMode="dark" 才会命中本表。 */
+
+/* 浅色（默认）：边标签 token 必须同时定义在 .react-flow 与 .react-flow.dark，
+ * 否则深色切回浅色时会残留 --xy-edge-label-* 的深色值。 */
+.react-flow {
+  --xy-edge-label-background-color: var(--es-color-bg-container);
+  --xy-edge-label-color: var(--es-color-text);
+  --wf-edge-label-bg: var(--es-color-bg-container);
+  --wf-edge-label-fg: var(--es-color-text);
+  --wf-edge-label-border: var(--es-color-border);
+  --wf-edge-pill-if-fg: var(--es-sem-succeeded-text);
+  --wf-edge-pill-if-bg: var(--es-color-bg-container);
+  --wf-edge-pill-if-border: var(--es-sem-succeeded-border);
+  --wf-edge-pill-else-fg: var(--es-sem-timeout-text);
+  --wf-edge-pill-else-bg: var(--es-color-bg-container);
+  --wf-edge-pill-else-border: var(--es-sem-timeout-border);
+  --wf-edge-badge-bg: var(--es-color-bg-elevated);
+  --wf-edge-badge-fg: var(--es-color-text-secondary);
+  --wf-edge-badge-border: var(--es-color-border-secondary);
+}
+
 .react-flow.dark {
+  --wf-edge-label-bg: var(--es-color-bg-elevated);
+  --wf-edge-label-fg: var(--es-color-text);
+  --wf-edge-label-border: var(--es-color-border);
+  --wf-edge-pill-if-fg: var(--es-sem-succeeded-text);
+  --wf-edge-pill-if-bg: var(--es-color-bg-elevated);
+  --wf-edge-pill-if-border: var(--es-sem-succeeded-border);
+  --wf-edge-pill-else-fg: var(--es-sem-timeout-text);
+  --wf-edge-pill-else-bg: var(--es-color-bg-elevated);
+  --wf-edge-pill-else-border: var(--es-sem-timeout-border);
+  --wf-edge-badge-bg: var(--es-color-bg-elevated);
+  --wf-edge-badge-fg: var(--es-color-text-secondary);
+  --wf-edge-badge-border: var(--es-color-border-secondary);
+
   --xy-background-color: var(--es-color-bg-layout);
   --xy-background-pattern-color: var(--es-color-border);
   --xy-node-background-color: var(--es-color-bg-container);
@@ -80,6 +113,17 @@
 .wf-node-type {
   flex-shrink: 0;
 }
+/* 节点摘要：一行「这个节点做什么」，完整内容在 title / 检查器里 */
+.wf-node-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--es-color-text-secondary);
+  font-size: 11px;
+  line-height: 16px;
+  font-family: var(--es-font-family-code, monospace);
+}
 /* 键盘可达性：焦点环（nodesFocusable 下 Tab 移动） */
 .react-flow__node:focus-visible {
   outline: 2px solid var(--es-color-primary);
@@ -94,6 +138,58 @@
   line-height: 12px;
   color: var(--es-color-text-tertiary);
   pointer-events: none;
+}
+/* ── 自定义边标签（WorkflowEdge.tsx） ───────────────────────────────
+ * 全部走 token：浅色/深色分别由 .react-flow / .react-flow.dark 提供 --wf-edge-*，
+ * 禁止白底白字；IF 用 succeeded、ELSE 用 timeout 语义色。 */
+.wf-edge-label {
+  position: absolute;
+  z-index: 1;
+  pointer-events: all;
+  user-select: none;
+}
+.wf-edge-pill {
+  display: inline-block;
+  box-sizing: border-box;
+  max-width: 56px;
+  padding: 0 6px;
+  border: 1px solid var(--wf-edge-label-border);
+  border-radius: 9px;
+  background: var(--wf-edge-label-bg);
+  color: var(--wf-edge-label-fg);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+}
+.wf-edge-pill--if {
+  border-color: var(--wf-edge-pill-if-border);
+  background: var(--wf-edge-pill-if-bg);
+  color: var(--wf-edge-pill-if-fg);
+}
+.wf-edge-pill--else {
+  border-color: var(--wf-edge-pill-else-border);
+  background: var(--wf-edge-pill-else-bg);
+  color: var(--wf-edge-pill-else-fg);
+}
+.wf-edge-pill--legacy {
+  font-style: italic;
+}
+.wf-edge-cond-badge {
+  display: inline-block;
+  padding: 0 5px;
+  border: 1px solid var(--wf-edge-badge-border);
+  border-radius: 4px;
+  background: var(--wf-edge-badge-bg);
+  color: var(--wf-edge-badge-fg);
+  font-size: 10px;
+  line-height: 14px;
+  white-space: nowrap;
+  cursor: default;
 }
 /* 对齐辅助线：ViewportPortal 里流坐标的 SVG 覆盖层 */
 .wf-alignment-layer {

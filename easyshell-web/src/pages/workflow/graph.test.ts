@@ -1,21 +1,29 @@
 import { describe, expect, it } from 'vitest';
 import {
-  autoLayoutPositions,
-  checkConnection,
-  computeDeleteImpact,
-  definitionToFlow,
-  edgeHandleOf,
-  edgeIdFor,
-  flowToDefinition,
-  isValidNodeKey,
-  nextNodeKey,
-  nodeHeight,
-  sourceHandles,
-  wouldCreateCycle,
+  DEFAULT_NODE_CONFIG,
   HANDLE_CONTRACT,
   HANDLE_FALSE,
   HANDLE_OUT,
   HANDLE_TRUE,
+  applyNodeStatuses,
+  autoLayoutPositions,
+  checkConnection,
+  computeDeleteImpact,
+  createStartAndEndNodes,
+  createWorkflowNode,
+  definitionToFlow,
+  edgeHandleOf,
+  edgeIdFor,
+  ensureEntryExit,
+  flowToDefinition,
+  flowNodeOf,
+  isValidNodeKey,
+  nextNodeKey,
+  nodeHeight,
+  nodeSummaryOf,
+  nodeSummaryTextOf,
+  sourceHandles,
+  wouldCreateCycle,
 } from './graph';
 import type { WorkflowDefinition, WorkflowEdge, WorkflowNode, WorkflowNodeType } from './types';
 
@@ -58,9 +66,18 @@ describe('node key generation', () => {
 });
 
 describe('handle contract', () => {
-  it('condition has 2 outputs and dual height, everything else 1 in / 1 out', () => {
+  it('start has 0 in / 1 out, end has 1 in / 0 out, condition 2 out, others 1/1', () => {
+    expect(HANDLE_CONTRACT.start).toEqual({ inputs: 0, outputs: 1, height: 72 });
+    expect(HANDLE_CONTRACT.end).toEqual({ inputs: 1, outputs: 0, height: 72 });
     expect(HANDLE_CONTRACT.condition).toEqual({ inputs: 1, outputs: 2, height: 96 });
-    for (const type of ['script-exec', 'notify', 'wait', 'approval'] as WorkflowNodeType[]) {
+    for (const type of [
+      'script-exec',
+      'transform',
+      'ai-analyze',
+      'notify',
+      'wait',
+      'approval',
+    ] as WorkflowNodeType[]) {
       expect(HANDLE_CONTRACT[type].outputs).toBe(1);
       expect(HANDLE_CONTRACT[type].inputs).toBe(1);
     }
@@ -69,9 +86,11 @@ describe('handle contract', () => {
     expect(nodeHeight('script-exec')).toBe(72);
   });
 
-  it('exposes true/false handles only for condition', () => {
+  it('exposes true/false handles only for condition and none for end', () => {
     expect(sourceHandles('condition')).toEqual([HANDLE_TRUE, HANDLE_FALSE]);
     expect(sourceHandles('script-exec')).toEqual([HANDLE_OUT]);
+    expect(sourceHandles('start')).toEqual([HANDLE_OUT]);
+    expect(sourceHandles('end')).toEqual([]);
   });
 });
 
@@ -121,6 +140,26 @@ describe('checkConnection', () => {
     expect(checkConnection(ctx, { source: 'cond', target: 'x', sourceHandle: HANDLE_FALSE })).toBeNull();
     expect(checkConnection(ctx, { source: 'cond', target: 'x', sourceHandle: HANDLE_TRUE })).toBe('DUPLICATE_EDGE');
   });
+
+  it('rejects any edge into start and any edge out of end', () => {
+    const ctx = {
+      nodes: [...context.nodes, node('start', 'start'), node('end', 'end')],
+      edges: [],
+    };
+    expect(checkConnection(ctx, { source: 'a', target: 'start' })).toBe('START_HAS_INPUT');
+    expect(checkConnection(ctx, { source: 'start', target: 'start' })).toBe('START_HAS_INPUT');
+    expect(checkConnection(ctx, { source: 'end', target: 'a' })).toBe('END_HAS_OUTPUT');
+    expect(checkConnection(ctx, { source: 'end', target: 'end' })).toBe('END_HAS_OUTPUT');
+  });
+
+  it('allows start as source and end as target', () => {
+    const ctx = {
+      nodes: [...context.nodes, node('start', 'start'), node('end', 'end')],
+      edges: [],
+    };
+    expect(checkConnection(ctx, { source: 'start', target: 'a' })).toBeNull();
+    expect(checkConnection(ctx, { source: 'a', target: 'end' })).toBeNull();
+  });
 });
 
 describe('definition <-> flow roundtrip', () => {
@@ -144,6 +183,9 @@ describe('definition <-> flow roundtrip', () => {
     expect(edges).toHaveLength(2);
     expect(edges.find((e) => e.id === 'cond:true->b')?.sourceHandle).toBe(HANDLE_TRUE);
     expect(edges.find((e) => e.id === 'a:out->cond')?.sourceHandle).toBe(HANDLE_OUT);
+    // 表达式只进 data(tooltip)，不再用 label 常驻在边上
+    expect(edges.find((e) => e.id === 'cond:true->b')?.label).toBeUndefined();
+    expect(edges.find((e) => e.id === 'cond:true->b')?.data?.condition).toBe('a>1');
 
     const back = flowToDefinition(nodes, edges, original);
     expect(back.nodes.map((n) => n.key)).toEqual(['a', 'cond', 'b']);
@@ -152,7 +194,10 @@ describe('definition <-> flow roundtrip', () => {
     expect(back.nodes[0].position).toEqual({ x: 40, y: 60 });
     expect(back.variables).toEqual({ env: { type: 'string', required: true } });
     expect(back.edges.find((e) => e.from === 'cond' && e.to === 'b')?.condition).toBe('a>1');
+    expect(back.edges.find((e) => e.from === 'cond' && e.to === 'b')?.sourceHandle).toBe(HANDLE_TRUE);
     expect(back.edges.find((e) => e.from === 'a' && e.to === 'cond')?.condition).toBeUndefined();
+    // 普通节点的 out 是缺省语义：definition 不再写冗余 sourceHandle
+    expect(back.edges.find((e) => e.from === 'a' && e.to === 'cond')?.sourceHandle).toBeUndefined();
   });
 
   it('drops edges whose endpoints were removed', () => {
@@ -177,7 +222,43 @@ describe('definition <-> flow roundtrip', () => {
     });
     const back = flowToDefinition(nodes, edges, base);
     expect(back.edges[0].condition).toBeUndefined();
+    expect(back.edges[0].sourceHandle).toBe(HANDLE_FALSE);
     expect(edgeHandleOf(back.nodes, back.edges[0])).toBe(HANDLE_FALSE);
+  });
+
+  it('prefers an explicit sourceHandle over the legacy condition mapping', () => {
+    const base = definition({
+      nodes: [node('cond', 'condition'), node('b')],
+      edges: [{ id: 'cond:false->b', from: 'cond', to: 'b', sourceHandle: HANDLE_FALSE, condition: 'a>1' }],
+    });
+    const { edges } = definitionToFlow(base);
+    expect(edges[0].sourceHandle).toBe(HANDLE_FALSE);
+    expect(edgeHandleOf(base.nodes, base.edges[0])).toBe(HANDLE_FALSE);
+    const back = flowToDefinition(definitionToFlow(base).nodes, edges, base);
+    expect(back.edges[0].sourceHandle).toBe(HANDLE_FALSE);
+    expect(back.edges[0].condition).toBeUndefined();
+  });
+
+  it('falls back to condition text for legacy condition nodes without sourceHandle', () => {
+    const nodes = [node('cond', 'condition'), node('a'), node('b')];
+    expect(edgeHandleOf(nodes, { from: 'cond', condition: 'x>0' })).toBe(HANDLE_TRUE);
+    expect(edgeHandleOf(nodes, { from: 'cond' })).toBe(HANDLE_FALSE);
+    expect(edgeHandleOf(nodes, { from: 'a' })).toBe(HANDLE_OUT);
+  });
+
+  it('normalizes legacy condition edges once and is then stable', () => {
+    const legacy = definition({
+      nodes: [node('cond', 'condition'), node('b')],
+      edges: [{ id: 'cond->b', from: 'cond', to: 'b', condition: 'x>0' }],
+    });
+    const firstFlow = definitionToFlow(legacy);
+    const first = flowToDefinition(firstFlow.nodes, firstFlow.edges, legacy);
+    expect(first.edges[0].sourceHandle).toBe(HANDLE_TRUE);
+    expect(first.edges[0].condition).toBe('x>0');
+
+    const secondFlow = definitionToFlow(first);
+    const second = flowToDefinition(secondFlow.nodes, secondFlow.edges, first);
+    expect(second).toEqual(first);
   });
 });
 
@@ -206,5 +287,162 @@ describe('delete impact', () => {
     const impact = computeDeleteImpact(['b'], edges);
     expect(impact.nodes).toEqual(['b']);
     expect(impact.edges).toEqual(['a:out->b', 'b:out->c']);
+  });
+});
+
+describe('new node defaults', () => {
+  it('has defaults for all 9 node types with server field names', () => {
+    const types: WorkflowNodeType[] = [
+      'start',
+      'script-exec',
+      'transform',
+      'condition',
+      'ai-analyze',
+      'approval',
+      'notify',
+      'wait',
+      'end',
+    ];
+    for (const type of types) expect(DEFAULT_NODE_CONFIG[type]).toBeDefined();
+    expect(DEFAULT_NODE_CONFIG.transform).toEqual({ mappings: [] });
+    expect(DEFAULT_NODE_CONFIG['ai-analyze']).toMatchObject({ maxInputChars: 8000 });
+    expect(DEFAULT_NODE_CONFIG.end).toEqual({ outputs: [] });
+  });
+
+  it('sets sensible timeout defaults for instant and long-running node types', () => {
+    expect(createWorkflowNode('start', 'start', { x: 0, y: 0 }).timeoutSec).toBeNull();
+    expect(createWorkflowNode('end', 'end', { x: 0, y: 0 }).timeoutSec).toBeNull();
+    expect(createWorkflowNode('wait', 'w', { x: 0, y: 0 }).timeoutSec).toBeNull();
+    expect(createWorkflowNode('transform', 't', { x: 0, y: 0 }).timeoutSec).toBe(60);
+    expect(createWorkflowNode('ai-analyze', 'ai', { x: 0, y: 0 }).timeoutSec).toBe(120);
+    expect(createWorkflowNode('script-exec', 's', { x: 0, y: 0 }).timeoutSec).toBe(600);
+  });
+
+  it('deep-clones default config so nodes cannot share mutable mappings', () => {
+    const a = createWorkflowNode('transform', 'a', { x: 0, y: 0 });
+    const b = createWorkflowNode('transform', 'b', { x: 0, y: 0 });
+    (a.config.mappings as unknown[]).push({ name: 'x', value: 'y' });
+    expect(b.config.mappings).toEqual([]);
+  });
+});
+
+describe('entry / exit seeding', () => {
+  it('creates semantic start/end keys and falls back when occupied', () => {
+    const fresh = createStartAndEndNodes();
+    expect([fresh.start.key, fresh.end.key]).toEqual(['start', 'end']);
+    const used = createStartAndEndNodes(['start', 'end']);
+    expect(used.start.key).toBe('n1');
+    expect(used.end.key).toBe('n2');
+  });
+
+  it('ensureEntryExit adds missing nodes without touching edges', () => {
+    const base = definition({
+      nodes: [node('a'), node('b')],
+      edges: [edge('a', 'b')],
+    });
+    const first = ensureEntryExit(base);
+    expect(first.changed).toBe(true);
+    expect(first.addedKeys).toEqual(['start', 'end']);
+    expect(first.definition.nodes.map((n) => n.type)).toEqual([
+      'script-exec',
+      'script-exec',
+      'start',
+      'end',
+    ]);
+    expect(first.definition.edges).toEqual(base.edges);
+    expect(first.definition.nodes.find((n) => n.type === 'start')!.position.x).toBeLessThan(0);
+    expect(first.definition.nodes.find((n) => n.type === 'end')!.position.x).toBeGreaterThan(0);
+
+    const again = ensureEntryExit(first.definition);
+    expect(again.changed).toBe(false);
+    expect(again.definition).toBe(first.definition);
+  });
+
+  it('seeds both ends into an empty workflow', () => {
+    const result = ensureEntryExit(definition());
+    expect(result.definition.nodes.map((n) => n.key)).toEqual(['start', 'end']);
+    expect(result.definition.nodes[0].position).toEqual({ x: 80, y: 80 });
+    expect(result.definition.nodes[1].position).toEqual({ x: 900, y: 80 });
+  });
+});
+
+describe('node summary extraction', () => {
+  it('derives structured summary fields from config', () => {
+    expect(
+      nodeSummaryOf({ ...node('s', 'start'), config: {} }, { env: { type: 'string' }, host: { type: 'string' } })
+    ).toEqual({ inputCount: 2 });
+    expect(
+      nodeSummaryOf({ ...node('e', 'end'), config: { outputs: [{ name: 'a', value: '1' }] } })
+    ).toEqual({ outputCount: 1 });
+    expect(
+      nodeSummaryOf({ ...node('t', 'transform'), config: { mappings: [{ name: 'a', value: '1' }] } })
+    ).toEqual({ mappingCount: 1 });
+    expect(
+      nodeSummaryOf({ ...node('c', 'condition'), config: { expression: 'nodes.a.output.count > 0' } })
+    ).toEqual({ expression: 'nodes.a.output.count > 0' });
+    expect(
+      nodeSummaryOf({
+        ...node('x', 'script-exec'),
+        config: { script: 'df -h\necho done' },
+      })
+    ).toEqual({ scriptPreview: 'df -h' });
+    expect(
+      nodeSummaryOf({
+        ...node('ai', 'ai-analyze'),
+        config: { instructions: '分析磁盘\n第二行' },
+      })
+    ).toEqual({ aiInstructionsPreview: '分析磁盘' });
+    expect(
+      nodeSummaryOf({ ...node('n', 'notify'), config: { channels: ['a', 'b'], level: 'warning' } })
+    ).toEqual({ notifyLevel: 'warning', channelCount: 2 });
+    expect(
+      nodeSummaryOf({ ...node('ap', 'approval'), config: { title: '重启服务审批' } })
+    ).toEqual({ approvalTitle: '重启服务审批' });
+    expect(nodeSummaryOf({ ...node('w', 'wait'), config: { durationSec: 30 } })).toEqual({
+      durationSec: 30,
+    });
+  });
+
+  it('renders neutral one-line text and truncates the first line', () => {
+    expect(nodeSummaryTextOf('start', { inputCount: 3 })).toBe('in: 3');
+    expect(nodeSummaryTextOf('end', { outputCount: 2 })).toBe('out: 2');
+    expect(nodeSummaryTextOf('transform', { mappingCount: 4 })).toBe('map: 4');
+    expect(nodeSummaryTextOf('wait', { durationSec: 60 })).toBe('60s');
+    expect(nodeSummaryTextOf('notify', { notifyLevel: 'info', channelCount: 2 })).toBe('info · 2 ch');
+    const long = 'x'.repeat(120);
+    const summary = nodeSummaryOf({ ...node('s'), config: { script: `${long}\nnext` } });
+    expect(summary.scriptPreview).toHaveLength(72);
+    expect(summary.scriptPreview!.endsWith('…')).toBe(true);
+  });
+
+  it('flowNodeOf carries summary + output path for the canvas card', () => {
+    const flowNode = flowNodeOf(
+      { ...node('s', 'start'), outputVar: 'entry' },
+      { env: { type: 'string' } }
+    );
+    expect(flowNode.data).toMatchObject({
+      key: 's',
+      nodeType: 'start',
+      outputVar: 'entry',
+      outputPath: 'nodes.s.output',
+      inputCount: 1,
+      summary: 'in: 1',
+    });
+  });
+});
+
+describe('monitor status decoration', () => {
+  const { nodes } = definitionToFlow(definition({ nodes: [node('a'), node('b')] }));
+
+  it('returns the exact same array when statuses are absent (editor mode)', () => {
+    expect(applyNodeStatuses(nodes, undefined)).toBe(nodes);
+  });
+
+  it('only clones nodes whose status actually changed', () => {
+    const decorated = applyNodeStatuses(nodes, { a: 'running', b: undefined as unknown as string });
+    expect(decorated[0]).not.toBe(nodes[0]);
+    expect(decorated[0].data.status).toBe('running');
+    expect(decorated[1]).toBe(nodes[1]);
+    expect(applyNodeStatuses(nodes, {})).toBe(nodes);
   });
 });
