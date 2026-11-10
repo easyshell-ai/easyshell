@@ -147,7 +147,7 @@ const AuditPage: React.FC = () => {
         </Space>
       </div>
 
-      <Card style={{ borderRadius: 12 }}>
+      <Card styles={{ body: { padding: 0 } }}>
         <Table<AuditLog>
           columns={columns}
           dataSource={data}

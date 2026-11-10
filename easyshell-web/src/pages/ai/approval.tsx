@@ -204,7 +204,7 @@ const AiApproval: React.FC = () => {
           <Spin size="large" />
         </div>
       ) : (
-        <Card style={{ borderRadius: 12 }} styles={{ body: { padding: 0 } }}>
+        <Card styles={{ body: { padding: 0 } }}>
           <Table
             dataSource={tasks}
             columns={columns}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Row, Col, Card, Statistic, Spin, Table, Tag, Progress, Typography, theme, Tooltip } from 'antd';
+import { Row, Col, Card, Spin, Table, Tag, Progress, Typography, theme, Tooltip } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
   DesktopOutlined,
@@ -25,15 +25,57 @@ import type { DashboardStats, Task, AgentBriefVO } from '../../types';
 const GaugeCard: React.FC<{ title: string; value: number; color: string }> = ({ title, value, color }) => {
   const { token } = theme.useToken();
   return (
-    <Card size="small" style={{ textAlign: 'center' }}>
+    <div style={{ textAlign: 'center', padding: '4px 0' }}>
       <Progress
         type="dashboard"
         percent={Number((value ?? 0).toFixed(1))}
-        size={100}
+        size={88}
         strokeColor={color}
-        format={(p) => <span style={{ color: token.colorText, fontSize: 16, fontWeight: 600 }}>{p}%</span>}
+        trailColor={token.colorFillSecondary}
+        format={(p) => <span style={{ color: token.colorText, fontSize: 15, fontWeight: 600 }}>{p}%</span>}
       />
-      <div style={{ marginTop: 8, fontSize: 14, color: token.colorTextSecondary }}>{title}</div>
+      <div style={{ marginTop: 4, fontSize: 12, color: token.colorTextSecondary }}>{title}</div>
+    </div>
+  );
+};
+
+const StatTile: React.FC<{
+  title: string;
+  value: number | string;
+  icon: React.ReactNode;
+  accent: string;
+  suffix?: string;
+  testId?: string;
+}> = ({ title, value, icon, accent, suffix, testId }) => {
+  const { token } = theme.useToken();
+  return (
+    <Card
+      size="small"
+      data-testid={testId}
+      styles={{ body: { padding: '14px 16px' } }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <span style={{
+          width: 32,
+          height: 32,
+          borderRadius: 8,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexShrink: 0,
+          background: token.colorFillTertiary,
+          color: accent,
+          fontSize: 15,
+        }}>
+          {icon}
+        </span>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 12, lineHeight: '16px', color: token.colorTextSecondary, marginBottom: 2 }}>{title}</div>
+          <div style={{ fontSize: 22, lineHeight: '26px', fontWeight: 600, color: token.colorText, letterSpacing: '-0.02em' }}>
+            {value}{suffix ? <span style={{ fontSize: 13, fontWeight: 500, marginLeft: 2, color: token.colorTextSecondary }}>{suffix}</span> : null}
+          </div>
+        </div>
+      </div>
     </Card>
   );
 };
@@ -114,123 +156,115 @@ const Dashboard: React.FC = () => {
     },
   ];
 
+  const accent = token.colorPrimary;
+  const ok = token.colorSuccess;
+  const bad = token.colorError;
+  const warn = token.colorWarning;
+
   const statCards = [
-    { title: t('dashboard.totalHosts'), value: stats?.totalAgents ?? 0, icon: <DesktopOutlined />, color: token.colorPrimary },
-    { title: t('dashboard.onlineHosts'), value: stats?.onlineAgents ?? 0, icon: <CheckCircleOutlined />, color: '#52c41a' },
-    { title: t('dashboard.offlineHosts'), value: stats?.offlineAgents ?? 0, icon: <CloseCircleOutlined />, color: '#ff4d4f' },
-    { title: t('dashboard.unstable'), value: stats?.unstableAgents ?? 0, icon: <WarningOutlined />, color: '#faad14' },
-    { title: t('dashboard.totalScripts'), value: stats?.totalScripts ?? 0, icon: <CodeOutlined />, color: '#8b5cf6' },
-    { title: t('dashboard.totalTasks'), value: stats?.totalTasks ?? 0, icon: <PlayCircleOutlined />, color: '#fa8c16' },
+    { title: t('dashboard.totalHosts'), value: stats?.totalAgents ?? 0, icon: <DesktopOutlined />, color: accent },
+    { title: t('dashboard.onlineHosts'), value: stats?.onlineAgents ?? 0, icon: <CheckCircleOutlined />, color: ok },
+    { title: t('dashboard.offlineHosts'), value: stats?.offlineAgents ?? 0, icon: <CloseCircleOutlined />, color: bad },
+    { title: t('dashboard.unstable'), value: stats?.unstableAgents ?? 0, icon: <WarningOutlined />, color: warn },
+    { title: t('dashboard.totalScripts'), value: stats?.totalScripts ?? 0, icon: <CodeOutlined />, color: accent },
+    { title: t('dashboard.totalTasks'), value: stats?.totalTasks ?? 0, icon: <PlayCircleOutlined />, color: accent },
   ];
 
   const todayCards = [
-    { title: t('dashboard.todayTasks'), value: stats?.todayTasks ?? 0, icon: <CalendarOutlined />, color: token.colorPrimary },
-    { title: t('dashboard.todaySuccess'), value: stats?.todaySuccessTasks ?? 0, icon: <CheckSquareOutlined />, color: '#52c41a' },
-    { title: t('dashboard.todayFailed'), value: stats?.todayFailedTasks ?? 0, icon: <CloseSquareOutlined />, color: '#ff4d4f' },
+    { title: t('dashboard.todayTasks'), value: stats?.todayTasks ?? 0, icon: <CalendarOutlined />, color: accent },
+    { title: t('dashboard.todaySuccess'), value: stats?.todaySuccessTasks ?? 0, icon: <CheckSquareOutlined />, color: ok },
+    { title: t('dashboard.todayFailed'), value: stats?.todayFailedTasks ?? 0, icon: <CloseSquareOutlined />, color: bad },
   ];
 
   const alertCount = (stats?.highCpuAgents ?? 0) + (stats?.highMemAgents ?? 0) + (stats?.highDiskAgents ?? 0);
 
   return (
-    <div>
-      {/* Host Stats */}
-      <Row gutter={[16, 16]}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <Row gutter={[12, 12]}>
         {statCards.map((s) => (
           <Col xs={12} sm={8} lg={4} key={s.title}>
-            <Card
-              data-testid={`stat-card-${s.title}`}
-              style={{ borderRadius: 12 }}
-              styles={{ body: { padding: '20px 24px' } }}
-            >
-              <Statistic
-                title={<span style={{ color: token.colorTextSecondary, fontSize: 13 }}>{s.title}</span>}
-                value={s.value}
-                prefix={<span style={{ color: s.color, fontSize: 22, marginRight: 4 }}>{s.icon}</span>}
-                valueStyle={{ color: s.color, fontSize: 28, fontWeight: 700 }}
-              />
-            </Card>
+            <StatTile
+              testId={`stat-card-${s.title}`}
+              title={s.title}
+              value={s.value}
+              icon={s.icon}
+              accent={s.color}
+            />
           </Col>
         ))}
       </Row>
 
-      {/* Today Stats + Success Rate */}
-      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+      <Row gutter={[12, 12]}>
         {todayCards.map((s) => (
           <Col xs={12} sm={8} lg={6} key={s.title}>
-            <Card size="small" style={{ borderRadius: 12 }} styles={{ body: { padding: '16px 20px' } }}>
-              <Statistic
-                title={<span style={{ color: token.colorTextSecondary, fontSize: 12 }}>{s.title}</span>}
-                value={s.value}
-                prefix={<span style={{ color: s.color, fontSize: 18, marginRight: 4 }}>{s.icon}</span>}
-                valueStyle={{ color: s.color, fontSize: 22, fontWeight: 700 }}
-              />
-            </Card>
+            <StatTile title={s.title} value={s.value} icon={s.icon} accent={s.color} />
           </Col>
         ))}
         <Col xs={12} sm={8} lg={6}>
-          <Card size="small" style={{ borderRadius: 12 }} styles={{ body: { padding: '16px 20px' } }}>
-            <Statistic
-              title={<span style={{ color: token.colorTextSecondary, fontSize: 12 }}>{t('dashboard.taskSuccessRate')}</span>}
-              value={stats?.taskSuccessRate != null ? stats.taskSuccessRate : undefined}
-              formatter={stats?.taskSuccessRate != null ? undefined : () => <span style={{ color: token.colorTextTertiary }}>-</span>}
-              suffix={stats?.taskSuccessRate != null ? '%' : undefined}
-              precision={1}
-              prefix={<span style={{ color: '#8b5cf6', fontSize: 18, marginRight: 4 }}><TrophyOutlined /></span>}
-              valueStyle={{ color: '#8b5cf6', fontSize: 22, fontWeight: 700 }}
-            />
-          </Card>
+          <StatTile
+            title={t('dashboard.taskSuccessRate')}
+            value={stats?.taskSuccessRate != null ? Number(stats.taskSuccessRate).toFixed(1) : '-'}
+            suffix={stats?.taskSuccessRate != null ? '%' : undefined}
+            icon={<TrophyOutlined />}
+            accent={accent}
+          />
         </Col>
       </Row>
 
-      {/* Resource Alerts Banner */}
       {alertCount > 0 && (
-        <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
-          <Col span={24}>
-            <Card size="small" style={{ borderRadius: 12, borderLeft: '4px solid #faad14' }}
-              styles={{ body: { padding: '12px 20px', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' } }}>
-              <AlertOutlined style={{ color: '#faad14', fontSize: 20 }} />
-              <Typography.Text strong style={{ color: '#faad14' }}>{t('dashboard.resourceAlert')}</Typography.Text>
-              {(stats?.highCpuAgents ?? 0) > 0 && (
-                <Tooltip title={t('dashboard.cpuOver80')}>
-                  <Tag color="red">{t('dashboard.highCpuCount', { count: stats?.highCpuAgents })}</Tag>
-                </Tooltip>
-              )}
-              {(stats?.highMemAgents ?? 0) > 0 && (
-                <Tooltip title={t('dashboard.memOver80')}>
-                  <Tag color="orange">{t('dashboard.highMemCount', { count: stats?.highMemAgents })}</Tag>
-                </Tooltip>
-              )}
-              {(stats?.highDiskAgents ?? 0) > 0 && (
-                <Tooltip title={t('dashboard.diskOver90')}>
-                  <Tag color="volcano">{t('dashboard.highDiskCount', { count: stats?.highDiskAgents })}</Tag>
-                </Tooltip>
-              )}
-            </Card>
-          </Col>
-        </Row>
+        <Card
+          size="small"
+          style={{ borderLeft: `3px solid ${token.colorWarning}` }}
+          styles={{ body: { padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' } }}
+        >
+          <AlertOutlined style={{ color: token.colorWarning, fontSize: 16 }} />
+          <Typography.Text strong style={{ color: token.colorText }}>{t('dashboard.resourceAlert')}</Typography.Text>
+          {(stats?.highCpuAgents ?? 0) > 0 && (
+            <Tooltip title={t('dashboard.cpuOver80')}>
+              <Tag color="red">{t('dashboard.highCpuCount', { count: stats?.highCpuAgents })}</Tag>
+            </Tooltip>
+          )}
+          {(stats?.highMemAgents ?? 0) > 0 && (
+            <Tooltip title={t('dashboard.memOver80')}>
+              <Tag color="orange">{t('dashboard.highMemCount', { count: stats?.highMemAgents })}</Tag>
+            </Tooltip>
+          )}
+          {(stats?.highDiskAgents ?? 0) > 0 && (
+            <Tooltip title={t('dashboard.diskOver90')}>
+              <Tag color="volcano">{t('dashboard.highDiskCount', { count: stats?.highDiskAgents })}</Tag>
+            </Tooltip>
+          )}
+        </Card>
       )}
 
-      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+      <Row gutter={[12, 12]}>
         <Col xs={24} lg={8}>
-          <Card size="small" data-testid="resource-usage-card" title={<span style={{ color: token.colorText }}><DashboardOutlined style={{ marginRight: 8 }} />{t('dashboard.avgResourceUsage')}</span>}
-            extra={<Typography.Text style={{ fontSize: 11, color: token.colorTextTertiary }}>{lastUpdated ? t('dashboard.updated', { time: lastUpdated }) : ''} <ReloadOutlined spin={refreshing} onClick={() => fetchStats(true)} style={{ cursor: 'pointer', marginLeft: 4 }} /></Typography.Text>}
-            style={{ borderRadius: 12, height: '100%' }}>
+          <Card
+            size="small"
+            data-testid="resource-usage-card"
+            title={<span style={{ color: token.colorText }}><DashboardOutlined style={{ marginRight: 8 }} />{t('dashboard.avgResourceUsage')}</span>}
+            extra={<Typography.Text style={{ fontSize: 12, color: token.colorTextSecondary }}>{lastUpdated ? t('dashboard.updated', { time: lastUpdated }) : ''} <ReloadOutlined spin={refreshing} onClick={() => fetchStats(true)} style={{ cursor: 'pointer', marginLeft: 4, color: token.colorTextSecondary }} /></Typography.Text>}
+            style={{ height: '100%' }}
+          >
             <Row gutter={8}>
               <Col span={8}>
                 <GaugeCard title={t('dashboard.cpu')} value={stats?.avgCpuUsage ?? 0} color={token.colorPrimary} />
               </Col>
               <Col span={8}>
-                <GaugeCard title={t('dashboard.memory')} value={stats?.avgMemUsage ?? 0} color="#52c41a" />
+                <GaugeCard title={t('dashboard.memory')} value={stats?.avgMemUsage ?? 0} color={token.colorSuccess} />
               </Col>
               <Col span={8}>
-                <GaugeCard title={t('dashboard.disk')} value={stats?.avgDiskUsage ?? 0} color="#fa8c16" />
+                <GaugeCard title={t('dashboard.disk')} value={stats?.avgDiskUsage ?? 0} color={token.colorWarning} />
               </Col>
             </Row>
           </Card>
         </Col>
         <Col xs={24} lg={16}>
-          <Card size="small" data-testid="online-agents-card" title={<span style={{ color: token.colorText }}>{t('dashboard.onlineHostDetails')}</span>}
-            style={{ borderRadius: 12 }}>
+          <Card
+            size="small"
+            data-testid="online-agents-card"
+            title={<span style={{ color: token.colorText }}>{t('dashboard.onlineHostDetails')}</span>}
+          >
             <Table<AgentBriefVO>
               columns={agentColumns}
               dataSource={stats?.onlineAgentDetails || []}
@@ -243,21 +277,20 @@ const Dashboard: React.FC = () => {
         </Col>
       </Row>
 
-      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
-        <Col span={24}>
-          <Card size="small" data-testid="recent-tasks-card" title={<span style={{ color: token.colorText }}>{t('dashboard.recentTasks')}</span>}
-            style={{ borderRadius: 12 }}
-            extra={<Typography.Text style={{ fontSize: 12, color: token.colorTextTertiary }}>{t('dashboard.last10')}</Typography.Text>}>
-            <Table<Task>
-              columns={recentTaskColumns}
-              dataSource={stats?.recentTasks || []}
-              rowKey="id"
-              size="small"
-              pagination={false}
-            />
-          </Card>
-        </Col>
-      </Row>
+      <Card
+        size="small"
+        data-testid="recent-tasks-card"
+        title={<span style={{ color: token.colorText }}>{t('dashboard.recentTasks')}</span>}
+        extra={<Typography.Text style={{ fontSize: 12, color: token.colorTextSecondary }}>{t('dashboard.last10')}</Typography.Text>}
+      >
+        <Table<Task>
+          columns={recentTaskColumns}
+          dataSource={stats?.recentTasks || []}
+          rowKey="id"
+          size="small"
+          pagination={false}
+        />
+      </Card>
     </div>
   );
 };

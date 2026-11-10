@@ -618,7 +618,7 @@ const Host: React.FC = () => {
             <Tooltip title={t('host.agentOutdated', { current: record.agentVersion, latest: latestAgentVersion })}>
               <Space size={4}>
                 <Text type="warning">{record.agentVersion}</Text>
-                <WarningOutlined style={{ color: '#faad14' }} />
+                <WarningOutlined style={{ color: token.colorWarning }} />
               </Space>
             </Tooltip>
           );

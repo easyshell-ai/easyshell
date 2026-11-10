@@ -261,7 +261,7 @@ const SopManagement: React.FC = () => {
         />
       )}
 
-      <Card style={{ borderRadius: 12 }} styles={{ body: { padding: 0 } }}>
+      <Card styles={{ body: { padding: 0 } }}>
         <Table<AiSopTemplate>
           columns={columns}
           dataSource={data}

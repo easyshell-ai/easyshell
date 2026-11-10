@@ -57,30 +57,28 @@ const Login: React.FC = () => {
       <div style={{
         width: '100%',
         maxWidth: 400,
-        padding: isMobile ? '32px 24px' : '48px 40px',
+        padding: isMobile ? '28px 22px' : '36px 32px',
         borderRadius: 12,
         background: token.colorBgContainer,
         border: `1px solid ${token.colorBorderSecondary}`,
-        boxShadow: '0 1px 3px rgba(0, 0, 0, 0.08)',
       }}>
-        {/* Logo */}
-        <div style={{ textAlign: 'center', marginBottom: isMobile ? 32 : 40 }}>
+        <div style={{ textAlign: 'center', marginBottom: isMobile ? 24 : 28 }}>
           <div style={{
             display: 'inline-flex',
             alignItems: 'center',
             justifyContent: 'center',
-            width: isMobile ? 48 : 56,
-            height: isMobile ? 48 : 56,
-            borderRadius: 12,
+            width: 40,
+            height: 40,
+            borderRadius: 8,
             background: token.colorPrimary,
-            marginBottom: 16,
+            marginBottom: 14,
           }}>
-            <ThunderboltOutlined style={{ fontSize: isMobile ? 24 : 28, color: '#fff' }} />
+            <ThunderboltOutlined style={{ fontSize: 20, color: token.colorTextLightSolid }} />
           </div>
-          <Typography.Title level={isMobile ? 3 : 2} style={{
+          <Typography.Title level={3} style={{
             margin: 0,
-            fontWeight: 700,
-            letterSpacing: 2,
+            fontWeight: 600,
+            letterSpacing: '-0.02em',
             color: token.colorText,
           }}>
             EasyShell
@@ -113,10 +111,10 @@ const Login: React.FC = () => {
               block
               loading={loading}
               style={{
-                height: 48,
+                height: 40,
                 borderRadius: 8,
-                fontSize: 16,
-                fontWeight: 600,
+                fontSize: 14,
+                fontWeight: 500,
               }}
             >
               {t('login.submit')}

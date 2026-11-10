@@ -482,7 +482,7 @@ const WorkflowEditorPage: React.FC = () => {
 
   if (loadError) {
     return (
-      <div style={{ padding: 24 }}>
+      <div style={{ padding: 16 }}>
         {loadError === '403' ? (
           <Alert type="error" showIcon message={t('workflow.error.403')} description={t('workflow.error.403Desc')} />
         ) : loadError === '404' ? (
@@ -499,7 +499,7 @@ const WorkflowEditorPage: React.FC = () => {
 
   return (
     <div style={{ padding: 16 }}>
-      <Card size="small" style={{ borderRadius: 12, marginBottom: 12 }} styles={{ body: { padding: '12px 16px' } }}>
+      <Card size="small" style={{ marginBottom: 12 }} styles={{ body: { padding: '12px 16px' } }}>
         <Row gutter={[12, 12]} align="middle">
           <Col flex="auto">
             <Space size={12} wrap>
@@ -561,7 +561,7 @@ const WorkflowEditorPage: React.FC = () => {
           <NodePalette />
         </Col>
         <Col flex="auto">
-          <Card size="small" style={{ borderRadius: 12, height: '100%' }} styles={{ body: { padding: 0, height: 640 } }}>
+          <Card size="small" style={{ height: '100%' }} styles={{ body: { padding: 0, height: 640 } }}>
             <WorkflowCanvas
               nodes={editor.nodes}
               edges={editor.edges}

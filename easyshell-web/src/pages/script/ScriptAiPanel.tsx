@@ -325,7 +325,7 @@ const ScriptAiPanel: React.FC<ScriptAiPanelProps> = ({ scriptType, currentScript
           ) : (
             <div style={{
               height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              color: themeToken.colorTextQuaternary,
+              color: themeToken.colorTextTertiary,
             }}>
               {generating ? (
                 <Space direction="vertical" align="center">

@@ -168,7 +168,7 @@ const WorkflowApprovalsPage: React.FC = () => {
         </Button>
       }
     >
-      <Card style={{ borderRadius: 12 }} styles={{ body: { padding: 0 } }}>
+      <Card styles={{ body: { padding: 0 } }}>
         <Table<WorkflowApproval>
           columns={columns}
           dataSource={approvals}
