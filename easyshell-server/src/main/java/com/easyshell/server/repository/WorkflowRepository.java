@@ -35,7 +35,9 @@ public interface WorkflowRepository extends JpaRepository<Workflow, Long> {
      * （{@code idx_wf_category} 索引列）；两者为空表示不过滤。未知查询参数由 Controller
      * 直接不接收，这里是唯一允许出现的三个过滤维度。</p>
      */
-    @Query("select w from Workflow w where (:status is null or w.status = :status) " +
+    @Query("select w from Workflow w where (:status is null " +
+            "or (:status = 'active' and w.status <> 'archived') " +
+            "or w.status = :status) " +
             "and (:keyword is null or lower(w.name) like lower(concat('%', :keyword, '%'))) " +
             "and (:category is null or w.category = :category) " +
             "order by w.createdAt desc")
@@ -47,7 +49,9 @@ public interface WorkflowRepository extends JpaRepository<Workflow, Long> {
      * 与 {@code WorkflowAccess.requireWorkflowOwner} 的读侧对应物）。
      */
     @Query("select w from Workflow w where (w.visibility = 'public' or w.createdBy = :userId) " +
-            "and (:status is null or w.status = :status) " +
+            "and (:status is null " +
+            "or (:status = 'active' and w.status <> 'archived') " +
+            "or w.status = :status) " +
             "and (:keyword is null or lower(w.name) like lower(concat('%', :keyword, '%'))) " +
             "and (:category is null or w.category = :category) " +
             "order by w.createdAt desc")
