@@ -1548,6 +1548,14 @@
         "version": "当前版本",
         "runs": "运行 / 成功",
         "lastRunAt": "最近运行"
+      },
+      "template": "初始模板",
+      "templateNone": "空白（仅开始/结束）",
+      "templateHint": "新建后会保存一份初始草稿，编辑器打开即有开始/结束契约。",
+      "seedFailed": "初始草稿保存失败，可进入编辑器后手动保存。",
+      "statusFilter": {
+        "label": "工作流状态",
+        "active": "使用中"
       }
     },
     "status": {
@@ -1563,7 +1571,9 @@
       "title": "节点调色板",
       "add": "添加",
       "handles": "{{in}} 入 {{out}} 出",
-      "hint": "拖到画布，或聚焦后按 Enter 添加"
+      "hint": "拖到画布，或聚焦后按 Enter 添加",
+      "search": "搜索节点",
+      "noResult": "没有匹配的节点"
     },
     "node": {
       "type": {
@@ -1571,14 +1581,94 @@
         "condition": "条件分支",
         "notify": "通知",
         "approval": "人工审批",
-        "wait": "等待"
+        "wait": "等待",
+        "start": "开始",
+        "transform": "数据映射",
+        "ai-analyze": "AI 分析",
+        "end": "结束"
       },
       "desc": {
         "script-exec": "在目标主机上执行脚本，落到真实 Task",
         "condition": "表达式求值，true / false 双分支",
         "notify": "通过 Webhook / 邮件 / 机器人推送消息",
         "approval": "挂起运行，等待管理员审批",
-        "wait": "按秒等待后继续"
+        "wait": "按秒等待后继续",
+        "start": "声明工作流入参，运行从这里开始",
+        "transform": "把上游输出整理成命名字段，供下游引用",
+        "ai-analyze": "读取上游输出并给出结论文本，只分析不执行",
+        "end": "汇总最终输出，运行结果取这里的映射"
+      },
+      "category": {
+        "entry": "入口",
+        "execute": "执行",
+        "flow": "流程",
+        "human": "人工"
+      },
+      "fixed": "固定",
+      "docs": {
+        "start": {
+          "purpose": "工作流入口，声明运行入参。",
+          "when": "每条工作流都必须有且只有一个开始节点。",
+          "input": "无（开始节点没有入边）。",
+          "output": "definition.variables 的每个入参：run.input.<name> 或 nodes.start.output.<name>。",
+          "example": "variables:\n  targets: { type: json, required: true }\n  mount:   { type: string, default: \"/\" }"
+        },
+        "end": {
+          "purpose": "汇总工作流的最终输出。",
+          "when": "需要稳定的运行结果时添加；最多一个，且不能有出边。",
+          "input": "任意上游节点的输出。",
+          "output": "config.outputs 的 {name, value} 映射，即 workflow_run.output。",
+          "example": "outputs:\n  - { name: summary, value: \"${nodes.report.output.text}\" }"
+        },
+        "script-exec": {
+          "purpose": "在目标主机上执行脚本，落到真实 Task。",
+          "when": "需要主机操作、巡检或变更时。",
+          "input": "上游输出可通过 parameters 的 ${path} 注入脚本槽位。",
+          "output": "脚本 stdout（文本或 JSON，无固定 schema）。",
+          "example": "script: df -h {{MOUNT}}\nparameters:\n  MOUNT: ${run.input.mount}"
+        },
+        "transform": {
+          "purpose": "把上游输出映射成命名字段。",
+          "when": "下游需要稳定字段名，或需要拼接摘要时。",
+          "input": "上游节点的输出。",
+          "output": "config.mappings 的 {name, value} 对象。",
+          "example": "mappings:\n  - { name: usage, value: \"${nodes.check.output.usage}\" }"
+        },
+        "condition": {
+          "purpose": "按表达式结果分流。",
+          "when": "需要 IF / ELSE 两条处理路径时。",
+          "input": "上游节点的输出。",
+          "output": "{ result: boolean }；true 走 IF 出边，false 走 ELSE 出边。",
+          "example": "expression: nodes.check.output.count > 0"
+        },
+        "ai-analyze": {
+          "purpose": "读取上游输出并产出结论文本。",
+          "when": "需要总结、判断或生成风险结论，但不执行命令时。",
+          "input": "input 模板，按 maxInputChars 截断。",
+          "output": "{ text, model, truncated }。",
+          "example": "instructions: 找出超过阈值的挂载点并给出结论\ninput: ${nodes.check.output}\nmaxInputChars: 8000"
+        },
+        "approval": {
+          "purpose": "挂起运行，等待管理员审批。",
+          "when": "高风险操作或需要人工确认时。",
+          "input": "上游输出可放进标题/详情模板。",
+          "output": "{ decision, comment, decidedBy }。",
+          "example": "title: 确认重启 {{SERVICE}}\ntimeoutSec: 3600\nonTimeout: reject"
+        },
+        "notify": {
+          "purpose": "把运行结果推送到已配置渠道。",
+          "when": "需要通知或留痕时。",
+          "input": "上游输出可放进消息模板。",
+          "output": "{ delivered, failed, skipped }。",
+          "example": "channels: [telegram]\nmessageTemplate: \"磁盘告警：${nodes.check.output.usage}%\""
+        },
+        "wait": {
+          "purpose": "按秒等待后继续。",
+          "when": "需要冷却、延迟或错峰时。",
+          "input": "上游输出（透传）。",
+          "output": "{ waitedMs }。",
+          "example": "durationSec: 60"
+        }
       }
     },
     "nodeStatus": {
@@ -1599,14 +1689,26 @@
         "SELF_CONNECTION": "不能连接到节点自身",
         "DUPLICATE_EDGE": "这条连线已存在",
         "CYCLE": "不允许成环（工作流必须是有向无环图）",
-        "ENDPOINT_MISSING": "连线端点不存在"
+        "ENDPOINT_MISSING": "连线端点不存在",
+        "START_HAS_INPUT": "开始节点不能有入边",
+        "END_HAS_OUTPUT": "结束节点不能有出边"
       },
       "deleteTitle": "确认删除",
       "deleteConfirm": "将删除 {{nodes}} 个节点与 {{edges}} 条连线，此操作可用 Ctrl+Z 撤销。",
       "deleteNodes": "涉及节点",
       "deleted": "已删除",
       "copied": "已复制 {{count}} 个节点",
-      "autoLayoutDone": "已按分层重新布局"
+      "autoLayoutDone": "已按分层重新布局",
+      "fixedNodeOnly": "开始/结束节点由系统固定维护，不能拖入",
+      "empty": {
+        "title": "4 步搭出第一条工作流",
+        "step1": "在「开始」节点声明入参（例如 targets / threshold）",
+        "step2": "从左侧拖入执行节点并用连线串起来",
+        "step3": "在字段旁的「插入变量」选择上游输出",
+        "step4": "在「结束」节点声明最终输出",
+        "useTemplate": "从模板开始",
+        "dragHint": "也可以直接拖拽左侧节点到画布"
+      }
     },
     "form": {
       "title": "节点配置",
@@ -1695,7 +1797,12 @@
       "riskPolicy": "风险策略",
       "riskPolicyHint": "block = MEDIUM 一律转审批 / allow_medium = 允许 MEDIUM / strict = 更严",
       "nodeShape": "尺寸 {{width}}×{{height}}",
-      "handles": "{{in}} 入 {{out}} 出"
+      "handles": "{{in}} 入 {{out}} 出",
+      "agentIdsPlaceholder": "选择主机",
+      "clusterIdsPlaceholder": "选择集群",
+      "tagIdsPlaceholder": "选择标签",
+      "conditionBranchHint": "IF / ELSE 由出边把手决定",
+      "conditionBranchDesc": "条件节点的两条出边已经按结果门控：true 走 IF，false 走 ELSE，不需要在边上重复写表达式。"
     },
     "edge": {
       "title": "连线：{{from}} → {{to}}",
@@ -1703,7 +1810,10 @@
       "conditionHint": "仅 condition 节点的 true 分支可带条件",
       "dualHandleHint": "condition 节点：true 分支可带条件，false 分支必须留空",
       "falseBranchLocked": "false 分支的连线不允许带条件（门控由把手承担）",
-      "onUpstreamFailure": "上游失败时"
+      "onUpstreamFailure": "上游失败时",
+      "conditionGatedTitle": "IF / ELSE 由出边把手门控",
+      "conditionGatedDesc": "条件节点的分支结果由 sourceHandle 决定：true 走 IF，false 走 ELSE。这里不再编辑表达式。",
+      "sourceBranch": "当前分支"
     },
     "json": {
       "title": "定义 JSON（只读）",
@@ -1752,7 +1862,8 @@
       "required": "必填",
       "validationFailed": "表单填写有误，请检查后重试",
       "idempotencyKey": "幂等键 (Idempotency-Key)",
-      "idempotencyHint": "同一用户同一 key 重复触发会返回首个 run；参数不同则 409"
+      "idempotencyHint": "同一用户同一 key 重复触发会返回首个 run；参数不同则 409",
+      "invalidJson": "请输入合法的 JSON（例如 [\"agent-1\"]）"
     },
     "conflict": {
       "title": "版本冲突（409）",
@@ -1809,6 +1920,29 @@
         "manual": "手动",
         "scheduled": "定时",
         "replay": "重放"
+      },
+      "testRunFailed": "单节点试运行失败",
+      "filter": {
+        "label": "节点过滤",
+        "all": "全部节点",
+        "failed": "仅失败",
+        "empty": "没有符合条件的节点"
+      },
+      "inspector": {
+        "title": "节点运行详情",
+        "input": "输入",
+        "output": "输出",
+        "warning": "警告",
+        "testRun": "单节点试运行",
+        "testRunHint": "按当前版本与入参重放该节点，不会继续下游。",
+        "testResult": "试运行结果",
+        "testStatus": "状态",
+        "riskLevel": "风险等级",
+        "riskPolicy": "风险策略",
+        "conditionResult": "条件结果",
+        "targetCount": "目标主机数",
+        "renderedScript": "渲染后脚本",
+        "warnings": "警告"
       }
     },
     "approval": {
@@ -1850,6 +1984,180 @@
       "run404": "运行不存在",
       "backToList": "返回工作流列表",
       "generic": "加载失败"
+    },
+    "inspector": {
+      "title": "节点检查器",
+      "tabs": {
+        "config": "配置",
+        "data": "数据",
+        "docs": "说明"
+      },
+      "saved": "节点已保存",
+      "deleteDisabled": "开始/结束节点不可删除",
+      "emptyTitle": "画布概览",
+      "emptyDesc": "选中一个节点查看配置、上游变量与说明。点击节点或按 Enter 打开检查器。",
+      "docs": {
+        "when": "何时使用",
+        "input": "输入",
+        "output": "输出",
+        "example": "最小示例",
+        "security": {
+          "ai-analyze": "AI 只分析文本，绝不执行命令或派发任务。",
+          "approval": "审批是唯一的人工授权路径；超时按节点配置处理。",
+          "script-exec": "脚本仍然经过统一风险门禁；非 LOW 脚本需要审批祖先。"
+        }
+      },
+      "data": {
+        "upstream": "上游可用变量",
+        "copy": "复制",
+        "copied": "已复制变量引用",
+        "outputPath": "本节点输出路径",
+        "opaqueOutput": "该节点没有固定字段 schema，按整体 JSON 输出引用。",
+        "contract": "输入契约"
+      }
+    },
+    "variable": {
+      "insert": "插入变量",
+      "search": "搜索变量",
+      "empty": "没有可用的上游变量",
+      "emptyHint": "先从开始节点声明入参，或把节点连接到当前节点的上游。",
+      "noMatch": "没有匹配的变量",
+      "opaque": "整体输出",
+      "required": "必填",
+      "group": {
+        "input": "工作流入参",
+        "start": "开始节点",
+        "node": "上游节点",
+        "alias": "输出别名"
+      },
+      "type": {
+        "string": "文本",
+        "number": "数字",
+        "boolean": "布尔",
+        "json": "JSON"
+      }
+    },
+    "start": {
+      "addVariable": "添加入参",
+      "empty": "还没有入参。运行触发时会按这里的声明渲染表单。",
+      "name": "变量名",
+      "namePlaceholder": "例如 targets",
+      "type": "类型",
+      "required": "必填",
+      "default": "默认值",
+      "defaultPlaceholder": "可选",
+      "description": "说明",
+      "descriptionPlaceholder": "这个入参控制什么？",
+      "invalidName": "变量名必须匹配 ^[a-z][a-z0-9_]*$ 且不能重复："
+    },
+    "end": {
+      "hint": "结束节点的输出就是 workflow_run.output；纯 ${path} 会保留原类型。",
+      "empty": "还没有输出映射。",
+      "addOutput": "添加输出",
+      "name": "输出名",
+      "namePlaceholder": "例如 summary",
+      "value": "取值"
+    },
+    "transform": {
+      "hint": "映射结果为 { name: value }；值支持字面量与 ${path}。",
+      "empty": "还没有映射。",
+      "addMapping": "添加映射",
+      "name": "字段名",
+      "namePlaceholder": "例如 usage",
+      "value": "取值"
+    },
+    "ai": {
+      "warning": "AI 分析节点只读取上游输出并产出结论文本，不能执行命令、不能派发任务。",
+      "instructions": "分析指令",
+      "instructionsHint": "告诉模型要分析什么、输出什么结论。",
+      "instructionsRequired": "请输入分析指令",
+      "input": "输入模板",
+      "inputHint": "用 ${path} 引用上游输出；过长的输入会按最大字符数截断。",
+      "maxInputChars": "最大输入字符",
+      "maxInputCharsHint": "1000..32000；默认 8000。"
+    },
+    "entryExit": {
+      "bannerTitle": "这个工作流缺少开始/结束节点",
+      "bannerDesc": "旧工作流可以一键补全：系统会插入开始/结束节点，并把当前入口/汇点连到它们。",
+      "action": "补全开始/结束节点",
+      "done": "已补全开始/结束节点"
+    },
+    "validate": {
+      "action": "校验",
+      "title": "校验结果",
+      "ok": "校验通过，可以发布"
+    },
+    "help": {
+      "action": "帮助",
+      "title": "工作流帮助",
+      "intro": "四步上手，再看变量语法与安全边界。",
+      "steps": {
+        "title": "四步入门",
+        "declare": {
+          "title": "声明入参",
+          "desc": "在开始节点写清楚运行需要什么：名称、类型、是否必填、默认值。"
+        },
+        "connect": {
+          "title": "拖节点连线",
+          "desc": "从左侧调色板拖入执行节点，按业务顺序连线；条件节点用 IF/ELSE 两个出口。"
+        },
+        "variables": {
+          "title": "插入变量",
+          "desc": "在字段旁点「插入变量」，选择上游输出；模板字段插入 ${path}，表达式插入裸路径。"
+        },
+        "outputs": {
+          "title": "用结束节点声明输出",
+          "desc": "在结束节点写 {name, value}，这里就是 workflow_run.output。"
+        }
+      },
+      "syntax": {
+        "title": "变量语法",
+        "form": "语法",
+        "example": "示例",
+        "where": "用在哪",
+        "template": "模板插值",
+        "expression": "表达式",
+        "script": "脚本槽位",
+        "templateWhere": "脚本参数、通知/审批模板、transform、AI 输入、结束输出",
+        "expressionWhere": "condition 节点与旧边条件",
+        "scriptWhere": "脚本内容中的 {{NAME}}，值来自 parameters"
+      },
+      "nodes": {
+        "title": "9 类节点速查"
+      },
+      "example": {
+        "title": "完整示例",
+        "desc": "start → script → transform → condition → notify → end"
+      },
+      "security": {
+        "title": "安全边界",
+        "ai": "AI 分析只产出结论文本，永不执行命令。",
+        "approval": "审批是唯一的人工授权路径；高风险脚本必须有审批祖先。",
+        "script": "脚本仍经过统一风险门禁，不会因为放在工作流里而绕过。"
+      }
+    },
+    "template": {
+      "action": "模板",
+      "title": "模板库",
+      "intro": "模板会替换当前画布（先确认），保存后即可继续调整。",
+      "badge": "示例",
+      "apply": "应用模板",
+      "applied": "已应用模板：{{name}}",
+      "replaceTitle": "替换当前画布？",
+      "replaceBody": "当前画布已有节点，应用模板会替换整张图（可用撤销恢复）。",
+      "replaceConfirm": "替换并应用",
+      "disk": {
+        "name": "磁盘巡检与告警",
+        "desc": "开始 → 采集磁盘用量 → 映射使用率 → 超阈值通知 → 结束。"
+      },
+      "restart": {
+        "name": "服务重启审批",
+        "desc": "审批通过后重启服务，并把结果通知出去。"
+      },
+      "health": {
+        "name": "批量健康检查",
+        "desc": "对目标主机批量探活，任一输出即通知，否则短暂等待。"
+      }
     }
   }
 }

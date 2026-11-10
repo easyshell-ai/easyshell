@@ -5,8 +5,8 @@ import i18next from 'i18next';
 import { initReactI18next } from 'react-i18next';
 import zhCN from '../../../i18n/locales/zh-CN.json';
 import enUS from '../../../i18n/locales/en-US.json';
-import { TriggerModal } from './modals';
-import type { WorkflowDefinition } from '../types';
+import { TriggerModal, EdgeEditModal } from './modals';
+import type { WorkflowDefinition, WorkflowNode } from '../types';
 
 /**
  * 触发弹窗的回归闸门（真机 E2E 缺陷：无入参变量的工作流在 UI 上点"触发"毫无反应）：
@@ -223,5 +223,57 @@ describe('TriggerModal', () => {
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(onSubmit.mock.calls[0][0]).toEqual({ target: 'prod-cluster' });
+  });
+});
+
+/* ── EdgeEditModal：condition 边由 sourceHandle 门控 ─────────────── */
+
+const edgeNode = (key: string, type: WorkflowNode['type']): WorkflowNode => ({
+  key,
+  type,
+  name: key,
+  position: { x: 0, y: 0 },
+  config: {},
+});
+
+describe('EdgeEditModal', () => {
+  it('condition 来源：隐藏表达式输入，展示 IF/ELSE 分支，并在保存时清掉旧 condition', () => {
+    const onSave = vi.fn();
+    render(
+      <EdgeEditModal
+        open
+        edge={{ id: 'cond:false->end', from: 'cond', to: 'end', sourceHandle: 'false', condition: 'legacy expr' }}
+        nodes={[edgeNode('cond', 'condition'), edgeNode('end', 'end')]}
+        onCancel={() => {}}
+        onSave={onSave}
+      />
+    );
+
+    expect(screen.getByText('IF / ELSE is gated by the outgoing handle')).toBeTruthy();
+    expect(screen.getByText('ELSE')).toBeTruthy();
+    expect(screen.getByText('false')).toBeTruthy();
+    expect(screen.queryByLabelText('Condition (empty = always true)')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(onSave).toHaveBeenCalledWith('cond:false->end', { condition: undefined, onUpstreamFailure: 'skip' });
+  });
+
+  it('普通来源：继续保留 condition 表达式编辑', async () => {
+    const onSave = vi.fn();
+    render(
+      <EdgeEditModal
+        open
+        edge={{ id: 'n1:out->end', from: 'n1', to: 'end', sourceHandle: 'out' }}
+        nodes={[edgeNode('n1', 'script-exec'), edgeNode('end', 'end')]}
+        onCancel={() => {}}
+        onSave={onSave}
+      />
+    );
+
+    const input = screen.getByLabelText('Condition (empty = always true)') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'nodes.n1.output.count > 0' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    expect(onSave.mock.calls[0][1].condition).toBe('nodes.n1.output.count > 0');
   });
 });

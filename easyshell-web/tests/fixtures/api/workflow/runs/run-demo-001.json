@@ -13,12 +13,13 @@
         "env": "prod"
       },
       "output": {
-        "checked": 12
+        "summary": "环境 prod 磁盘已处理",
+        "approved": "approved"
       },
       "errorMessage": null,
       "variables": {
         "env": "prod",
-        "checked": 12
+        "threshold": 80
       },
       "variablesTruncated": false,
       "currentNodes": null,
@@ -31,6 +32,21 @@
     "nodeRuns": [
       {
         "id": "nr-1",
+        "runId": "run-demo-001",
+        "nodeKey": "start",
+        "nodeType": "start",
+        "attempt": 1,
+        "status": "succeeded",
+        "taskId": null,
+        "input": null,
+        "output": null,
+        "errorMessage": null,
+        "warningMessage": null,
+        "createdAt": "2026-02-10T09:30:01",
+        "finishedAt": "2026-02-10T09:30:02"
+      },
+      {
+        "id": "nr-2",
         "runId": "run-demo-001",
         "nodeKey": "n1",
         "nodeType": "script-exec",
@@ -45,11 +61,11 @@
         },
         "errorMessage": null,
         "warningMessage": null,
-        "createdAt": "2026-02-10T09:30:01",
-        "finishedAt": "2026-02-10T09:30:20"
+        "createdAt": "2026-02-10T09:30:02",
+        "finishedAt": "2026-02-10T09:30:03"
       },
       {
-        "id": "nr-2",
+        "id": "nr-3",
         "runId": "run-demo-001",
         "nodeKey": "n2",
         "nodeType": "condition",
@@ -62,30 +78,13 @@
         },
         "errorMessage": null,
         "warningMessage": null,
-        "createdAt": "2026-02-10T09:30:20",
-        "finishedAt": "2026-02-10T09:30:21"
-      },
-      {
-        "id": "nr-3",
-        "runId": "run-demo-001",
-        "nodeKey": "n3",
-        "nodeType": "script-exec",
-        "attempt": 1,
-        "status": "succeeded",
-        "taskId": "task-002",
-        "input": null,
-        "output": {
-          "freed": "2.1G"
-        },
-        "errorMessage": null,
-        "warningMessage": null,
-        "createdAt": "2026-02-10T09:30:21",
-        "finishedAt": "2026-02-10T09:30:55"
+        "createdAt": "2026-02-10T09:30:03",
+        "finishedAt": "2026-02-10T09:30:04"
       },
       {
         "id": "nr-4",
         "runId": "run-demo-001",
-        "nodeKey": "n4",
+        "nodeKey": "n3",
         "nodeType": "approval",
         "attempt": 1,
         "status": "succeeded",
@@ -96,40 +95,68 @@
         },
         "errorMessage": null,
         "warningMessage": null,
-        "createdAt": "2026-02-10T09:30:55",
-        "finishedAt": "2026-02-10T09:31:00"
+        "createdAt": "2026-02-10T09:30:04",
+        "finishedAt": "2026-02-10T09:30:05"
       },
       {
         "id": "nr-5",
         "runId": "run-demo-001",
-        "nodeKey": "n5",
+        "nodeKey": "n4",
         "nodeType": "notify",
         "attempt": 1,
         "status": "succeeded",
         "taskId": null,
         "input": null,
-        "output": {
-          "sent": true
-        },
+        "output": null,
         "errorMessage": null,
         "warningMessage": null,
-        "createdAt": "2026-02-10T09:31:00",
-        "finishedAt": "2026-02-10T09:31:05"
+        "createdAt": "2026-02-10T09:30:05",
+        "finishedAt": "2026-02-10T09:30:06"
       },
       {
         "id": "nr-6",
         "runId": "run-demo-001",
-        "nodeKey": "n6",
+        "nodeKey": "n5",
         "nodeType": "wait",
         "attempt": 1,
-        "status": "skipped",
+        "status": "succeeded",
         "taskId": null,
         "input": null,
         "output": null,
         "errorMessage": null,
         "warningMessage": null,
-        "createdAt": "2026-02-10T09:31:05",
-        "finishedAt": "2026-02-10T09:31:06"
+        "createdAt": "2026-02-10T09:30:06",
+        "finishedAt": "2026-02-10T09:30:07"
+      },
+      {
+        "id": "nr-7",
+        "runId": "run-demo-001",
+        "nodeKey": "n6",
+        "nodeType": "transform",
+        "attempt": 1,
+        "status": "succeeded",
+        "taskId": null,
+        "input": null,
+        "output": null,
+        "errorMessage": null,
+        "warningMessage": null,
+        "createdAt": "2026-02-10T09:30:07",
+        "finishedAt": "2026-02-10T09:30:08"
+      },
+      {
+        "id": "nr-8",
+        "runId": "run-demo-001",
+        "nodeKey": "end",
+        "nodeType": "end",
+        "attempt": 1,
+        "status": "succeeded",
+        "taskId": null,
+        "input": null,
+        "output": null,
+        "errorMessage": null,
+        "warningMessage": null,
+        "createdAt": "2026-02-10T09:30:08",
+        "finishedAt": "2026-02-10T09:30:09"
       }
     ]
   }

@@ -122,6 +122,27 @@ export function definitionsEqual(a: WorkflowDefinition, b: WorkflowDefinition): 
   return JSON.stringify(sortKeysDeep(a)) === JSON.stringify(sortKeysDeep(b));
 }
 
+/**
+ * 配置/入参变更后刷新画布节点的 data 摘要（不重建节点，保留 selected/position/测量结果）。
+ * 没有这一步，Start 的入参数量、Transform 的映射数、End 的输出数会停留在旧值。
+ */
+function withRefreshedNodeData(
+  nodes: WorkflowFlowNode[],
+  definition: WorkflowDefinition
+): WorkflowFlowNode[] {
+  const dataById = new Map(definitionToFlow(definition).nodes.map((node) => [node.id, node.data]));
+  let changed = false;
+  const next = nodes.map((node) => {
+    const fresh = dataById.get(node.id);
+    if (!fresh) return node;
+    const merged = { ...node.data, ...fresh, status: node.data.status };
+    if (JSON.stringify(merged) === JSON.stringify(node.data)) return node;
+    changed = true;
+    return { ...node, data: merged };
+  });
+  return changed ? next : nodes;
+}
+
 /** draft 对象可能每次 render 都新建；用 id + baseVersion 识别"这是另一份服务端草稿" */
 function draftKeyOf(workflowId: number, draft: WorkflowVersionDetail): string {
   return `${workflowId}:${draft.id}:${draft.baseVersion}`;
@@ -198,9 +219,10 @@ export function useWorkflowEditor(options: UseWorkflowEditorOptions): UseWorkflo
       nodes: Object.values(next.configs),
       edges: [],
     });
-    snapshotRef.current = next;
+    const applied = { ...next, nodes: withRefreshedNodeData(next.nodes, nextDefinition) };
+    snapshotRef.current = applied;
     definitionRef.current = nextDefinition;
-    setSnapshot(next);
+    setSnapshot(applied);
     setDefinition(nextDefinition);
     markDirty();
     syncHistoryFlags();

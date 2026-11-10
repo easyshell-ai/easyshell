@@ -13,6 +13,8 @@ import {
   type TargetsMode,
   type TargetsValue,
 } from './nodeConfig';
+import type { WorkflowVariableGroup } from '../variables';
+import { VariableInput } from './inspector/VariablePicker';
 
 /**
  * 节点配置表单的复合控件：targets 寻址 + parameters 键值对 + notify 渠道多选。
@@ -26,9 +28,26 @@ const { Text } = Typography;
 
 /* ── targets 寻址表单 ───────────────────────────────────────────── */
 
+export interface TargetOption {
+  value: string;
+  label: string;
+}
+
+export interface TargetOptions {
+  hosts?: TargetOption[];
+  clusters?: TargetOption[];
+  tags?: TargetOption[];
+  /** 某个列表 API 失败时，该字段回落到自由输入（不阻断编辑） */
+  fallbackHosts?: boolean;
+  fallbackClusters?: boolean;
+  fallbackTags?: boolean;
+}
+
 export interface TargetsEditorProps {
   value?: TargetsValue;
   onChange?: (next: TargetsValue) => void;
+  options?: TargetOptions;
+  groups?: WorkflowVariableGroup[];
 }
 
 /**
@@ -36,11 +55,18 @@ export interface TargetsEditorProps {
  *
  * 只渲染当前 mode 的字段（`NodeFormPanel` 提交时也只写那一个键），
  * 这样 definition JSON 里不会残留"上次选过 cluster 留下的 clusterIds"。
+ *
+ * 真实下拉由 getHostList / getClusterList / getTagList 提供；接口失败或未启用
+ * 远程选项时退回原有逗号分隔输入，保证离线/测试环境仍能编辑。
  */
-export const TargetsEditor: React.FC<TargetsEditorProps> = ({ value, onChange }) => {
+export const TargetsEditor: React.FC<TargetsEditorProps> = ({ value, onChange, options, groups }) => {
   const { t } = useTranslation();
   const current = value || EMPTY_TARGETS;
   const patch = (next: Partial<TargetsValue>) => onChange?.({ ...current, ...next });
+
+  const hostOptions = options?.hosts;
+  const clusterOptions = options?.clusters;
+  const tagOptions = options?.tags;
 
   return (
     <Space direction="vertical" size={8} style={{ width: '100%' }}>
@@ -54,37 +80,78 @@ export const TargetsEditor: React.FC<TargetsEditorProps> = ({ value, onChange })
         style={{ width: '100%' }}
         aria-label={t('workflow.form.targets')}
       />
-      {current.mode === 'explicit' && (
-        <Input
-          value={joinIdList(current.agentIds)}
-          onChange={(event) => patch({ agentIds: parseIdList(event.target.value) })}
-          placeholder="agent-1, agent-2"
-          aria-label={t('workflow.form.agentIds')}
-        />
-      )}
-      {current.mode === 'cluster' && (
-        <Input
-          value={joinNumberList(current.clusterIds)}
-          onChange={(event) => patch({ clusterIds: parseNumberList(event.target.value) })}
-          placeholder="1, 2"
-          aria-label={t('workflow.form.clusterIds')}
-        />
-      )}
-      {current.mode === 'tag' && (
-        <Input
-          value={joinNumberList(current.tagIds)}
-          onChange={(event) => patch({ tagIds: parseNumberList(event.target.value) })}
-          placeholder="3, 7"
-          aria-label={t('workflow.form.tagIds')}
-        />
-      )}
+      {current.mode === 'explicit' &&
+        (hostOptions && !options?.fallbackHosts ? (
+          <Select
+            mode="multiple"
+            value={current.agentIds}
+            onChange={(agentIds: string[]) => patch({ agentIds })}
+            options={hostOptions}
+            placeholder={t('workflow.form.agentIdsPlaceholder')}
+            style={{ width: '100%' }}
+            aria-label={t('workflow.form.agentIds')}
+            showSearch
+            optionFilterProp="label"
+          />
+        ) : (
+          <Input
+            value={joinIdList(current.agentIds)}
+            onChange={(event) => patch({ agentIds: parseIdList(event.target.value) })}
+            placeholder="agent-1, agent-2"
+            aria-label={t('workflow.form.agentIds')}
+          />
+        ))}
+      {current.mode === 'cluster' &&
+        (clusterOptions && !options?.fallbackClusters ? (
+          <Select
+            mode="multiple"
+            value={current.clusterIds.map(String)}
+            onChange={(ids: string[]) => patch({ clusterIds: ids.map(Number).filter(Number.isFinite) })}
+            options={clusterOptions}
+            placeholder={t('workflow.form.clusterIdsPlaceholder')}
+            style={{ width: '100%' }}
+            aria-label={t('workflow.form.clusterIds')}
+            showSearch
+            optionFilterProp="label"
+          />
+        ) : (
+          <Input
+            value={joinNumberList(current.clusterIds)}
+            onChange={(event) => patch({ clusterIds: parseNumberList(event.target.value) })}
+            placeholder="1, 2"
+            aria-label={t('workflow.form.clusterIds')}
+          />
+        ))}
+      {current.mode === 'tag' &&
+        (tagOptions && !options?.fallbackTags ? (
+          <Select
+            mode="multiple"
+            value={current.tagIds.map(String)}
+            onChange={(ids: string[]) => patch({ tagIds: ids.map(Number).filter(Number.isFinite) })}
+            options={tagOptions}
+            placeholder={t('workflow.form.tagIdsPlaceholder')}
+            style={{ width: '100%' }}
+            aria-label={t('workflow.form.tagIds')}
+            showSearch
+            optionFilterProp="label"
+          />
+        ) : (
+          <Input
+            value={joinNumberList(current.tagIds)}
+            onChange={(event) => patch({ tagIds: parseNumberList(event.target.value) })}
+            placeholder="3, 7"
+            aria-label={t('workflow.form.tagIds')}
+          />
+        ))}
       {current.mode === 'variable' && (
-        <Input
+        <VariableInput
           value={current.variableRef}
-          onChange={(event) => patch({ variableRef: event.target.value })}
+          onChange={(variableRef) => patch({ variableRef })}
+          groups={groups || []}
+          mode="path"
           placeholder="nodes.pick.output.hosts"
-          style={{ fontFamily: 'monospace' }}
-          aria-label={t('workflow.form.variableRef')}
+          monospace
+          ariaLabel={t('workflow.form.variableRef')}
         />
       )}
     </Space>
@@ -98,6 +165,8 @@ export interface ParametersEditorProps {
   onChange?: (next: Record<string, string>) => void;
   /** 整组的可访问名（Form.Item 没有 name 时 antd 不会把 label 绑到控件上） */
   ariaLabel?: string;
+  /** 上游可插入变量（值字段使用 VariablePicker） */
+  groups?: WorkflowVariableGroup[];
 }
 
 /**
@@ -107,7 +176,7 @@ export interface ParametersEditorProps {
  * 落进 definition 前由 `NodeFormPanel` 统一滤掉（服务端把空键当噪声）。
  * 已有空键行时不允许再添加—— Record 装不下两个空键，加了也会被 quietly 吞掉一行。
  */
-export const ParametersEditor: React.FC<ParametersEditorProps> = ({ value, onChange, ariaLabel }) => {
+export const ParametersEditor: React.FC<ParametersEditorProps> = ({ value, onChange, ariaLabel, groups = [] }) => {
   const { t } = useTranslation();
   const entries = Object.entries(value || {});
   const hasUnnamed = entries.some(([key]) => !key.trim());
@@ -134,17 +203,21 @@ export const ParametersEditor: React.FC<ParametersEditorProps> = ({ value, onCha
             style={{ width: 120, fontFamily: 'monospace' }}
             aria-label={t('workflow.form.parameterKey')}
           />
-          <Input
-            value={item}
-            onChange={(event) => {
-              const next = [...entries];
-              next[index] = [key, event.target.value];
-              emit(next);
-            }}
-            placeholder="${nodes.n1.output.x}"
-            style={{ flex: 1, fontFamily: 'monospace', fontSize: 12 }}
-            aria-label={t('workflow.form.parameterValue')}
-          />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <VariableInput
+              value={item}
+              onChange={(next) => {
+                const entries_ = [...entries];
+                entries_[index] = [key, next];
+                emit(entries_);
+              }}
+              groups={groups}
+              mode="template"
+              ariaLabel={t('workflow.form.parameterValue')}
+              placeholder="${nodes.n1.output.x}"
+              monospace
+            />
+          </div>
           <Button
             danger
             icon={<DeleteOutlined />}

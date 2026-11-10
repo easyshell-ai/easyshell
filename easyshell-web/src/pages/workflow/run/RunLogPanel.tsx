@@ -58,6 +58,13 @@ const RunLogPanel: React.FC<RunLogPanelProps> = ({ runId, active }) => {
   }, [runId]);
 
   useEffect(() => {
+    if (!active) {
+      // 终态运行不再建连：服务端会立即关闭，浏览器控制台留下无意义的 WS 错误。
+      wsRef.current?.close();
+      wsRef.current = null;
+      setStatus('idle');
+      return;
+    }
     connect();
     return () => {
       wsRef.current?.close();
