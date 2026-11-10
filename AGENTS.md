@@ -90,3 +90,23 @@ docker logs easyshell-server | grep 'initial admin password'   # 首次启动的
   `WORKFLOW_RUN_TRIGGER` / `WORKFLOW_RUN_CANCEL`）必须 `logSync`：写失败即使业务失败。
 - `workflow_run` / `workflow_node_run` / `workflow_approval` / `audit_log` **永久保留，
   禁止未来加自动清理**。
+
+## 6. 工作流 v2 节点与边契约（2026-11 重构）
+
+- **condition 的 IF/ELSE 是真实门控**：边上的 `sourceHandle`（`true` / `false`）决定走哪条；
+  引擎读取上游 condition 节点的 `output.result`，不匹配的边不可通行。`edge.condition`
+  只作为旧定义的兼容门控，新 UI 不再要求用户把表达式写两遍。
+- **start / end 是真实图节点**：最多各一个；start 不得有入边，end 不得有出边。
+  新工作流自动插入；旧工作流可以没有，编辑器用 WARNING/提示引导补全。
+- **节点类型权威列表**：`start` / `script-exec` / `transform` / `condition` /
+  `ai-analyze` / `approval` / `notify` / `wait` / `end`。新增类型必须同时更新：
+  `NodeType`、执行器、`WorkflowTestRunService` switch、`DagValidator` 的表达式/结构校验、
+  前端 `types.ts` / `graph.ts` / 节点注册表 / 双语文案 / 契约测试。
+- **变量引用只允许拓扑祖先**：模板用 `${path}`，表达式用裸路径；发布期由
+  `DagValidator` 校验引用集合 ⊆ 祖先集合，运行期 fail-closed。禁止在前端发明第三套
+  引用语法或第二套变量存储。
+- **`ai-analyze` 只产出结论文本，不产出命令**：执行器不得注入 `TaskService` /
+  `DispatchAuthority`，输出必须过 `SensitiveDataFilter`；需要执行时必须由人写脚本并经过
+  `approval` 节点，AI 不是授权来源。
+- **画布选中态只属于 React Flow**：不得把 `selectedKeys`/`selectedEdgeIds` 提升到页面
+  state 再回写节点数组；React Flow 回调必须稳定。React #185 的根因就是这条被违反。
