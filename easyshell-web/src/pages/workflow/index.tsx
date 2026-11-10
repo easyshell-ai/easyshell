@@ -164,12 +164,27 @@ const WorkflowListPage: React.FC = () => {
     setPublishTarget({ id: workflow.id, name: workflow.name });
     setPublishLoading(true);
     try {
-      const res = await validateWorkflow(workflow.id);
+      // 列表页没有编辑器状态，先拉详情取服务端草稿 definition——预校验的请求体
+      // 不能为空（服务端对空 body 返回 400，而不是当成"无 issues"放行）。
+      const detailRes = await getWorkflowDetail(workflow.id);
+      if (detailRes.code !== 200 || !detailRes.data) {
+        message.error(detailRes.message || t('workflow.list.fetchFailed'));
+        setPublishIssues([]);
+        return;
+      }
+      const definition = detailRes.data.draft?.definition;
+      if (!definition) {
+        // 没有草稿行：发布本身会以 400「没有可发布的草稿」收场，这里不预置
+        // "校验通过"来误导用户。
+        setPublishIssues([]);
+        return;
+      }
+      const res = await validateWorkflow(workflow.id, definition);
       setPublishIssues(res.code === 200 ? issuesOf(res.data) : []);
     } finally {
       setPublishLoading(false);
     }
-  }, []);
+  }, [t]);
 
   const confirmPublish = useCallback(async () => {
     if (!publishTarget) return;

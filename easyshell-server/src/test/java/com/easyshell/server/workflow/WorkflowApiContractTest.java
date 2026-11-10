@@ -371,6 +371,39 @@ class WorkflowApiContractTest {
     }
 
     @Test
+    @DisplayName("POST /{id}/validate：空 body → 400 WORKFLOW_PARAM_INVALID（不是 500）")
+    void validate_missingBody_is400() throws Exception {
+        long id = createWorkflow();
+
+        // 回归：@RequestBody 漏掉 required=false 时，前端调预校验不发 body 会让 Spring
+        // 抛 HttpMessageNotReadableException → 500，而前端把非 200 当成"无 issues"，
+        // 发布弹窗于是把 ERROR 工作流显示成"校验通过"并放行发布按钮。
+        mockMvc.perform(post("/api/v1/workflow/{id}/validate", id)
+                        .header("Authorization", token))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(400))
+                .andExpect(jsonPath("$.message").value(
+                        org.hamcrest.Matchers.containsString("WORKFLOW_PARAM_INVALID")));
+    }
+
+    @Test
+    @DisplayName("POST /{id}/validate：body 里缺 definition → 400（不是 500）")
+    void validate_bodyWithoutDefinition_is400() throws Exception {
+        long id = createWorkflow();
+
+        // 空 body 与"body 里没有 definition"是同一条失败路径：都要让客户端看见
+        // 400，而不是被 Jackson 抛成 500 后被前端误读成"无 issues"。
+        mockMvc.perform(post("/api/v1/workflow/{id}/validate", id)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}")
+                        .header("Authorization", token))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(400))
+                .andExpect(jsonPath("$.message").value(
+                        org.hamcrest.Matchers.containsString("WORKFLOW_PARAM_INVALID")));
+    }
+
+    @Test
     @DisplayName("POST /{id}/publish：发布成功返回不可变版本摘要")
     void publish_returnsVersion() throws Exception {
         long id = createWorkflow();

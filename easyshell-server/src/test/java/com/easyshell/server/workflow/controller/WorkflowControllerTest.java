@@ -431,6 +431,34 @@ class WorkflowControllerTest {
     }
 
     @Test
+    @DisplayName("POST /{id}/validate：空 body → 400 WORKFLOW_PARAM_INVALID（不是 500）")
+    void validate_missingBody_is400() {
+        // 回归：@RequestBody 曾漏掉 required=false，前端调预校验不发 body 时 Spring 抛
+        // HttpMessageNotReadableException → 500，而前端把非 200 一律当成"无 issues"，
+        // 于是 ERROR 工作流在发布弹窗里显示成"校验通过"并放行发布按钮。
+        assertThatThrownBy(() -> controller.validate(WORKFLOW_ID, null, auth(OWNER, "operator")))
+                .isInstanceOfSatisfying(BusinessException.class, e -> {
+                    assertThat(e.getCode()).isEqualTo(400);
+                    assertThat(e.getMessage()).contains("WORKFLOW_PARAM_INVALID");
+                });
+        // 没有 definition 就无从校验：不得悄悄退化成"用草稿校验"或"直接放行"
+        verifyNoInteractions(definitionService);
+    }
+
+    @Test
+    @DisplayName("PUT /{id}/versions/draft：空 body → 400 WORKFLOW_PARAM_INVALID（不是 500）")
+    void saveDraft_missingBody_is400() {
+        // 与 validate 同一模式：没有 required=false 时 Jackson 先抛
+        // HttpMessageNotReadableException → 500，控制器里的 requireBody 守卫永远轮不到执行。
+        assertThatThrownBy(() -> controller.saveDraft(WORKFLOW_ID, null, auth(OWNER, "operator"), httpRequest))
+                .isInstanceOfSatisfying(BusinessException.class, e -> {
+                    assertThat(e.getCode()).isEqualTo(400);
+                    assertThat(e.getMessage()).contains("WORKFLOW_PARAM_INVALID");
+                });
+        verifyNoInteractions(definitionService);
+    }
+
+    @Test
     @DisplayName("POST /{id}/publish：发布成功")
     void publish_ok() {
         WorkflowVersion published = new WorkflowVersion();
