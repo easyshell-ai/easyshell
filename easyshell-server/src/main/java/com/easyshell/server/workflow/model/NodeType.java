@@ -3,8 +3,9 @@ package com.easyshell.server.workflow.model;
 import java.util.Arrays;
 
 /**
- * 工作流节点类型（工作流 2.0 九类：start / script-exec / transform / condition /
- * ai-analyze / approval / notify / wait / end）。
+ * 工作流节点类型（工作流 2.0 九类 + 工作流 2.1 的 llm / classifier / code，共 12 类：
+ * start / script-exec / transform / condition / ai-analyze / llm / classifier / code /
+ * approval / notify / wait / end）。
  *
  * <p>设计 §3.3 包结构把节点类型列为枚举，definition_json 里存的是 {@link #code()} 字符串；
  * {@code human-confirm} 不是独立类型，而是 approval 节点的 {@code config.mode} 变体
@@ -29,6 +30,15 @@ public enum NodeType {
 
     /** AI 分析：只读上游输出做运维语义分析，不执行任何命令（无 Task/dispatch 依赖） */
     AI_ANALYZE("ai-analyze"),
+
+    /** 通用 LLM：模板提示词 + text/json 输出，不执行任何命令（无 Task/dispatch 依赖） */
+    LLM("llm"),
+
+    /** 问题分类器：模型输出 class + reason，按 class 动态 handle 路由 */
+    CLASSIFIER("classifier"),
+
+    /** 数据变换：GraalVM Polyglot 沙箱内执行 JS/Python，不访问宿主文件/网络/进程 */
+    CODE("code"),
 
     /** 通知：复用 ChannelMessageRouter.pushMessage */
     NOTIFY("notify"),

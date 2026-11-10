@@ -605,9 +605,9 @@ public class WorkflowEngine {
     }
 
     /**
-     * condition 出边 handle 门控（工作流 2.0 §2.2）。
+     * condition / classifier 出边 handle 门控（工作流 2.0 §2.2 + 2.1 §3）。
      *
-     * @return null = 本边不适用 handle 门控（上游不是 condition 或 sourceHandle 为空），
+     * @return null = 本边不适用 handle 门控（上游不是 condition/classifier 或 sourceHandle 为空），
      *         交由旧 edge.condition 语义处理；TRUE/FALSE = handle 的通行判定。
      *         <b>fail-closed</b>：上游输出缺失/result 不是布尔值/handle 非法时返回 false。
      */
@@ -618,6 +618,9 @@ public class WorkflowEngine {
             return null;
         }
         WorkflowNode upstream = def.nodeByKey(edge.getFrom());
+        if (upstream != null && upstream.nodeType() == NodeType.CLASSIFIER) {
+            return evaluateClassifierHandle(upstream, edge, handle, store);
+        }
         if (upstream == null || upstream.nodeType() != NodeType.CONDITION) {
             return null;   // 非 condition 的 sourceHandle（如 out）不影响门控
         }
@@ -631,6 +634,88 @@ public class WorkflowEngine {
             return false;
         }
         return isTrueHandle ? result : !result;
+    }
+
+    /**
+     * classifier 动态 handle 门控（工作流 2.1 §3）。
+     *
+     * <ul>
+     *   <li>类别 handle：{@code output.class} 与 handle 精确相等才通行；</li>
+     *   <li>{@code default}：class 缺失、非字符串或不在配置类别内时通行；</li>
+     *   <li>分类器输出整体缺失 / 不可读：<b>所有</b> handle 一律不通行（fail-closed）；</li>
+     *   <li>handle 不在配置类别中：不通行（发布期已报 ERROR，这里是运行期兜底）。</li>
+     * </ul>
+     */
+    private Boolean evaluateClassifierHandle(WorkflowNode upstream, WorkflowEdge edge,
+                                             String handle, VariableStore store) {
+        VariableStore.StoredOutput output = store.nodeOutput(edge.getFrom());
+        if (output == null) {
+            store.addWarning("classifier 出边门控失败（上游输出缺失），边未通行: "
+                    + edge.getFrom() + " -> " + edge.getTo());
+            return false;
+        }
+
+        Set<String> classes = configuredClassifierClasses(upstream);
+        Object classValue = readClassifierClass(output);
+        // class 字段缺失（null）允许走 default；非字符串 class 属于不可解析，整体 fail-closed
+        boolean readable = classValue != READ_UNREADABLE
+                && (classValue == null || classValue instanceof String);
+        if (!readable) {
+            store.addWarning("classifier 出边门控失败（上游输出不可读），边未通行: "
+                    + edge.getFrom() + " -> " + edge.getTo());
+            return false;
+        }
+        boolean matched = classValue instanceof String text && classes.contains(text);
+
+        if ("default".equals(handle)) {
+            // 配置类别命中时 default 绝不放行；class 缺失/未知时作为显式兜底
+            return !matched;
+        }
+        if (!classes.contains(handle)) {
+            store.addWarning("classifier 出边 handle '" + handle + "' 不在配置类别中，边未通行: "
+                    + edge.getFrom() + " -> " + edge.getTo());
+            return false;
+        }
+        return matched && handle.equals(classValue);
+    }
+
+    /** 哨兵：输出存在但结构不可读（与"class 字段缺失"区分，后者允许走 default）。 */
+    private static final Object READ_UNREADABLE = new Object();
+
+    private Object readClassifierClass(VariableStore.StoredOutput output) {
+        Object value = output.value();
+        if (value instanceof Map<?, ?> map) {
+            return map.containsKey("class") ? map.get("class") : null;
+        }
+        Object parsed = ExpressionEvaluator.readJsonPath(output.json(), "class");
+        if (parsed != null) {
+            return parsed;
+        }
+        // 非 Map 且 JSON 里也读不到 class：可能是合法 JSON 但没有 class（null），
+        // 也可能是 preview/非法 JSON。后者不可读 → fail-closed。
+        String json = output.json();
+        if (json != null && (json.trim().startsWith("{") || json.trim().startsWith("["))) {
+            Object root = ExpressionEvaluator.readJsonPath(json, "$");
+            if (root instanceof Map<?, ?>) {
+                return null;
+            }
+        }
+        return READ_UNREADABLE;
+    }
+
+    private Set<String> configuredClassifierClasses(WorkflowNode node) {
+        Set<String> names = new java.util.LinkedHashSet<>();
+        java.util.List<Object> rows = node.configList("classes");
+        if (rows == null) {
+            return names;
+        }
+        for (Object row : rows) {
+            if (row instanceof Map<?, ?> map && map.get("name") instanceof String name
+                    && !name.isBlank()) {
+                names.add(name);
+            }
+        }
+        return names;
     }
 
     /** 读取 condition 节点输出里的 result（只认 Boolean 与严格 "true"/"false" 字符串）。 */

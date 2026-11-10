@@ -20,7 +20,7 @@ COPY easyshell-server/ .
 RUN gradle test bootJar --no-daemon
 
 # ---- Stage 3: Production runtime ----
-FROM eclipse-temurin:25-jre-jammy
+FROM eclipse-temurin:17-jre-jammy
 
 RUN apt-get update && apt-get install -y --no-install-recommends curl tzdata && \
     rm -rf /var/lib/apt/lists/* && \

@@ -259,6 +259,13 @@ public class WorkflowRunService {
                 throw new BusinessException(400, "WORKFLOW_TYPE_MISMATCH: 变量 '" + name + "' 类型未知: "
                         + spec.getType());
             }
+            java.util.List<String> options = spec.getOptions();
+            boolean hasOptions = options != null && !options.isEmpty();
+            if (hasOptions && type != ValueType.STRING) {
+                // options 只对 string 有意义；静默忽略会让 UI 选择器与服务端校验口径分叉
+                throw new BusinessException(400, "WORKFLOW_TYPE_MISMATCH: 变量 '" + name
+                        + "' 声明了 options，但类型是 " + type.code() + "（options 仅支持 string）");
+            }
             Object value = provided.get(name);
             if (value == null) {
                 if (spec.getDefaultValue() != null) {
@@ -275,6 +282,11 @@ public class WorkflowRunService {
                         + "  runId: -  nodeKey: -  attempt: -  field: run.input." + name + "\n"
                         + "  expected: " + type.code() + "    actual: " + ValueType.describe(value) + "\n"
                         + "  hint: 触发入参类型与声明不符（" + mismatch + "）");
+            }
+            if (hasOptions && value instanceof String text && !options.contains(text)) {
+                throw new BusinessException(400, "WORKFLOW_PARAM_INVALID: 入参 '" + name + "' 的值 '"
+                        + (text.length() > 64 ? text.substring(0, 64) + "..." : text)
+                        + "' 不在可选值 " + options + " 中");
             }
             normalized.put(name, type.normalize(value));
         }

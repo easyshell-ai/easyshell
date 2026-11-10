@@ -24,6 +24,7 @@ import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -78,19 +79,22 @@ public class AiAnalyzeNodeExecutor implements NodeExecutor {
     private final ExpressionEvaluator expressionEvaluator;
     private final ExecutorService aiPool;
     private final WorkflowProperties properties;
+    private final ObjectMapper objectMapper;
 
     public AiAnalyzeNodeExecutor(ChatModelFactory chatModelFactory,
                                  SensitiveDataFilter sensitiveDataFilter,
                                  AiQuotaService aiQuotaService,
                                  ExpressionEvaluator expressionEvaluator,
                                  @Qualifier("workflowAiPool") ExecutorService aiPool,
-                                 WorkflowProperties properties) {
+                                 WorkflowProperties properties,
+                                 ObjectMapper objectMapper) {
         this.chatModelFactory = chatModelFactory;
         this.sensitiveDataFilter = sensitiveDataFilter;
         this.aiQuotaService = aiQuotaService;
         this.expressionEvaluator = expressionEvaluator;
         this.aiPool = aiPool;
         this.properties = properties;
+        this.objectMapper = objectMapper;
     }
 
     @Override
@@ -109,6 +113,24 @@ public class AiAnalyzeNodeExecutor implements NodeExecutor {
             issues.error("NODE_CONFIG_INVALID",
                     "ai-analyze 节点 maxInputChars 必须在 " + MIN_INPUT_CHARS + ".."
                             + MAX_INPUT_CHARS + " 之间，实际 " + maxInputChars, node.getKey());
+        }
+        String outputMode = node.configString("outputMode", "text");
+        if (!"text".equals(outputMode) && !"json".equals(outputMode)) {
+            issues.error("NODE_CONFIG_INVALID",
+                    "ai-analyze 节点 outputMode 只能是 text / json，实际 '" + outputMode + "'", node.getKey());
+        }
+        Object rawSchema = node.getConfig() == null ? null : node.getConfig().get("jsonSchema");
+        if (rawSchema instanceof String schema && !schema.isBlank()) {
+            try {
+                objectMapper.readTree(schema);
+            } catch (Exception e) {
+                issues.warning("NODE_CONFIG_INVALID",
+                        "ai-analyze 节点 jsonSchema 不是合法 JSON，仅作为文本提示，不会在服务端校验",
+                        node.getKey());
+            }
+        } else if (rawSchema != null && !(rawSchema instanceof String)) {
+            issues.warning("NODE_CONFIG_INVALID",
+                    "ai-analyze 节点 jsonSchema 不是字符串，已忽略（仅作为提示词约束）", node.getKey());
         }
     }
 
@@ -154,55 +176,31 @@ public class AiAnalyzeNodeExecutor implements NodeExecutor {
             throw new NodeFailedException("AI_UNAVAILABLE", "AI 模型不可用：未配置默认 Provider");
         }
 
+        String outputMode = node.configString("outputMode", "text");
+        if (!"text".equals(outputMode) && !"json".equals(outputMode)) {
+            throw new NodeFailedException("NODE_CONFIG_INVALID",
+                    "ai-analyze 节点 outputMode 只能是 text / json，实际 '" + outputMode + "'");
+        }
+        String systemPrompt = SYSTEM_PROMPT;
+        if ("json".equals(outputMode)) {
+            Object rawSchema = node.getConfig() == null ? null : node.getConfig().get("jsonSchema");
+            String schema = rawSchema instanceof String value ? value : null;
+            systemPrompt = systemPrompt + "\n\n" + AiStructuredOutput.jsonInstruction(schema);
+        }
+
         String userText = buildUserMessage(instructions, filteredInput);
         int waitSec = Math.max(1, Math.min(
                 node.timeoutSecOrDefault(properties.getEngine().getDefaultNodeTimeoutSec()),
                 MAX_WAIT_SECONDS));
 
-        // 配额在模型解析之后、池准入之前；池拒绝时退回，绝不为"没跑起来的调用"计费
-        try {
-            aiQuotaService.checkAndIncrement(ctx.run().getStartedBy(), "workflow-ai-analyze");
-        } catch (BusinessException e) {
-            throw new NodeFailedException("AI_QUOTA_EXCEEDED",
-                    "AI 分析配额检查失败: " + e.getMessage(), e);
-        }
-
-        Future<String> future;
-        try {
-            future = aiPool.submit(() -> callModel(chatModel, userText));
-        } catch (RejectedExecutionException e) {
-            aiQuotaService.refund(ctx.run().getStartedBy());
-            throw new NodeFailedException("AI_UNAVAILABLE", "AI 分析线程池繁忙，请稍后重试");
-        }
-
-        String text;
-        try {
-            text = future.get(waitSec, TimeUnit.SECONDS);
-        } catch (TimeoutException e) {
-            future.cancel(true);
-            throw new NodeFailedException("AI_TIMEOUT", "AI 分析超过 " + waitSec + " 秒");
-        } catch (InterruptedException e) {
-            future.cancel(true);
-            Thread.currentThread().interrupt();
-            throw new NodeCancelledException("AI 分析等待被中断");
-        } catch (CancellationException e) {
-            throw new NodeCancelledException("AI 分析已被取消");
-        } catch (ExecutionException e) {
-            Throwable cause = e.getCause() == null ? e : e.getCause();
-            if (cause instanceof NodeFailedException failed) {
-                throw failed;
-            }
-            if (cause instanceof CancellationException) {
-                throw new NodeCancelledException("AI 分析已被取消");
-            }
-            throw new NodeFailedException("AI_UNAVAILABLE",
-                    "AI 分析调用失败: " + cause.getClass().getSimpleName(), cause);
-        }
+        String text = callWithBudget(chatModel, systemPrompt, userText, ctx.run().getStartedBy(),
+                waitSec, "workflow-ai-analyze", "AI 分析");
         if (ctx.isCancelled()) {
             throw new NodeCancelledException("运行已取消，丢弃 AI 分析结果");
         }
 
-        String filteredText = sensitiveDataFilter.filter(text == null ? "" : text);
+        String raw = text == null ? "" : text;
+        String filteredText = sensitiveDataFilter.filter(raw);
         if (filteredText.isBlank()) {
             throw new NodeFailedException("AI_EMPTY_RESPONSE", "AI 分析返回空结果");
         }
@@ -211,8 +209,84 @@ public class AiAnalyzeNodeExecutor implements NodeExecutor {
         output.put("text", filteredText);
         output.put("model", MODEL_LABEL);
         output.put("truncated", truncated);
+        if ("json".equals(outputMode)) {
+            Object parsed;
+            try {
+                parsed = AiStructuredOutput.parseJson(raw, objectMapper);
+            } catch (Exception firstError) {
+                if (ctx.isCancelled()) {
+                    throw new NodeCancelledException("运行已取消，停止 JSON 修复");
+                }
+                String repairPrompt = userText
+                        + "\n\n你上一次的输出无法解析为 JSON（错误："
+                        + firstError.getClass().getSimpleName() + "）。\n上一次输出：\n" + filteredText
+                        + "\n\n请只输出修正后的合法 JSON，不要输出 Markdown 代码块或解释文字。";
+                String repaired = callWithBudget(chatModel, systemPrompt, repairPrompt,
+                        ctx.run().getStartedBy(), waitSec, "workflow-ai-analyze-repair", "AI 修复");
+                raw = repaired == null ? "" : repaired;
+                try {
+                    parsed = AiStructuredOutput.parseJson(raw, objectMapper);
+                } catch (Exception secondError) {
+                    throw new NodeFailedException("AI_OUTPUT_INVALID_JSON",
+                            "模型输出无法解析为 JSON（已尝试一次修复）");
+                }
+                filteredText = sensitiveDataFilter.filter(raw);
+            }
+            if (parsed == null) {
+                throw new NodeFailedException("AI_OUTPUT_INVALID_JSON", "模型输出的 JSON 为 null");
+            }
+            output.put("text", filteredText);
+            output.put("json", AiStructuredOutput.maskJson(parsed, sensitiveDataFilter));
+            output.put("structured", true);
+        } else {
+            output.put("json", null);
+            output.put("structured", false);
+        }
         ctx.variables().putNodeOutput(node.getKey(), node.getOutputVar(), output);
         return NodeOutcome.SUCCEEDED;
+    }
+
+    /** 模型调用边界：配额 → workflowAiPool → 超时/取消/错误码映射（repair 复用同一口径）。 */
+    private String callWithBudget(ChatModel chatModel, String systemPrompt, String userText,
+                                  Long userId, int waitSec, String action, String label) {
+        // 配额在模型解析之后、池准入之前；池拒绝时退回，绝不为"没跑起来的调用"计费
+        try {
+            aiQuotaService.checkAndIncrement(userId, action);
+        } catch (BusinessException e) {
+            throw new NodeFailedException("AI_QUOTA_EXCEEDED",
+                    label + "配额检查失败: " + e.getMessage(), e);
+        }
+
+        Future<String> future;
+        try {
+            future = aiPool.submit(() -> callModel(chatModel, systemPrompt, userText));
+        } catch (RejectedExecutionException e) {
+            aiQuotaService.refund(userId);
+            throw new NodeFailedException("AI_UNAVAILABLE", label + "线程池繁忙，请稍后重试");
+        }
+
+        try {
+            return future.get(waitSec, TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
+            future.cancel(true);
+            throw new NodeFailedException("AI_TIMEOUT", label + "超过 " + waitSec + " 秒");
+        } catch (InterruptedException e) {
+            future.cancel(true);
+            Thread.currentThread().interrupt();
+            throw new NodeCancelledException(label + "等待被中断");
+        } catch (CancellationException e) {
+            throw new NodeCancelledException(label + "已被取消");
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause() == null ? e : e.getCause();
+            if (cause instanceof NodeFailedException failed) {
+                throw failed;
+            }
+            if (cause instanceof CancellationException) {
+                throw new NodeCancelledException(label + "已被取消");
+            }
+            throw new NodeFailedException("AI_UNAVAILABLE",
+                    label + "调用失败: " + cause.getClass().getSimpleName(), cause);
+        }
     }
 
     /**
@@ -236,9 +310,9 @@ public class AiAnalyzeNodeExecutor implements NodeExecutor {
                 ctx.resolver(), ctx.variables()::addWarning);
     }
 
-    private String callModel(ChatModel chatModel, String userText) {
+    private String callModel(ChatModel chatModel, String systemPrompt, String userText) {
         Prompt prompt = new Prompt(List.of(
-                new SystemMessage(SYSTEM_PROMPT),
+                new SystemMessage(systemPrompt),
                 new UserMessage(userText)));
         ChatResponse response = chatModel.call(prompt);
         if (response == null || response.getResult() == null

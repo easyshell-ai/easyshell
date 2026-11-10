@@ -35,6 +35,11 @@ class WorkflowTestRunServiceTest {
                  {"name":"secret","value":"${run.input.secret}"},
                  {"name":"up","value":"${nodes.begin.output.threshold}"}]}},
                {"key":"ai","type":"ai-analyze","name":"ai","config":{"instructions":"分析"}},
+               {"key":"llm","type":"llm","name":"llm","config":{"userPrompt":"分析"}},
+               {"key":"classify","type":"classifier","name":"classify","config":{
+                 "input":"${run.input.secret}","classes":[{"name":"disk","description":"磁盘"}]}},
+               {"key":"code","type":"code","name":"code","config":{
+                 "language":"javascript","code":"function main(input){ return input; }","inputs":{},"timeoutSec":5}},
                {"key":"finish","type":"end","name":"finish","config":{"outputs":[
                  {"name":"usage","value":"${run.input.threshold}"},
                  {"name":"up","value":"${nodes.mapping.output.usage}"}]}}],
@@ -106,5 +111,17 @@ class WorkflowTestRunServiceTest {
         assertThat(result.getNodeType()).isEqualTo("ai-analyze");
         assertThat(result.getWarnings())
                 .containsExactly("AI 节点试运行不会调用模型，请在真实运行中验证");
+    }
+
+    @Test
+    @DisplayName("llm / classifier / code：试运行不调用模型、不执行代码")
+    void newAiAndCodePreviewsAreSideEffectFree() {
+        for (String nodeKey : new String[]{"llm", "classify", "code"}) {
+            WorkflowTestRunVO result = test(nodeKey);
+            assertThat(result.getStatus()).isEqualTo("ok");
+            assertThat(result.getNodeType()).isEqualTo(
+                    "classify".equals(nodeKey) ? "classifier" : nodeKey);
+            assertThat(result.getWarnings()).containsExactly("试运行不会调用模型/执行代码");
+        }
     }
 }

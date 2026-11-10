@@ -73,16 +73,35 @@ public class ChatModelFactory {
     }
 
     public ChatModel getChatModel(@Nullable String provider, @Nullable String modelOverride) {
+        return getChatModel(provider, modelOverride, null);
+    }
+
+    /**
+     * 解析模型，可选覆盖 temperature（工作流 llm 节点）。
+     *
+     * <p>temperature 为 null 时保持原有缓存语义；非 null 时按 provider/model/temperature
+     * 组合缓存，避免不同节点互相污染默认参数。GitHub Copilot 的 reasoning/responses
+     * 模型不接受 temperature，沿用其模型感知的默认选项。</p>
+     */
+    public ChatModel getChatModel(@Nullable String provider, @Nullable String modelOverride,
+                                  @Nullable Double temperature) {
         if (provider == null || provider.isBlank() || "default".equals(provider)) {
             provider = getConfigValue("ai.default.provider", "openai");
         }
         // GitHub Copilot tokens are short-lived (~30min) — never cache the model
         if ("github-copilot".equals(provider)) {
-            return createChatModel(provider, modelOverride);
+            return createChatModel(provider, modelOverride, temperature);
         }
-        String cacheKey = modelOverride != null ? provider + ":" + modelOverride : provider;
+        if (temperature == null) {
+            String cacheKey = modelOverride != null ? provider + ":" + modelOverride : provider;
+            final String resolvedProvider = provider;
+            return modelCache.computeIfAbsent(cacheKey, k -> createChatModel(resolvedProvider, modelOverride));
+        }
+        String cacheKey = provider + ":" + (modelOverride == null ? "" : modelOverride)
+                + ":temperature=" + temperature;
         final String resolvedProvider = provider;
-        return modelCache.computeIfAbsent(cacheKey, k -> createChatModel(resolvedProvider, modelOverride));
+        return modelCache.computeIfAbsent(cacheKey,
+                k -> createChatModel(resolvedProvider, modelOverride, temperature));
     }
 
     public void invalidateCache() {
@@ -91,17 +110,27 @@ public class ChatModelFactory {
     }
 
     private ChatModel createChatModel(String provider, @Nullable String modelOverride) {
+        return createChatModel(provider, modelOverride, null);
+    }
+
+    private ChatModel createChatModel(String provider, @Nullable String modelOverride,
+                                      @Nullable Double temperature) {
         return switch (provider) {
-            case "openai" -> createOpenAiModel(modelOverride);
-            case "anthropic" -> createAnthropicModel(modelOverride);
-            case "ollama" -> createOllamaModel(modelOverride);
-            case "gemini" -> createGeminiModel(modelOverride);
-            case "github-copilot" -> createGithubCopilotModel(modelOverride);
+            case "openai" -> createOpenAiModel(modelOverride, temperature);
+            case "anthropic" -> createAnthropicModel(modelOverride, temperature);
+            case "ollama" -> createOllamaModel(modelOverride, temperature);
+            case "gemini" -> createGeminiModel(modelOverride, temperature);
+            case "github-copilot" -> createGithubCopilotModel(modelOverride, temperature);
             default -> throw new BusinessException(400, "不支持的 AI Provider: " + provider);
         };
     }
 
-    private OpenAiChatModel createOpenAiModel(@Nullable String modelOverride) {
+    /** temperature 缺省 0.7，与既有各 Provider 默认值一致 */
+    private static double temperatureOr(Double temperature) {
+        return temperature == null || !Double.isFinite(temperature) ? 0.7 : temperature;
+    }
+
+    private OpenAiChatModel createOpenAiModel(@Nullable String modelOverride, @Nullable Double temperature) {
         String apiKey = decryptConfig("ai.openai.api-key");
         String baseUrl = getConfigValue("ai.openai.base-url", "https://api.openai.com");
         String model = modelOverride != null ? modelOverride : getConfigValue("ai.openai.model", "gpt-4o");
@@ -116,12 +145,12 @@ public class ChatModelFactory {
                 .openAiApi(api)
                 .defaultOptions(OpenAiChatOptions.builder()
                         .model(model)
-                        .temperature(0.7)
+                        .temperature(temperatureOr(temperature))
                         .build())
                 .build();
     }
 
-    private AnthropicChatModel createAnthropicModel(@Nullable String modelOverride) {
+    private AnthropicChatModel createAnthropicModel(@Nullable String modelOverride, @Nullable Double temperature) {
         String apiKey = decryptConfig("ai.anthropic.api-key");
         String model = modelOverride != null ? modelOverride : getConfigValue("ai.anthropic.model", "claude-sonnet-4-20250514");
 
@@ -133,12 +162,12 @@ public class ChatModelFactory {
                 .anthropicApi(api)
                 .defaultOptions(AnthropicChatOptions.builder()
                         .model(model)
-                        .temperature(0.7)
+                        .temperature(temperatureOr(temperature))
                         .build())
                 .build();
     }
 
-    private OllamaChatModel createOllamaModel(@Nullable String modelOverride) {
+    private OllamaChatModel createOllamaModel(@Nullable String modelOverride, @Nullable Double temperature) {
         String baseUrl = getConfigValue("ai.ollama.base-url", "http://localhost:11434");
         String model = modelOverride != null ? modelOverride : getConfigValue("ai.ollama.model", "llama3");
 
@@ -150,12 +179,12 @@ public class ChatModelFactory {
                 .ollamaApi(api)
                 .defaultOptions(OllamaChatOptions.builder()
                         .model(model)
-                        .temperature(0.7)
+                        .temperature(temperatureOr(temperature))
                         .build())
                 .build();
     }
 
-    private OpenAiChatModel createGeminiModel(@Nullable String modelOverride) {
+    private OpenAiChatModel createGeminiModel(@Nullable String modelOverride, @Nullable Double temperature) {
         String apiKey = decryptConfig("ai.gemini.api-key");
         String baseUrl = getConfigValue("ai.gemini.base-url",
                 "https://generativelanguage.googleapis.com/v1beta/openai/");
@@ -171,12 +200,13 @@ public class ChatModelFactory {
                 .openAiApi(api)
                 .defaultOptions(OpenAiChatOptions.builder()
                         .model(model)
-                        .temperature(0.7)
+                        .temperature(temperatureOr(temperature))
                         .build())
                 .build();
     }
 
-    private ChatModel createGithubCopilotModel(@Nullable String modelOverride) {
+    private ChatModel createGithubCopilotModel(@Nullable String modelOverride,
+                                               @Nullable Double temperature) {
         String bearerToken = copilotAuthService.getCopilotBearerToken();
         String baseUrl = copilotAuthService.getCopilotApiBaseUrl();
         String model = modelOverride != null ? modelOverride : getConfigValue("ai.github-copilot.model", "gpt-4o");
@@ -197,7 +227,7 @@ public class ChatModelFactory {
 
         return OpenAiChatModel.builder()
                 .openAiApi(api)
-                .defaultOptions(buildCopilotChatOptions(model))
+                .defaultOptions(buildCopilotChatOptions(model, temperature))
                 .build();
     }
 
@@ -235,11 +265,15 @@ public class ChatModelFactory {
      * maxCompletionTokens instead of maxTokens.
      */
     public static OpenAiChatOptions buildCopilotChatOptions(String model) {
+        return buildCopilotChatOptions(model, null);
+    }
+
+    static OpenAiChatOptions buildCopilotChatOptions(String model, @Nullable Double temperature) {
         var builder = OpenAiChatOptions.builder().model(model);
         if (isCopilotReasoningModel(model)) {
             builder.maxCompletionTokens(16384);
         } else {
-            builder.temperature(0.7);
+            builder.temperature(temperatureOr(temperature));
         }
         return builder.build();
     }

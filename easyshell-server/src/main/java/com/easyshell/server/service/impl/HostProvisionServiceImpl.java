@@ -686,13 +686,23 @@ public class HostProvisionServiceImpl implements HostProvisionService {
      * Build a HostCredentialVO that merges Agent data when available.
      */
     private HostCredentialVO toUnifiedVO(HostCredential entity, Agent agent) {
+        // hostName 与 hostname 在 Jackson 中是两个 JavaBean 属性；两者都填同一个显示名，
+        // 才能同时满足旧前端（hostName）与新统一列表（hostname）。优先 agent.hostname。
+        String displayName = agent != null && agent.getHostname() != null
+                && !agent.getHostname().isBlank()
+                ? agent.getHostname()
+                : entity.getHostName();
+        if (displayName == null || displayName.isBlank()) {
+            displayName = entity.getIp();
+        }
         HostCredentialVO.HostCredentialVOBuilder builder = HostCredentialVO.builder()
                 .id(entity.getId())
                 .ip(entity.getIp())
                 .sshPort(entity.getSshPort())
                 .sshUsername(entity.getSshUsername())
                 .authType(entity.getAuthType())
-                .hostName(entity.getHostName())
+                .hostName(displayName)
+                .hostname(displayName)
                 .agentId(entity.getAgentId())
                 .provisionStatus(entity.getProvisionStatus())
                 .provisionLog(entity.getProvisionLog())
@@ -705,8 +715,7 @@ public class HostProvisionServiceImpl implements HostProvisionService {
             if (entity.getAgentId() == null) {
                 builder.agentId(agent.getId());
             }
-            builder.hostname(agent.getHostname())
-                    .os(agent.getOs())
+            builder.os(agent.getOs())
                     .arch(agent.getArch())
                     .kernel(agent.getKernel())
                     .cpuModel(agent.getCpuModel())
@@ -785,11 +794,14 @@ public class HostProvisionServiceImpl implements HostProvisionService {
         // Add agents that have no corresponding credential (legacy agents registered before this feature)
         for (Agent agent : agents) {
             if (agent.getIp() != null && !coveredIps.contains(agent.getIp())) {
+                String displayName = agent.getHostname() == null || agent.getHostname().isBlank()
+                        ? agent.getIp() : agent.getHostname();
                 HostCredentialVO vo = HostCredentialVO.builder()
                         .ip(agent.getIp())
                         .agentId(agent.getId())
                         .provisionStatus("SUCCESS")
-                        .hostname(agent.getHostname())
+                        .hostName(displayName)
+                        .hostname(displayName)
                         .os(agent.getOs())
                         .arch(agent.getArch())
                         .kernel(agent.getKernel())

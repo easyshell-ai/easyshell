@@ -54,6 +54,15 @@ public class DagValidator {
     /** wait 节点最长等待秒（防一个节点占死引擎线程） */
     private static final int MAX_WAIT_SECONDS = 3600;
 
+    /** classifier 类别名与 code 输入名（工作流 2.1） */
+    private static final Pattern CLASS_NAME = Pattern.compile("^[a-z][a-z0-9_]{0,63}$");
+    private static final Pattern CODE_INPUT_NAME = Pattern.compile("^[A-Za-z_][A-Za-z0-9_]{0,63}$");
+    private static final int MAX_CLASSES = 10;
+    private static final int MAX_CODE_CHARS = 20_000;
+    private static final int MAX_CODE_TIMEOUT_SEC = 15;
+    private static final int LLM_MIN_INPUT_CHARS = 1000;
+    private static final int LLM_MAX_INPUT_CHARS = 32000;
+
     private final ExpressionEvaluator expressionEvaluator;
 
     public DagValidator(ExpressionEvaluator expressionEvaluator) {
@@ -279,6 +288,8 @@ public class DagValidator {
                             "condition 节点只允许一条出边带 condition（旧定义 true handle 语义），实际 "
                                     + withCondition + "；新定义请改用 sourceHandle=true/false", node.getKey());
                 }
+            } else if (type == NodeType.CLASSIFIER) {
+                validateClassifierHandles(node, outs, sink);
             } else if (type == NodeType.END) {
                 if (!outs.isEmpty()) {
                     sink.error("GRAPH_END_INVALID",
@@ -290,7 +301,7 @@ public class DagValidator {
             }
         }
 
-        // ③-b start / end 拓扑（工作流 2.0 §2.1）
+        // ③-b start / end 拓扑（工作流 2.0 §2.1 + 2.1 classifier 动态 handle）
         List<WorkflowNode> startNodes = def.getNodes().stream()
                 .filter(n -> n.nodeType() == NodeType.START).toList();
         List<WorkflowNode> endNodes = def.getNodes().stream()
@@ -359,9 +370,17 @@ public class DagValidator {
         if (def.getVariables() != null) {
             for (Map.Entry<String, VariableSpec> entry : def.getVariables().entrySet()) {
                 VariableSpec spec = entry.getValue();
-                if (spec == null || ValueType.fromSpec(spec.getType()) == null) {
+                ValueType variableType = spec == null ? null : ValueType.fromSpec(spec.getType());
+                if (variableType == null) {
                     sink.error("VARIABLE_TYPE_UNKNOWN",
                             "变量 '" + entry.getKey() + "' 类型未知: " + (spec == null ? null : spec.getType()), null);
+                    continue;
+                }
+                if (spec.getOptions() != null && !spec.getOptions().isEmpty()
+                        && variableType != ValueType.STRING) {
+                    sink.error("VARIABLE_OPTIONS_INVALID",
+                            "变量 '" + entry.getKey() + "' 声明了 options，但类型是 "
+                                    + variableType.code() + "（options 仅支持 string）", null);
                 }
             }
         }
@@ -431,8 +450,201 @@ public class DagValidator {
                             "wait 节点 durationSec 必须在 1.." + MAX_WAIT_SECONDS + " 之间，实际 " + duration,
                             node.getKey());
                 }
+            } else if (node.nodeType() == NodeType.CLASSIFIER) {
+                validateClassifierConfig(node, sink);
+            } else if (node.nodeType() == NodeType.CODE) {
+                validateCodeConfig(node, sink);
+            } else if (node.nodeType() == NodeType.LLM) {
+                validateLlmConfig(node, sink);
             }
         }
+    }
+
+    /** classifier：input 必填；1..10 个合法且唯一的类别；动态 handle 由 ③ 校验。 */
+    private void validateClassifierConfig(WorkflowNode node, ValidationIssue.Sink sink) {
+        String input = node.configString("input");
+        if (input == null || input.isBlank()) {
+            sink.error("NODE_CONFIG_INVALID", "classifier 节点缺少 input", node.getKey());
+        }
+        List<Object> rows = node.configList("classes");
+        int size = rows == null ? 0 : rows.size();
+        if (size < 1 || size > MAX_CLASSES) {
+            sink.error("NODE_CONFIG_INVALID",
+                    "classifier 节点 classes 数量必须在 1.." + MAX_CLASSES + " 之间，实际 " + size,
+                    node.getKey());
+        }
+        if (rows == null) {
+            return;
+        }
+        Set<String> seen = new LinkedHashSet<>();
+        for (Object row : rows) {
+            if (!(row instanceof Map<?, ?> map)) {
+                sink.error("NODE_CONFIG_INVALID",
+                        "classifier 节点 classes 的每一项必须是 {name, description} 对象", node.getKey());
+                continue;
+            }
+            Object rawName = map.get("name");
+            if (!(rawName instanceof String name) || !CLASS_NAME.matcher(name).matches()) {
+                sink.error("NODE_CONFIG_INVALID",
+                        "classifier 类别名 '" + rawName + "' 不合规：必须匹配 ^[a-z][a-z0-9_]{0,63}$",
+                        node.getKey());
+                continue;
+            }
+            if ("default".equals(name)) {
+                sink.error("NODE_CONFIG_INVALID",
+                        "classifier 类别名 default 是保留 handle，请改用其他名称", node.getKey());
+                continue;
+            }
+            if (!seen.add(name)) {
+                sink.error("NODE_CONFIG_INVALID", "classifier 类别名重复: " + name, node.getKey());
+            }
+        }
+    }
+
+    /** code：language / code 长度 / inputs 名与模板类型 / timeout。 */
+    private void validateCodeConfig(WorkflowNode node, ValidationIssue.Sink sink) {
+        String language = node.configString("language");
+        if (!"javascript".equals(language) && !"python".equals(language)) {
+            sink.error("NODE_CONFIG_INVALID",
+                    "code 节点 language 只能是 javascript / python，实际 '" + language + "'", node.getKey());
+        }
+        String code = node.configString("code");
+        if (code == null || code.isBlank()) {
+            sink.error("NODE_CONFIG_INVALID", "code 节点缺少 code", node.getKey());
+        } else if (code.length() > MAX_CODE_CHARS) {
+            sink.error("NODE_CONFIG_INVALID",
+                    "code 节点代码长度必须 <= " + MAX_CODE_CHARS + " 字符，实际 " + code.length(),
+                    node.getKey());
+        }
+        Object rawInputs = node.getConfig() == null ? null : node.getConfig().get("inputs");
+        if (rawInputs != null) {
+            if (!(rawInputs instanceof Map<?, ?> inputs)) {
+                sink.error("NODE_CONFIG_INVALID", "code 节点 inputs 必须是对象", node.getKey());
+            } else {
+                for (Map.Entry<?, ?> entry : inputs.entrySet()) {
+                    String inputName = String.valueOf(entry.getKey());
+                    if (!CODE_INPUT_NAME.matcher(inputName).matches()) {
+                        sink.error("NODE_CONFIG_INVALID",
+                                "code 节点输入名 '" + inputName + "' 不合规：必须匹配 ^[A-Za-z_][A-Za-z0-9_]{0,63}$",
+                                node.getKey());
+                    }
+                    if (!(entry.getValue() instanceof String)) {
+                        sink.error("NODE_CONFIG_INVALID",
+                                "code 节点输入 '" + inputName + "' 的值必须是模板字符串", node.getKey());
+                    }
+                }
+            }
+        }
+        Object rawTimeout = node.getConfig() == null ? null : node.getConfig().get("timeoutSec");
+        if (rawTimeout != null) {
+            Integer timeout = null;
+            if (rawTimeout instanceof Number number) {
+                timeout = number.intValue();
+            } else if (rawTimeout instanceof String text) {
+                try {
+                    timeout = Integer.parseInt(text.trim());
+                } catch (NumberFormatException ignored) {
+                    timeout = null;
+                }
+            }
+            if (timeout == null || timeout < 1 || timeout > MAX_CODE_TIMEOUT_SEC) {
+                sink.error("NODE_CONFIG_INVALID",
+                        "code 节点 timeoutSec 必须在 1.." + MAX_CODE_TIMEOUT_SEC + " 之间，实际 "
+                                + rawTimeout, node.getKey());
+            }
+        }
+    }
+
+    /** llm：userPrompt 必填、outputMode / temperature / maxInputChars 范围；非法 schema 只 WARNING。 */
+    private void validateLlmConfig(WorkflowNode node, ValidationIssue.Sink sink) {
+        String userPrompt = node.configString("userPrompt");
+        if (userPrompt == null || userPrompt.isBlank()) {
+            sink.error("NODE_CONFIG_INVALID", "llm 节点缺少 userPrompt", node.getKey());
+        }
+        String outputMode = node.configString("outputMode", "text");
+        if (!"text".equals(outputMode) && !"json".equals(outputMode)) {
+            sink.error("NODE_CONFIG_INVALID",
+                    "llm 节点 outputMode 只能是 text / json，实际 '" + outputMode + "'", node.getKey());
+        }
+        Object rawTemperature = node.getConfig() == null ? null : node.getConfig().get("temperature");
+        if (rawTemperature != null) {
+            Double temperature = node.configDouble("temperature");
+            if (temperature == null || !Double.isFinite(temperature)
+                    || temperature < 0.0 || temperature > 2.0) {
+                sink.error("NODE_CONFIG_INVALID",
+                        "llm 节点 temperature 必须在 0..2 之间，实际 " + rawTemperature, node.getKey());
+            }
+        }
+        Object rawMaxInput = node.getConfig() == null ? null : node.getConfig().get("maxInputChars");
+        if (rawMaxInput != null) {
+            int maxInputChars = node.configInt("maxInputChars", -1);
+            if (maxInputChars < LLM_MIN_INPUT_CHARS || maxInputChars > LLM_MAX_INPUT_CHARS) {
+                sink.error("NODE_CONFIG_INVALID",
+                        "llm 节点 maxInputChars 必须在 " + LLM_MIN_INPUT_CHARS + ".."
+                                + LLM_MAX_INPUT_CHARS + " 之间，实际 " + rawMaxInput, node.getKey());
+            }
+        }
+        Object rawSchema = node.getConfig() == null ? null : node.getConfig().get("jsonSchema");
+        if (rawSchema != null) {
+            if (!(rawSchema instanceof String schema)) {
+                sink.warning("NODE_CONFIG_INVALID",
+                        "llm 节点 jsonSchema 不是字符串，已忽略（jsonSchema 仅作为提示词约束）",
+                        node.getKey());
+            } else if (!schema.isBlank()) {
+                try {
+                    new com.fasterxml.jackson.databind.ObjectMapper().readTree(schema);
+                } catch (Exception e) {
+                    sink.warning("NODE_CONFIG_INVALID",
+                            "llm 节点 jsonSchema 不是合法 JSON，仅作为文本提示，不会在服务端校验",
+                            node.getKey());
+                }
+            }
+        }
+    }
+
+    /**
+     * classifier 动态 handle：每个合法类别名 + default 各最多一条出边；
+     * sourceHandle 必须是配置类别或 default。类别本身的合法性由 ⑦ 统一报错。
+     */
+    private void validateClassifierHandles(WorkflowNode node, List<WorkflowEdge> outs,
+                                           ValidationIssue.Sink sink) {
+        Set<String> classes = configuredClassNames(node);
+        Map<String, Integer> counts = new HashMap<>();
+        for (WorkflowEdge out : outs) {
+            String handle = out.getSourceHandle();
+            if (handle == null || handle.isBlank()) {
+                sink.error("EDGE_TYPE_INCOMPATIBLE",
+                        "classifier 出边必须指定 sourceHandle（类别名或 default），边 "
+                                + out.getFrom() + " -> " + out.getTo(), node.getKey());
+                continue;
+            }
+            if (!"default".equals(handle) && !classes.contains(handle)) {
+                sink.error("EDGE_TYPE_INCOMPATIBLE",
+                        "classifier 出边 sourceHandle '" + handle + "' 不是已配置的类别名或 default"
+                                + "（边 " + out.getFrom() + " -> " + out.getTo() + "）", node.getKey());
+            }
+            int count = counts.merge(handle, 1, Integer::sum);
+            if (count > 1) {
+                sink.error("EDGE_TYPE_INCOMPATIBLE",
+                        "classifier handle '" + handle + "' 最多一条出边，实际 " + count, node.getKey());
+            }
+        }
+    }
+
+    /** 只收集合法且去重后的类别名（不产生 issue，配置合法性由 ⑦ 负责）。 */
+    private Set<String> configuredClassNames(WorkflowNode node) {
+        Set<String> names = new LinkedHashSet<>();
+        List<Object> rows = node.configList("classes");
+        if (rows == null) {
+            return names;
+        }
+        for (Object row : rows) {
+            if (row instanceof Map<?, ?> map && map.get("name") instanceof String name
+                    && CLASS_NAME.matcher(name).matches()) {
+                names.add(name);
+            }
+        }
+        return names;
     }
 
     /** 需要做 ${path} 引用校验的模板字段（全部模板型 config，不再只有 transform/end） */
@@ -446,6 +658,9 @@ public class DagValidator {
             case TRANSFORM -> addMappingValues(node, "mappings", result);
             case END -> addMappingValues(node, "outputs", result);
             case AI_ANALYZE -> addString(node, "input", result);
+            case LLM -> addString(node, "userPrompt", result);
+            case CLASSIFIER -> addString(node, "input", result);
+            case CODE -> addMapValues(node, "inputs", result);
             case NOTIFY -> {
                 addString(node, "messageTemplate", result);
                 addMapValues(node, "parameters", result);
@@ -508,7 +723,7 @@ public class DagValidator {
         }
         Set<String> aiNodes = new HashSet<>();
         for (WorkflowNode candidate : def.getNodes()) {
-            if (candidate.nodeType() == NodeType.AI_ANALYZE) {
+            if (candidate.nodeType() == NodeType.AI_ANALYZE || candidate.nodeType() == NodeType.LLM) {
                 aiNodes.add(candidate.getKey());
             }
         }
@@ -526,7 +741,7 @@ public class DagValidator {
             for (String referenced : templateReferencedNodeKeys(template, aliases)) {
                 if (aiNodes.contains(referenced)) {
                     sink.error("AI_OUTPUT_RAW_FORBIDDEN",
-                            "脚本参数 '" + slot + "' 在 rawParams 中直接引用 ai-analyze 节点 '"
+                            "脚本参数 '" + slot + "' 在 rawParams 中直接引用 AI/LLM 节点 '"
                                     + referenced + "' 的输出；raw 值绕过值策略，禁止进入命令面",
                             node.getKey());
                 }
