@@ -322,7 +322,7 @@ const TaskPage: React.FC = () => {
                     <p><strong>{t('task.risk.bannedCommands')}:</strong> {risk.bannedMatches.join(', ')}</p>
                   )}
                   <p><strong>{t('task.risk.explanation')}:</strong> {risk.explanation}</p>
-                  <p style={{ marginTop: 12, color: '#faad14' }}>{t('task.risk.confirmHint')}</p>
+                  <p style={{ marginTop: 12, color: token.colorWarning }}>{t('task.risk.confirmHint')}</p>
                 </div>
               ),
               okText: t('task.risk.submitApproval'),
@@ -412,7 +412,7 @@ const TaskPage: React.FC = () => {
 
   return (
     <>
-      <Card title={<span style={{ color: token.colorText }}>{t('task.createTask')}</span>} size="small" style={{ marginBottom: 16, borderRadius: 12 }}>
+      <Card title={<span style={{ color: token.colorText }}>{t('task.createTask')}</span>} size="small" style={{ marginBottom: 16 }}>
         <Form form={form} layout="vertical">
           <Row gutter={16}>
             <Col span={8}>
@@ -613,7 +613,7 @@ const TaskPage: React.FC = () => {
         </Form>
       </Card>
 
-      <Card title={<span style={{ color: token.colorText }}>{t('task.taskList')}</span>} size="small" style={{ borderRadius: 12 }}>
+      <Card title={<span style={{ color: token.colorText }}>{t('task.taskList')}</span>} size="small">
         <Table<Task>
           columns={taskColumns}
           dataSource={tasks}
@@ -661,7 +661,7 @@ const TaskPage: React.FC = () => {
 
             {taskDetail.task.scriptContent && (
               <>
-                <Divider style={{ marginTop: 24 }}>{t('task.scriptContent')}</Divider>
+                <Divider style={{ marginTop: 16 }}>{t('task.scriptContent')}</Divider>
                 <pre style={{
                   background: token.colorFillAlter,
                   padding: 12,
@@ -680,7 +680,7 @@ const TaskPage: React.FC = () => {
               </>
             )}
 
-            <Divider style={{ marginTop: 24 }}>{t('task.executionNodes')}</Divider>
+            <Divider style={{ marginTop: 16 }}>{t('task.executionNodes')}</Divider>
             <Table<Job>
               columns={jobColumns}
               dataSource={taskDetail.jobs || []}
@@ -701,7 +701,7 @@ const TaskPage: React.FC = () => {
               }}
             />
 
-            <Divider style={{ marginTop: 24 }}>{t('task.realTimeLogs')}</Divider>
+            <Divider style={{ marginTop: 16 }}>{t('task.realTimeLogs')}</Divider>
             <div
               ref={logContainerRef}
               style={{
@@ -750,7 +750,7 @@ const TaskPage: React.FC = () => {
           </>
         )}
         {!taskDetail && detailLoading && (
-          <div style={{ textAlign: 'center', padding: 40, color: token.colorTextTertiary }}>{t('common.loading')}</div>
+          <div style={{ textAlign: 'center', padding: 16, color: token.colorTextTertiary }}>{t('common.loading')}</div>
         )}
       </Drawer>
     </>

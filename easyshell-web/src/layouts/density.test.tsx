@@ -73,7 +73,7 @@ describe('布局框架常量', () => {
       cellPaddingInline: 12,
       cellFontSize: 13,
     });
-    expect(DENSITY.default.components?.Menu?.itemHeight).toBe(34);
+    expect(DENSITY.default.components?.Menu?.itemHeight).toBe(32);
   });
 
   it('compact 密度档与 §4.10.2 的 compact 列一致', () => {

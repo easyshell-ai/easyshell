@@ -130,10 +130,14 @@ const MainLayout: React.FC = () => {
     // 颜色用 colorTextTertiary 而不是 Menu.darkGroupTitleColor：W1 锁定的那个 token 落在
     // ash 档（#6a6b6c / #9a9a9a），§4.9.2-5 要求 11px 文字必须用 mute 档（7.30 / 4.95）。
     const groupLabelStyle: CSSProperties = {
-      padding: '12px 0 4px',
-      lineHeight: 16,
+      padding: 0,
+      lineHeight: '16px',
       userSelect: 'none',
       color: token.colorTextTertiary,
+      letterSpacing: '0.04em',
+      textTransform: 'uppercase',
+      fontSize: 11,
+      fontWeight: 500,
     };
 
     return [

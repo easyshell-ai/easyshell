@@ -134,7 +134,7 @@ const FileManager: React.FC<FileManagerProps> = ({ agentId, visible, onClose }) 
             percent={uploadProgress}
             size="small"
             status={uploadPhase === 'transferring' ? 'active' : 'active'}
-            strokeColor={uploadPhase === 'transferring' ? '#faad14' : undefined}
+            strokeColor={uploadPhase === 'transferring' ? token.colorWarning : undefined}
             format={(percent) =>
               uploadPhase === 'transferring'
                 ? t('terminal.files.transferring', 'Transferring to target server...')
@@ -147,7 +147,7 @@ const FileManager: React.FC<FileManagerProps> = ({ agentId, visible, onClose }) 
       {/* Download Progress */}
       {downloadProgress !== null && (
         <div style={{ padding: '8px 12px', borderBottom: `1px solid ${token.colorBorderSecondary}` }}>
-          <Progress percent={downloadProgress} size="small" status="active" strokeColor="#52c41a" format={(percent) => `${t('terminal.files.download', 'Download')} ${percent}%`} />
+          <Progress percent={downloadProgress} size="small" status="active" strokeColor={token.colorSuccess} format={(percent) => `${t('terminal.files.download', 'Download')} ${percent}%`} />
         </div>
       )}
 

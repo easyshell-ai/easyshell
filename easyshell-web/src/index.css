@@ -108,13 +108,10 @@ body {
 
 /* ─── Card hover effect ─── */
 .ant-card {
-  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+  transition: border-color 0.15s ease;
 }
 .ant-card:hover {
-  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.06);
-}
-[data-theme='dark'] .ant-card:hover {
-  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.3);
+  border-color: var(--es-color-border);
 }
 
 /* ─── Table refinement ─── */
@@ -151,6 +148,17 @@ body {
    ash 档，而 §4.9.2-5 要求 11px 文字必须用 mute 档（7.30 / 4.95）。 */
 .ant-menu-item-group-title {
   font-weight: 500;
+  padding-block: 10px 2px !important;
+  margin-top: 2px;
+}
+.ant-menu-item-group:first-child > .ant-menu-item-group-title {
+  padding-top: 4px !important;
+  margin-top: 0;
+}
+.ant-menu-inline .ant-menu-item,
+.ant-menu-inline .ant-menu-submenu-title {
+  margin-block: 1px;
+  width: calc(100% - 16px);
 }
 
 /* ─── Breadcrumb（§4.6）─── 12px；Breadcrumb 自己继承全局 fontSize=14，这里降一档。

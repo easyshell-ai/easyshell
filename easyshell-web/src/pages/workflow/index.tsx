@@ -350,7 +350,7 @@ const WorkflowListPage: React.FC = () => {
         </Space>
       }
     >
-      <Card style={{ borderRadius: 12 }} styles={{ body: { padding: 0 } }}>
+      <Card styles={{ body: { padding: 0 } }}>
         <Table<WorkflowSummary>
           columns={columns}
           dataSource={page.content}

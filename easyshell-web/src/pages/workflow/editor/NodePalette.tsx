@@ -44,7 +44,7 @@ const NodePalette: React.FC = () => {
     <Card
       size="small"
       title={<span style={{ fontSize: 13 }}>{t('workflow.palette.title')}</span>}
-      style={{ borderRadius: 12, height: '100%' }}
+      style={{ height: '100%' }}
       styles={{ body: { padding: 12 } }}
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

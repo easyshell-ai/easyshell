@@ -189,7 +189,7 @@ const WorkflowRunMonitorPage: React.FC = () => {
 
   if (error) {
     return (
-      <div style={{ padding: 24 }}>
+      <div style={{ padding: 16 }}>
         {error === '403' ? (
           <Alert type="error" showIcon message={t('workflow.error.403')} description={t('workflow.error.403Desc')} />
         ) : error === '404' ? (
@@ -206,7 +206,7 @@ const WorkflowRunMonitorPage: React.FC = () => {
 
   return (
     <div style={{ padding: 16 }}>
-      <Card size="small" style={{ borderRadius: 12, marginBottom: 12 }} styles={{ body: { padding: '12px 16px' } }}>
+      <Card size="small" style={{ marginBottom: 12 }} styles={{ body: { padding: '12px 16px' } }}>
         <Row gutter={[12, 12]} align="middle">
           <Col flex="auto">
             <Space size={12} wrap>
@@ -256,7 +256,6 @@ const WorkflowRunMonitorPage: React.FC = () => {
           <Card
             size="small"
             title={t('workflow.run.canvasTitle')}
-            style={{ borderRadius: 12 }}
             styles={{ body: { padding: 0, height: 460 } }}
           >
             {definition ? (
@@ -298,7 +297,7 @@ const WorkflowRunMonitorPage: React.FC = () => {
 
       <Row gutter={[12, 12]} style={{ marginTop: 12 }}>
         <Col xs={24} lg={12}>
-          <Card size="small" title={t('workflow.run.nodes')} style={{ borderRadius: 12 }} styles={{ body: { padding: 0 } }}>
+          <Card size="small" title={t('workflow.run.nodes')} styles={{ body: { padding: 0 } }}>
             <Table<WorkflowNodeRun>
               columns={nodeColumns}
               dataSource={detail.nodeRuns || []}
@@ -329,7 +328,7 @@ const WorkflowRunMonitorPage: React.FC = () => {
         </Col>
         <Col xs={24} lg={12}>
           <Space direction="vertical" size={12} style={{ width: '100%' }}>
-            <Card size="small" title={t('workflow.run.info')} style={{ borderRadius: 12 }}>
+            <Card size="small" title={t('workflow.run.info')}>
               <Descriptions size="small" column={1}>
                 <Descriptions.Item label={t('workflow.run.col.trigger')}>
                   {t(`workflow.run.trigger.${run.triggerType}`)}
@@ -355,7 +354,7 @@ const WorkflowRunMonitorPage: React.FC = () => {
                 )}
               </Descriptions>
             </Card>
-            <Card size="small" title={t('workflow.run.logs')} style={{ borderRadius: 12 }}>
+            <Card size="small" title={t('workflow.run.logs')}>
               <RunLogPanel runId={run.id} active={!TERMINAL.includes(run.status)} />
             </Card>
           </Space>

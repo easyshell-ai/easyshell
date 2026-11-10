@@ -22,20 +22,19 @@ interface DagPlanViewProps {
   checkpointLoading?: number | null;
 }
 
-const STATUS_CONFIG: Record<string, { color: string; icon: React.ReactNode }> = {
-  pending:          { color: '#d9d9d9', icon: <ClockCircleOutlined /> },
-  running:          { color: '#1890ff', icon: <LoadingOutlined spin /> },
-  completed:        { color: '#52c41a', icon: <CheckCircleOutlined /> },
-  failed:           { color: '#ff4d4f', icon: <CloseCircleOutlined /> },
-  skipped:          { color: '#faad14', icon: <QuestionCircleOutlined /> },
-  waiting_approval: { color: '#722ed1', icon: <PauseCircleOutlined /> },
-};
-
 const DagPlanView: React.FC<DagPlanViewProps> = ({
   plan, currentStepIndex, checkpointSteps,
   onApproveCheckpoint, onRejectCheckpoint, checkpointLoading,
 }) => {
   const { token } = theme.useToken();
+  const statusConfig: Record<string, { color: string; icon: React.ReactNode }> = {
+    pending:          { color: token.colorTextQuaternary, icon: <ClockCircleOutlined /> },
+    running:          { color: token.colorPrimary, icon: <LoadingOutlined spin /> },
+    completed:        { color: token.colorSuccess, icon: <CheckCircleOutlined /> },
+    failed:           { color: token.colorError, icon: <CloseCircleOutlined /> },
+    skipped:          { color: token.colorWarning, icon: <QuestionCircleOutlined /> },
+    waiting_approval: { color: token.colorInfo, icon: <PauseCircleOutlined /> },
+  };
   const { t } = useTranslation();
 
   const { nodes, edges } = useMemo(() => {
@@ -66,7 +65,7 @@ const DagPlanView: React.FC<DagPlanViewProps> = ({
 
       const status = step.status || (step.index < currentStepIndex ? 'completed'
         : step.index === currentStepIndex ? 'running' : 'pending');
-      const statusConf = STATUS_CONFIG[status] || STATUS_CONFIG.pending;
+      const statusConf = statusConfig[status] || statusConfig.pending;
       const isCheckpoint = step.checkpoint && checkpointSteps.has(step.index);
 
       nodeList.push({
@@ -139,7 +138,7 @@ const DagPlanView: React.FC<DagPlanViewProps> = ({
     });
 
     return { nodes: nodeList, edges: edgeList };
-  }, [plan, currentStepIndex, checkpointSteps, checkpointLoading, token, t, onApproveCheckpoint, onRejectCheckpoint]);
+  }, [plan, currentStepIndex, checkpointSteps, checkpointLoading, token, statusConfig, t, onApproveCheckpoint, onRejectCheckpoint]);
 
   return (
     <div style={{ width: '100%', height: 400, border: `1px solid ${token.colorBorderSecondary}`, borderRadius: token.borderRadius }}>

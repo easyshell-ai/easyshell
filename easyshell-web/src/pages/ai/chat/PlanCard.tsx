@@ -61,7 +61,7 @@ const PlanCard: React.FC<PlanCardProps> = ({
             icon={<CheckCircleOutlined />}
             onClick={onConfirm}
             loading={confirmLoading}
-            style={{ background: '#52c41a', borderColor: '#52c41a' }}
+            style={{ background: token.colorSuccess, borderColor: token.colorSuccess }}
           >
             {t('ai.chat.confirm_plan')}
           </Button>
@@ -76,12 +76,12 @@ const PlanCard: React.FC<PlanCardProps> = ({
         </div>
       )}
       {confirmationStatus === 'confirmed' && (
-        <div style={{ marginTop: 8, fontSize: 13, fontWeight: 500, color: '#52c41a' }}>
+        <div style={{ marginTop: 8, fontSize: 13, fontWeight: 500, color: token.colorSuccess }}>
           <CheckCircleOutlined /> {t('ai.chat.plan_confirmed')}
         </div>
       )}
       {confirmationStatus === 'rejected' && (
-        <div style={{ marginTop: 8, fontSize: 13, fontWeight: 500, color: '#ff4d4f' }}>
+        <div style={{ marginTop: 8, fontSize: 13, fontWeight: 500, color: token.colorError }}>
           <CloseCircleOutlined /> {t('ai.chat.plan_rejected')}
         </div>
       )}
@@ -134,15 +134,15 @@ const PlanCard: React.FC<PlanCardProps> = ({
                 alignItems: 'center',
                 gap: 8,
                 padding: '4px 8px',
-                borderLeft: status === 'running' ? '3px solid #1677ff' : '3px solid transparent',
+                borderLeft: status === 'running' ? `3px solid ${token.colorPrimary}` : '3px solid transparent',
                 borderRadius: 2,
-                background: status === 'running' ? 'rgba(22,119,255,0.04)' : 'transparent',
+                background: status === 'running' ? token.colorPrimaryBg : 'transparent',
                 fontSize: 13,
                 flexWrap: 'wrap',
               }}
             >
               <StepStatusIcon status={status} />
-              <span style={{ color: '#999', fontSize: 12, minWidth: 16 }}>#{step.index + 1}</span>
+              <span style={{ color: token.colorTextTertiary, fontSize: 12, minWidth: 16 }}>#{step.index + 1}</span>
               <span style={{ flex: 1, minWidth: 0 }}>{step.description}</span>
               {step.parallelGroup != null && (
                 <Tag color="blue" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', margin: 0 }}>
@@ -154,8 +154,8 @@ const PlanCard: React.FC<PlanCardProps> = ({
                   fontSize: 11,
                   padding: '1px 6px',
                   borderRadius: 4,
-                  background: 'rgba(22,119,255,0.08)',
-                  color: '#1677ff',
+                  background: token.colorPrimaryBg,
+                  color: token.colorPrimary,
                 }}>
                   {step.agent}
                 </span>
@@ -166,7 +166,7 @@ const PlanCard: React.FC<PlanCardProps> = ({
                 </Tag>
               ))}
               {step.error && (
-                <span style={{ fontSize: 11, color: '#ff4d4f' }}>{step.error}</span>
+                <span style={{ fontSize: 11, color: token.colorError }}>{step.error}</span>
               )}
               {step.result && !step.error && (
                 <span style={{ fontSize: 11, color: token.colorTextSecondary, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

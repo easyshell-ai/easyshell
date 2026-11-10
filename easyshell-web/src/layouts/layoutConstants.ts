@@ -56,7 +56,7 @@ export const DENSITY: Record<'default' | 'compact', DensityTheme> = {
     },
     components: {
       Table: { cellPaddingBlock: 8, cellPaddingInline: 12, cellFontSize: 13 },
-      Menu: { itemHeight: 34 },
+      Menu: { itemHeight: 32 },
     },
   },
   compact: {

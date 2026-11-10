@@ -209,7 +209,7 @@ export default function ScriptWorkbench() {
     }}>
       {/* Header */}
       <div style={{ 
-        padding: '12px 24px', 
+        padding: '12px 16px', 
         borderBottom: `1px solid ${token.colorBorderSecondary}`,
         display: 'flex',
         alignItems: 'center',
@@ -393,7 +393,7 @@ export default function ScriptWorkbench() {
                   width: 3,
                   height: 3,
                   borderRadius: '50%',
-                  backgroundColor: token.colorTextQuaternary,
+                  backgroundColor: token.colorTextTertiary,
                 }} />
               ))}
             </div>

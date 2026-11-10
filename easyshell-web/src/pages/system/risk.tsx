@@ -144,8 +144,8 @@ const RiskConfig: React.FC = () => {
     placeholder: string,
   ) => (
     <Card
-      style={{ borderRadius: 12, borderTop: `3px solid ${borderColor}` }}
-      styles={{ body: { padding: '16px 20px' } }}
+      style={{ borderTop: `3px solid ${borderColor}` }}
+      styles={{ body: { padding: '12px 16px' } }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
         {icon}
@@ -240,9 +240,9 @@ const RiskConfig: React.FC = () => {
           {renderCommandCard(
             t('risk.bannedCommands'),
             t('risk.bannedDescription'),
-            <StopOutlined style={{ fontSize: isMobile ? 16 : 18, color: '#eb2f96' }} />,
+            <StopOutlined style={{ fontSize: isMobile ? 16 : 18, color: token.colorError }} />,
             'magenta',
-            '#eb2f96',
+            token.colorError,
             token.colorErrorBg,
             bannedCommands,
             setBannedCommands,
@@ -255,9 +255,9 @@ const RiskConfig: React.FC = () => {
           {renderCommandCard(
             t('risk.highCommands'),
             t('risk.highDescription'),
-            <WarningOutlined style={{ fontSize: isMobile ? 16 : 18, color: '#fa541c' }} />,
+            <WarningOutlined style={{ fontSize: isMobile ? 16 : 18, color: token.colorWarning }} />,
             'red',
-            '#fa541c',
+            token.colorWarning,
             token.colorWarningBg,
             highCommands,
             setHighCommands,
@@ -270,9 +270,9 @@ const RiskConfig: React.FC = () => {
           {renderCommandCard(
             t('risk.lowCommands'),
             t('risk.lowDescription'),
-            <SafetyCertificateOutlined style={{ fontSize: isMobile ? 16 : 18, color: '#52c41a' }} />,
+            <SafetyCertificateOutlined style={{ fontSize: isMobile ? 16 : 18, color: token.colorSuccess }} />,
             'green',
-            '#52c41a',
+            token.colorSuccess,
             token.colorSuccessBg,
             lowCommands,
             setLowCommands,
@@ -283,7 +283,7 @@ const RiskConfig: React.FC = () => {
         </Col>
       </Row>
 
-      <Card style={{ borderRadius: 12 }}>
+      <Card>
         <Title level={5} style={{ marginTop: 0, color: token.colorText }}>
           {t('risk.scriptAssess.title')}
         </Title>
