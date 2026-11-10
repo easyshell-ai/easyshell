@@ -6,6 +6,41 @@ web UI and is served by `GET /api/v1/system/version`.
 
 ## [Unreleased]
 
+### Workflow 2.0 — editor and node contract redesign (unreleased)
+
+- **Start / End are real nodes.** New workflows open with an explicit input contract
+  (`definition.variables`) and output contract (`end.config.outputs`). Old workflows
+  keep working and can be completed from the editor. `start` has no incoming edge,
+  `end` has no outgoing edge.
+- **Two new node types: `transform` and `ai-analyze`.** `transform` maps upstream
+  values into named outputs; `ai-analyze` sends filtered, truncated upstream output
+  to the platform-configured model and returns analysis text only. The AI node cannot
+  dispatch commands and never becomes a source of dispatch authority.
+- **Condition IF/ELSE is now a real gate.** Edges carry `sourceHandle` (`true` /
+  `false`); the engine reads the condition node's `output.result` and only traverses
+  the matching edge. Legacy definitions without `sourceHandle` keep the old
+  `edge.condition` semantics. This removes the previous trap where a TRUE branch was
+  always traversable unless the user duplicated the expression on the edge.
+- **Run output follows the End node.** When a workflow has exactly one End node, its
+  mapped output becomes `workflow_run.output`; workflows without an End keep the old
+  per-node aggregate.
+- **Editor rebuilt around comprehension.** Grouped/searchable palette, full-height
+  canvas, right-side inspector with Config / Data / Docs tabs, variable picker for
+  every template and expression field, Start input editor, End output editor,
+  Transform mapping editor, AI instructions/input editor, node summaries on the
+  canvas, IF/ELSE edge pills readable in light and dark themes, an in-app help drawer
+  and three workflow templates.
+- **Fixed React error #185 when dragging a connection.** Selection is no longer lifted
+  into page state and written back into the node array; React Flow callbacks are
+  stable, editor-mode nodes are not cloned on every render, and node/data identity is
+  preserved. Added a regression test for connecting nodes.
+- **Fixed stale-draft publish and lost trailing edits.** Autosave now uses an edit
+  generation token and serialises concurrent saves; publishing and test runs flush the
+  draft first. Switching workflows resets the snapshot and history correctly.
+- **Run monitor node inspector and single-node test run.** Clicking a node row shows
+  inputs, outputs, errors and warnings, and can call the existing test-run endpoint
+  without rerunning the whole workflow.
+
 ## [1.2.0] - 2026-11-09
 
 Feature release: the workflow engine (orchestrate operations as a versioned,
