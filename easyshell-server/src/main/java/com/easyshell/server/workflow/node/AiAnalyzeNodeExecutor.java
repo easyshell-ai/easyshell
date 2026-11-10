@@ -13,6 +13,7 @@ import com.easyshell.server.workflow.expression.ExpressionEvaluator;
 import com.easyshell.server.workflow.expression.ExpressionException;
 import com.easyshell.server.workflow.graph.ValidationIssue;
 import com.easyshell.server.workflow.model.NodeType;
+import com.easyshell.server.workflow.model.ValueType;
 import com.easyshell.server.workflow.model.WorkflowDefinition;
 import com.easyshell.server.workflow.model.WorkflowNode;
 import com.easyshell.server.workflow.properties.WorkflowProperties;
@@ -57,6 +58,10 @@ public class AiAnalyzeNodeExecutor implements NodeExecutor {
     static final int MAX_WAIT_SECONDS = 180;
 
     private static final String MODEL_LABEL = "default";
+
+    /** AI input 的纯路径形态（与 DagValidator.PURE_PATH 保持一致） */
+    private static final java.util.regex.Pattern PURE_PATH = java.util.regex.Pattern.compile(
+            "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$");
 
     private static final String SYSTEM_PROMPT = """
             你是 EasyShell 的运维分析助手。你只分析给定的运维输出并给出结论文本。
@@ -127,8 +132,7 @@ public class AiAnalyzeNodeExecutor implements NodeExecutor {
         String inputTemplate = node.configString("input", "");
         String resolvedInput;
         try {
-            resolvedInput = expressionEvaluator.renderTemplate(inputTemplate, Map.of(),
-                    ctx.resolver(), ctx.variables()::addWarning);
+            resolvedInput = resolveInput(inputTemplate, ctx);
         } catch (ExpressionException e) {
             throw new NodeFailedException(e.getCode(), e.getMessage(), e);
         }
@@ -138,14 +142,7 @@ public class AiAnalyzeNodeExecutor implements NodeExecutor {
             filteredInput = filteredInput.substring(0, maxInputChars);
         }
 
-        // 配额检查在模型调用前：超限时绝不发起请求
-        try {
-            aiQuotaService.checkAndIncrement(ctx.run().getStartedBy(), "workflow-ai-analyze");
-        } catch (BusinessException e) {
-            throw new NodeFailedException("AI_QUOTA_EXCEEDED",
-                    "AI 分析配额检查失败: " + e.getMessage(), e);
-        }
-
+        // 先解析模型：模型不可用/未配置时不能先扣配额
         ChatModel chatModel;
         try {
             chatModel = chatModelFactory.getChatModel(null);
@@ -162,10 +159,19 @@ public class AiAnalyzeNodeExecutor implements NodeExecutor {
                 node.timeoutSecOrDefault(properties.getEngine().getDefaultNodeTimeoutSec()),
                 MAX_WAIT_SECONDS));
 
+        // 配额在模型解析之后、池准入之前；池拒绝时退回，绝不为"没跑起来的调用"计费
+        try {
+            aiQuotaService.checkAndIncrement(ctx.run().getStartedBy(), "workflow-ai-analyze");
+        } catch (BusinessException e) {
+            throw new NodeFailedException("AI_QUOTA_EXCEEDED",
+                    "AI 分析配额检查失败: " + e.getMessage(), e);
+        }
+
         Future<String> future;
         try {
             future = aiPool.submit(() -> callModel(chatModel, userText));
         } catch (RejectedExecutionException e) {
+            aiQuotaService.refund(ctx.run().getStartedBy());
             throw new NodeFailedException("AI_UNAVAILABLE", "AI 分析线程池繁忙，请稍后重试");
         }
 
@@ -207,6 +213,27 @@ public class AiAnalyzeNodeExecutor implements NodeExecutor {
         output.put("truncated", truncated);
         ctx.variables().putNodeOutput(node.getKey(), node.getOutputVar(), output);
         return NodeOutcome.SUCCEEDED;
+    }
+
+    /**
+     * AI input 解析：纯路径（如 {@code nodes.check.output}）按路径取值并字符串化，
+     * 其余按 {@code ${path}} 模板插值——与 DagValidator 的静态引用识别保持一致。
+     */
+    private String resolveInput(String inputTemplate, NodeContext ctx) {
+        String template = inputTemplate == null ? "" : inputTemplate;
+        String trimmed = template.trim();
+        if (!template.contains("${") && PURE_PATH.matcher(trimmed).matches()) {
+            String path = ExpressionEvaluator.normalizePath(trimmed);
+            Object value = ctx.resolver().resolve(path)
+                    .orElseThrow(() -> new ExpressionException(ExpressionException.REFERENCE_NOT_FOUND,
+                            "引用的变量不存在: " + path));
+            java.util.List<String> warnings = new java.util.ArrayList<>();
+            String rendered = ValueType.renderToString(value, warnings);
+            warnings.forEach(ctx.variables()::addWarning);
+            return rendered;
+        }
+        return expressionEvaluator.renderTemplate(template, Map.of(),
+                ctx.resolver(), ctx.variables()::addWarning);
     }
 
     private String callModel(ChatModel chatModel, String userText) {

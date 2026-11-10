@@ -196,6 +196,15 @@ class VariableStoreTest {
         }
 
         @Test
+        @DisplayName("putInput / putRunMetadata 对 null 安全（ConcurrentHashMap 不接受 null）")
+        void nullWritesAreIgnored() {
+            store.putInput("optional", null);
+            store.putRunMetadata("run.workflowName", null);
+            assertThat(store.resolve("run.input.optional")).isEmpty();
+            assertThat(store.resolve("run.workflowName")).isEmpty();
+        }
+
+        @Test
         @DisplayName("createSnapshot：节点只能读其拓扑祖先的输出（§2.2 ③）")
         void snapshotIsolation() {
             store.putInput("threshold", 90);

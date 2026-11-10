@@ -310,6 +310,12 @@ public class DagValidator {
             sink.error("GRAPH_END_INVALID",
                     "工作流最多 1 个 end 节点，实际 " + endNodes.size(), endNodes.get(0).getKey());
         }
+        for (WorkflowNode end : endNodes) {
+            if (def.getNodes().size() > 1 && def.inEdges(end.getKey()).isEmpty()) {
+                sink.error("GRAPH_END_INVALID",
+                        "end 节点必须有入边（定义里还有其他节点）", end.getKey());
+            }
+        }
         // 有 end 时其他 sink 只警告（旧工作流没有 end，不能因为补端提示阻断发布）
         if (!endNodes.isEmpty()) {
             for (WorkflowNode node : def.getNodes()) {
@@ -386,7 +392,7 @@ public class DagValidator {
                     continue;
                 }
                 Set<String> allowed = ancestors.getOrDefault(node.getKey(), Set.of());
-                for (String referenced : expressionEvaluator.referencedNodeKeys(expression)) {
+                for (String referenced : expressionEvaluator.referencedNodeKeys(expression, aliases)) {
                     if (!allowed.contains(referenced)) {
                         sink.error("EXPRESSION_REFERENCE_NOT_ANCESTOR",
                                 "表达式引用了非祖先节点 '" + referenced + "' 的输出（节点 " + node.getKey()
@@ -406,6 +412,7 @@ public class DagValidator {
                     }
                 }
             }
+            validateAiRawParams(node, def, aliases, sink);
             // 失败策略取值合法性（未知值在运行期按最严格 ABORT 处理，发布期先警告）
             for (String policy : new String[]{node.getOnFailure()}) {
                 if (policy != null && !policy.isBlank() && FailurePolicy.fromCode(policy) == null) {
@@ -428,20 +435,49 @@ public class DagValidator {
         }
     }
 
-    /** 需要做 ${path} 引用校验的模板字段（transform/end 映射值、AI input） */
+    /** 需要做 ${path} 引用校验的模板字段（全部模板型 config，不再只有 transform/end） */
     private List<String> templateFields(WorkflowNode node) {
         if (node.nodeType() == null) {
             return List.of();
         }
         List<String> result = new ArrayList<>();
         switch (node.nodeType()) {
+            case SCRIPT_EXEC -> addMapValues(node, "parameters", result);
             case TRANSFORM -> addMappingValues(node, "mappings", result);
             case END -> addMappingValues(node, "outputs", result);
-            case AI_ANALYZE -> result.add(node.configString("input", ""));
+            case AI_ANALYZE -> addString(node, "input", result);
+            case NOTIFY -> {
+                addString(node, "messageTemplate", result);
+                addMapValues(node, "parameters", result);
+            }
+            case APPROVAL -> {
+                addString(node, "title", result);
+                addString(node, "detailTemplate", result);
+                addMapValues(node, "parameters", result);
+            }
             default -> {
             }
         }
         return result;
+    }
+
+    private void addString(WorkflowNode node, String configKey, List<String> result) {
+        Object value = node.getConfig() == null ? null : node.getConfig().get(configKey);
+        if (value instanceof String text) {
+            result.add(text);
+        }
+    }
+
+    private void addMapValues(WorkflowNode node, String configKey, List<String> result) {
+        Map<String, Object> map = node.configMap(configKey);
+        if (map == null) {
+            return;
+        }
+        for (Object value : map.values()) {
+            if (value instanceof String text) {
+                result.add(text);
+            }
+        }
     }
 
     private void addMappingValues(WorkflowNode node, String configKey, List<String> result) {
@@ -452,6 +488,48 @@ public class DagValidator {
         for (Object row : rows) {
             if (row instanceof Map<?, ?> map && map.get("value") instanceof String value) {
                 result.add(value);
+            }
+        }
+    }
+
+    /**
+     * rawParams 的值绕过 L1 字符集与 L3 段级禁替换检查，直接进入脚本。AI 节点输出可被
+     * 上游提示注入污染，若被 raw 槽位直引，提示注入就能变成命令执行面——发布期直接拒绝。
+     */
+    private void validateAiRawParams(WorkflowNode node, WorkflowDefinition def,
+                                     Map<String, String> aliases, ValidationIssue.Sink sink) {
+        if (node.nodeType() != NodeType.SCRIPT_EXEC) {
+            return;
+        }
+        List<Object> rawSlots = node.configList("rawParams");
+        Map<String, Object> parameters = node.configMap("parameters");
+        if (rawSlots == null || rawSlots.isEmpty() || parameters == null) {
+            return;
+        }
+        Set<String> aiNodes = new HashSet<>();
+        for (WorkflowNode candidate : def.getNodes()) {
+            if (candidate.nodeType() == NodeType.AI_ANALYZE) {
+                aiNodes.add(candidate.getKey());
+            }
+        }
+        if (aiNodes.isEmpty()) {
+            return;
+        }
+        for (Object rawSlot : rawSlots) {
+            if (!(rawSlot instanceof String slot)) {
+                continue;
+            }
+            Object value = parameters.get(slot);
+            if (!(value instanceof String template)) {
+                continue;
+            }
+            for (String referenced : templateReferencedNodeKeys(template, aliases)) {
+                if (aiNodes.contains(referenced)) {
+                    sink.error("AI_OUTPUT_RAW_FORBIDDEN",
+                            "脚本参数 '" + slot + "' 在 rawParams 中直接引用 ai-analyze 节点 '"
+                                    + referenced + "' 的输出；raw 值绕过值策略，禁止进入命令面",
+                            node.getKey());
+                }
             }
         }
     }

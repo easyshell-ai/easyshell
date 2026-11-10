@@ -68,8 +68,8 @@ public class WorkflowApiPresenter {
                 .triggerType(run.getTriggerType())
                 .status(run.getStatus())
                 .input(readMap(mask(run.getInputJson())))
-                .output(readMap(run.getOutputJson()))
-                .errorMessage(run.getErrorMessage())
+                .output(readMap(mask(run.getOutputJson())))
+                .errorMessage(mask(run.getErrorMessage()))
                 .variables(readMap(mask(run.getVariablesJson())))
                 .variablesTruncated(Boolean.TRUE.equals(run.getVariablesTruncated()))
                 .currentNodes(readKeys(run.getCurrentNodes()))
@@ -98,8 +98,8 @@ public class WorkflowApiPresenter {
                 // 落库保留原文供审计，但出站前必须与 run 级快照同样脱敏（§6.7.3 出口 1/2，
                 // 复用同一个 SensitiveDataFilter，不写第二套掩码）。
                 .input(readMap(mask(nodeRun.getInputJson())))
-                .output(readMap(nodeRun.getOutputJson()))
-                .errorMessage(nodeRun.getErrorMessage())
+                .output(readMap(mask(nodeRun.getOutputJson())))
+                .errorMessage(mask(nodeRun.getErrorMessage()))
                 .warningMessage(nodeRun.getWarningMessage())
                 .createdAt(nodeRun.getCreatedAt())
                 .startedAt(nodeRun.getStartedAt())
@@ -178,8 +178,9 @@ public class WorkflowApiPresenter {
         try {
             return objectMapper.readValue(json, new TypeReference<LinkedHashMap<String, Object>>() {});
         } catch (Exception e) {
-            // 快照列写坏不应让整个详情 500：按"不存在"处理（G-10 同精神）
-            log.warn("Workflow snapshot column is not a JSON object: {}", e.getMessage());
+            // 快照列写坏不应让整个详情 500：按"不存在"处理（G-10 同精神）。
+            // 不记录异常 message：Jackson 可能回显 payload 片段（含凭据）
+            log.warn("Workflow snapshot column is not a JSON object（内容已隐去）");
             return null;
         }
     }
@@ -192,7 +193,7 @@ public class WorkflowApiPresenter {
         try {
             return objectMapper.readValue(json, new TypeReference<ArrayList<String>>() {});
         } catch (Exception e) {
-            log.warn("Workflow current_nodes column is not a JSON array: {}", e.getMessage());
+            log.warn("Workflow current_nodes column is not a JSON array（内容已隐去）");
             return List.of();
         }
     }

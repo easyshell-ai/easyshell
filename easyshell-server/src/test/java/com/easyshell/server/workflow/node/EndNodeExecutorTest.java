@@ -90,6 +90,23 @@ class EndNodeExecutorTest {
     }
 
     @Test
+    @DisplayName("大输出（>8KB）走专用通道：node preview 仍截断，runOutput 保留完整对象")
+    void largeOutputKeepsDedicatedRunOutput() {
+        String big = "x".repeat(9000);
+        WorkflowNode end = node("finish", List.of(
+                Map.of("name", "summary", "value", "${run.input.blob}")));
+        VariableStore variables = new VariableStore();
+        variables.putInput("blob", big);
+
+        executor.execute(context(end, variables));
+
+        assertThat(variables.nodeOutput("finish").json()).doesNotContain(big);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> runOutput = (Map<String, Object>) variables.runOutput();
+        assertThat(runOutput.get("summary")).isEqualTo(big);
+    }
+
+    @Test
     @DisplayName("引用不存在：EXPRESSION_REFERENCE_NOT_FOUND")
     void missingReferenceFailsClosed() {
         WorkflowNode end = node("finish", List.of(

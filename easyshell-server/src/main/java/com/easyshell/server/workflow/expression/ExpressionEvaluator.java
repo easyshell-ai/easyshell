@@ -144,8 +144,9 @@ public final class ExpressionEvaluator {
         String rendered = sb.toString();
         // ③ fail-closed：残留的 "${" 说明有未闭合的插值，绝不静默当字面量发出
         if (rendered.contains("${")) {
+            // 不回显渲染结果：模板可能已拼入上游输出/凭据，错误信息会进 node_run 与 API
             throw new ExpressionException(ExpressionException.SYNTAX,
-                    "模板含未闭合的 ${ 插值: " + rendered);
+                    "模板含未闭合的 ${ 插值（已隐去渲染结果）");
         }
         return rendered;
     }
@@ -168,23 +169,40 @@ public final class ExpressionEvaluator {
      * 表达式里引用到的 nodeKey 集合（发布期校验"引用集合 ⊆ 祖先集合"，§11.1 ERROR⑦）。
      */
     public Set<String> referencedNodeKeys(String expression) {
+        return referencedNodeKeys(expression, java.util.Map.of());
+    }
+
+    /**
+     * 带 outputVar 别名解析的版本：表达式/边条件里的 {@code <alias>.<path>} 会映射回写者
+     * 节点（与 {@link VariableResolver} 的别名解析保持一致），避免别名绕过祖先校验。
+     *
+     * @param aliases outputVar -> nodeKey
+     */
+    public Set<String> referencedNodeKeys(String expression, java.util.Map<String, String> aliases) {
         Set<String> keys = new TreeSet<>();
         if (expression == null || expression.isBlank()) {
             return keys;
         }
         for (Token token : tokenize(expression)) {
             if (token.kind == Kind.PATH) {
-                collectNodeKeys(token.text, keys);
+                collectNodeKeys(token.text, keys, aliases);
             }
         }
         return keys;
     }
 
-    private void collectNodeKeys(String path, Set<String> keys) {
+    private void collectNodeKeys(String path, Set<String> keys, java.util.Map<String, String> aliases) {
         String normalized = normalizePath(path);
         String[] segments = normalized.split("\\.");
         if (segments.length >= 2 && "nodes".equals(segments[0])) {
             keys.add(segments[1]);
+            return;
+        }
+        if (segments.length >= 1 && aliases != null) {
+            String writer = aliases.get(segments[0]);
+            if (writer != null) {
+                keys.add(writer);
+            }
         }
     }
 

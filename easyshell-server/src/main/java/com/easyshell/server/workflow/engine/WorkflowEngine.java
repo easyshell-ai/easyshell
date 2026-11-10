@@ -81,6 +81,7 @@ public class WorkflowEngine {
     private final WorkflowNodeRunRepository nodeRunRepository;
     private final WorkflowApprovalRepository approvalRepository;
     private final WorkflowVersionRepository versionRepository;
+    private final com.easyshell.server.repository.WorkflowRepository workflowRepository;
     private final JobRepository jobRepository;
     private final NodeExecutorRegistry registry;
     private final DagValidator dagValidator;
@@ -136,6 +137,7 @@ public class WorkflowEngine {
                           WorkflowNodeRunRepository nodeRunRepository,
                           WorkflowApprovalRepository approvalRepository,
                           WorkflowVersionRepository versionRepository,
+                          com.easyshell.server.repository.WorkflowRepository workflowRepository,
                           JobRepository jobRepository,
                           NodeExecutorRegistry registry,
                           DagValidator dagValidator,
@@ -153,6 +155,7 @@ public class WorkflowEngine {
         this.nodeRunRepository = nodeRunRepository;
         this.approvalRepository = approvalRepository;
         this.versionRepository = versionRepository;
+        this.workflowRepository = workflowRepository;
         this.jobRepository = jobRepository;
         this.registry = registry;
         this.dagValidator = dagValidator;
@@ -235,7 +238,9 @@ public class WorkflowEngine {
         if (run == null || TERMINAL_RUN.contains(run.getStatus())) {
             return;
         }
-        initVariablesIfAbsent(run);
+        if (!initVariablesIfAbsentOrFail(run)) {
+            return;
+        }
         withLock(run, () -> {
             WorkflowDefinition def = loadDefinition(run.getVersionId());
             if (def == null) {
@@ -264,7 +269,9 @@ public class WorkflowEngine {
     public void drive(WorkflowRun run) {
         // 队列泵回/扫描器重驱动不会经过 WorkflowRunService 的立即启动路径：在引擎入口
         // 兜底播种 run.input.* 与 run 元信息，保证 queued 启动的 run 与立即启动的完全等价
-        initVariablesIfAbsent(run);
+        if (!initVariablesIfAbsentOrFail(run)) {
+            return;
+        }
         withLock(run, () -> driveLocked(run));
     }
 
@@ -418,9 +425,14 @@ public class WorkflowEngine {
         }
 
         AtomicBoolean nodeCancelled = new AtomicBoolean(false);
+        // 运行期祖先隔离：写仍落 master store，读只给该节点的拓扑祖先快照。
+        // 不开这个视图时，发布期漏掉的引用会在运行期读到兄弟/后继节点输出（横向越权）。
+        java.util.Set<String> ancestors = dagValidator.ancestorMap(def)
+                .getOrDefault(node.getKey(), java.util.Set.of());
+        VariableStore readView = store.createSnapshot(ancestors);
         try {
             NodeContext ctx = new NodeContext(run, row, node, def, store, enginePool, cancelled,
-                    nodeCancelled, false, eventSink, store);
+                    nodeCancelled, false, eventSink, readView);
             NodeOutcome outcome = executeWithTimeout(executor, ctx, node);
             switch (outcome) {
                 case SUCCEEDED -> finishNode(store, run, row, "succeeded", null, null, null);
@@ -768,7 +780,7 @@ public class WorkflowEngine {
         long duration = current.getStartedAt() == null ? 0L
                 : Duration.between(current.getStartedAt(), LocalDateTime.now()).toMillis();
         int finished = runRepository.finishRunAtomically(runId, status, LocalDateTime.now(), duration,
-                buildRunOutput(def, latest), truncate(error, 1000), TERMINAL_RUN);
+                buildRunOutput(runId, def, latest), truncate(error, 1000), TERMINAL_RUN);
         if (finished == 1) {
             publish(WorkflowEvent.of(anyFailed ? "RUN_FAILED" : "RUN_SUCCEEDED", runId, null,
                     anyFailed ? truncate(error, 200) : "运行完成"));
@@ -778,20 +790,28 @@ public class WorkflowEngine {
 
     /**
      * 运行输出契约（工作流 2.0 §2.4）：
-     * 定义里恰好一个 end 节点且它已有 output_json 时，该 JSON 就是整个 run 的输出；
-     * 否则沿用旧的"各节点 output_json 聚合"。end 未执行/失败/output 为空、定义缺失、
-     * 或有多个 end（校验器会拦，但旧数据防御）时都安全回退到聚合。
+     * 定义里恰好一个 succeeded 的 end 节点时，优先用 {@link VariableStore#runOutput()}
+     * 专用通道（完整对象，超过 8KB 也不会被 preview 破坏）；其次用有效的 output_json。
+     * 否则沿用旧的"各节点 output_json 聚合"。end 未执行/失败/输出无法解析、
+     * 定义缺失、或有多个 end（校验器会拦，但旧数据防御）时都安全回退到聚合。
      */
-    private String buildRunOutput(WorkflowDefinition def, Map<String, WorkflowNodeRun> latest) {
-        if (def != null) {
+    private String buildRunOutput(String runId, WorkflowDefinition def,
+                                  Map<String, WorkflowNodeRun> latest) {
+        if (def != null && def.getNodes() != null) {
             List<WorkflowNode> ends = def.getNodes().stream()
                     .filter(n -> n.nodeType() == NodeType.END)
                     .toList();
             if (ends.size() == 1) {
                 WorkflowNodeRun endRow = latest.get(ends.get(0).getKey());
-                if (endRow != null && endRow.getOutputJson() != null
-                        && !endRow.getOutputJson().isBlank()) {
-                    return endRow.getOutputJson();
+                if (endRow != null && "succeeded".equals(endRow.getStatus())) {
+                    VariableStore store = variableStores.get(runId);
+                    Object dedicated = store == null ? null : store.runOutput();
+                    if (dedicated != null) {
+                        return toJson(dedicated);
+                    }
+                    if (isValidJson(endRow.getOutputJson())) {
+                        return endRow.getOutputJson();
+                    }
                 }
             }
         }
@@ -809,6 +829,18 @@ public class WorkflowEngine {
             }
         }
         return toJson(output);
+    }
+
+    /** output_json 是否是有效 JSON（End 行被 preview 截断时不能当整体输出） */
+    private boolean isValidJson(String json) {
+        if (json == null || json.isBlank()) {
+            return false;
+        }
+        try {
+            return objectMapper.readTree(json) != null;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private void failRun(WorkflowRun run, String reason) {
@@ -988,7 +1020,8 @@ public class WorkflowEngine {
                 .previewSha256(output == null ? null : output.previewSha256())
                 .rawParams(row.getRawParams())
                 .artifactIds(row.getArtifactIds())
-                .errorMessage(truncate(error, 1000))
+                // 错误信息可能拼入表达式/上游值，落库前统一脱敏（出站展示还会再过滤一次）
+                .errorMessage(truncate(sensitiveDataFilter.filter(error), 1000))
                 .warningMessage(truncate(sensitiveDataFilter.filter(warning), 1000))
                 .agentVersions(row.getAgentVersions())
                 .taskId(row.getTaskId())
@@ -1102,7 +1135,11 @@ public class WorkflowEngine {
     public void initVariables(WorkflowRun run, WorkflowDefinition def, Map<String, Object> input) {
         VariableStore store = variableStore(run.getId());
         store.putRunMetadata("run.id", run.getId());
-        store.putRunMetadata("run.workflowName", run.getWorkflowId());
+        String workflowName = run.getWorkflowId() == null ? null
+                : workflowRepository.findById(run.getWorkflowId())
+                        .map(com.easyshell.server.model.entity.Workflow::getName).orElse(null);
+        store.putRunMetadata("run.workflowName",
+                workflowName != null ? workflowName : run.getWorkflowId());
         store.putRunMetadata("run.startedBy", run.getStartedBy());
         store.putRunMetadata("run.triggerType", run.getTriggerType());
         if (input != null) {
@@ -1128,6 +1165,63 @@ public class WorkflowEngine {
             return;
         }
         initVariables(run, def, parseRunInput(run.getInputJson()));
+        if (def.getNodes() != null) {
+            restoreSucceededNodeOutputs(run.getId(), def, variableStore(run.getId()));
+        }
+    }
+
+    /**
+     * 重驱动前从 {@code workflow_node_run} 恢复已成功节点的输出。
+     *
+     * <p>重启/队列泵回时内存 store 为空；只恢复 run.input 会让已完成节点变成"输出不存在"，
+     * 下游 condition 会静默走 false 分支。succeeded 行按 output_json 反序列化回
+     * {@link VariableStore#putNodeOutput}（含 outputVar 别名）。condition 输出无法恢复时
+     * 直接失败（VARIABLE_RESTORE_FAILED），绝不两条分支都不走。</p>
+     */
+    private boolean initVariablesIfAbsentOrFail(WorkflowRun run) {
+        if (run != null && TERMINAL_RUN.contains(run.getStatus())) {
+            return true;   // 已终态：driveLocked 会自行清理，不因恢复失败伪造 RUN_FAILED
+        }
+        try {
+            initVariablesIfAbsent(run);
+            return true;
+        } catch (NodeFailedException e) {
+            // 恢复失败必须显式终止：静默继续会让 condition 两条分支都不走
+            failRun(run, e.getCode() + ": " + e.getMessage());
+            return false;
+        }
+    }
+
+    private void restoreSucceededNodeOutputs(String runId, WorkflowDefinition def, VariableStore store) {
+        Map<String, WorkflowNodeRun> latest = latestByKey(runId);
+        for (WorkflowNode node : def.getNodes()) {
+            WorkflowNodeRun row = latest.get(node.getKey());
+            if (row == null || !"succeeded".equals(row.getStatus())) {
+                continue;
+            }
+            Object parsed = null;
+            String json = row.getOutputJson();
+            if (json != null && !json.isBlank()) {
+                try {
+                    parsed = objectMapper.readValue(json, Object.class);
+                } catch (Exception e) {
+                    parsed = null;
+                }
+            }
+            if (node.nodeType() == NodeType.CONDITION) {
+                Object result = parsed instanceof Map<?, ?> map ? map.get("result") : null;
+                if (!(result instanceof Boolean)) {
+                    throw new NodeFailedException("VARIABLE_RESTORE_FAILED",
+                            "条件节点 " + node.getKey() + " 的已成功输出无法恢复（result 缺失或非布尔值）");
+                }
+            }
+            if (parsed == null) {
+                store.addWarning("节点 " + node.getKey() + " 的已成功输出无法恢复（output_json 非有效 JSON）");
+                continue;
+            }
+            store.putNodeOutput(node.getKey(), node.getOutputVar(), parsed);
+            store.putNodeStatus(node.getKey(), row.getStatus(), row.getDurationMs(), row.getAttempt());
+        }
     }
 
     private Map<String, Object> parseRunInput(String json) {

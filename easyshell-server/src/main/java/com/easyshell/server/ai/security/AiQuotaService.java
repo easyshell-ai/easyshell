@@ -42,6 +42,19 @@ public class AiQuotaService {
         log.debug("AI quota usage for user {}: {}/{} (action={})", userId, current, limit, action);
     }
 
+    /**
+     * 退回一次配额（调用方在模型解析/线程池准入失败时使用，避免"没调模型也计费"）。
+     * 幂等边界：只减到 0，不会把其他用户的计数减负。
+     */
+    public void refund(Long userId) {
+        resetIfNewDay();
+        String key = userId + ":" + currentDate;
+        AtomicInteger counter = dailyUsage.get(key);
+        if (counter != null) {
+            counter.updateAndGet(current -> Math.max(0, current - 1));
+        }
+    }
+
     public int getUsage(Long userId) {
         resetIfNewDay();
         String key = userId + ":" + currentDate;

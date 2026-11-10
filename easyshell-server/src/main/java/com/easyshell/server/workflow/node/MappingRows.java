@@ -155,8 +155,7 @@ final class MappingRows {
             throw new ExpressionException(ExpressionException.REFERENCE_NOT_FOUND,
                     "映射值为 null");
         }
-        String trimmed = template.trim();
-        Matcher exact = EXACT_TEMPLATE.matcher(trimmed);
+        Matcher exact = EXACT_TEMPLATE.matcher(template);
         if (exact.matches()) {
             String path = ExpressionEvaluator.normalizePath(exact.group(1).trim());
             Optional<Object> resolved = resolver.resolve(path);
@@ -166,6 +165,7 @@ final class MappingRows {
             }
             return resolved.get();
         }
-        return expressionEvaluator.renderTemplate(trimmed, Map.of(), resolver, warnings);
+        // 非纯 ${path} 模板保留原始首尾空白（exact 只匹配完整原串，不做 trim）
+        return expressionEvaluator.renderTemplate(template, Map.of(), resolver, warnings);
     }
 }

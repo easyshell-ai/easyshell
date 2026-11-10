@@ -54,6 +54,9 @@ public class VariableStore implements VariableResolver {
     private static final int PREVIEW_HEAD = 6144;
     private static final int PREVIEW_TAIL = 2048;
 
+    /** End 节点专用运行输出通道上限（UTF-8 字节）；超过时写合法对象并标记截断 */
+    public static final int RUN_OUTPUT_MAX_BYTES = 65536;
+
     private final Map<String, Object> scalars = new ConcurrentHashMap<>();
     private final Map<String, StoredOutput> nodeOutputs = new ConcurrentHashMap<>();
     private final Map<String, String> outputVarWriters = new ConcurrentHashMap<>();
@@ -61,8 +64,26 @@ public class VariableStore implements VariableResolver {
     private final Map<String, Long> nodeDurations = new ConcurrentHashMap<>();
     private final Map<String, Integer> nodeAttempts = new ConcurrentHashMap<>();
     private final Map<String, Object> runMetadata = new ConcurrentHashMap<>();
-    private final List<String> warnings = new ArrayList<>();
-    private final Object warningLock = new Object();
+    private final List<String> warnings;
+    private final Object warningLock;
+
+    /**
+     * End 节点的完整运行输出。普通 node 输出仍走 8192B preview 通道；这份专用通道只给
+     * {@code workflow_run.output_json} 用，避免大 End 输出被 preview 破坏成非 JSON。
+     */
+    private final java.util.concurrent.atomic.AtomicReference<Object> runOutput =
+            new java.util.concurrent.atomic.AtomicReference<>();
+
+    public VariableStore() {
+        this.warnings = new ArrayList<>();
+        this.warningLock = new Object();
+    }
+
+    /** 快照共享 warning 通道：读视图里执行体记的 warning 仍归 master 的 node_run */
+    private VariableStore(List<String> warnings, Object warningLock) {
+        this.warnings = warnings;
+        this.warningLock = warningLock;
+    }
 
     /** 节点输出的落库形态 */
     public record StoredOutput(String nodeKey, String json, Object value, boolean truncated,
@@ -78,11 +99,43 @@ public class VariableStore implements VariableResolver {
     // ==================================================================
 
     public void putInput(String name, Object value) {
-        scalars.put("run.input." + name, value);
+        if (value != null) {
+            scalars.put("run.input." + name, value);
+        }
     }
 
     public void putRunMetadata(String key, Object value) {
-        runMetadata.put(key, value);
+        if (key != null && value != null) {
+            runMetadata.put(key, value);
+        }
+    }
+
+    /**
+     * 设置 End 运行输出（专用于 workflow_run.output_json）。
+     *
+     * <p>与 {@link #putNodeOutput} 的 8KB preview 不同，这里保留完整对象；超过
+     * {@link #RUN_OUTPUT_MAX_BYTES} 时写入一个合法对象并记 warning，保证 API 永远能解析成对象。</p>
+     */
+    public void setRunOutput(Object value) {
+        if (value == null) {
+            return;
+        }
+        String json = toJson(value);
+        long sizeBytes = json.getBytes(StandardCharsets.UTF_8).length;
+        if (sizeBytes > RUN_OUTPUT_MAX_BYTES) {
+            Map<String, Object> capped = new LinkedHashMap<>();
+            capped.put("_truncated", true);
+            capped.put("message", "运行输出超过 " + RUN_OUTPUT_MAX_BYTES + " 字节上限，已截断");
+            capped.put("preview", json.substring(0, Math.min(json.length(), RUN_OUTPUT_MAX_BYTES)));
+            addWarning("运行输出超过 " + RUN_OUTPUT_MAX_BYTES + " 字节，已截断 preview");
+            runOutput.set(capped);
+            return;
+        }
+        runOutput.set(value);
+    }
+
+    public Object runOutput() {
+        return runOutput.get();
     }
 
     /** 记录节点输出（标量/引用通道的唯一入口，负责截断与指纹） */
@@ -226,7 +279,7 @@ public class VariableStore implements VariableResolver {
      * 于是"读到自己/同波节点/非祖先节点"在运行期结构上不可能。
      */
     public VariableStore createSnapshot(java.util.Set<String> ancestorKeys) {
-        VariableStore snapshot = new VariableStore();
+        VariableStore snapshot = new VariableStore(this.warnings, this.warningLock);
         this.scalars.forEach((key, value) -> {
             if (key.startsWith("run.input.") || key.startsWith("nodes.")) {
                 String nodeKey = key.startsWith("nodes.") ? key.substring(6).split("\\.")[0] : null;
