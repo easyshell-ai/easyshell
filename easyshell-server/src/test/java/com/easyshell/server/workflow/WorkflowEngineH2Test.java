@@ -41,6 +41,7 @@ import com.easyshell.server.workflow.engine.NodeFailedException;
 import com.easyshell.server.workflow.engine.NodeOutcome;
 import com.easyshell.server.workflow.engine.WorkflowEngine;
 import com.easyshell.server.workflow.engine.WorkflowEvent;
+import com.easyshell.server.workflow.engine.WorkflowPendingWakeupScanner;
 import com.easyshell.server.workflow.engine.WorkflowWatchdog;
 import com.easyshell.server.workflow.expression.ExpressionEvaluator;
 import com.easyshell.server.workflow.graph.DagValidator;
@@ -50,7 +51,10 @@ import com.easyshell.server.workflow.model.WorkflowEdge;
 import com.easyshell.server.workflow.model.WorkflowNode;
 import com.easyshell.server.workflow.node.ApprovalNodeExecutor;
 import com.easyshell.server.workflow.node.ConditionNodeExecutor;
+import com.easyshell.server.workflow.node.EndNodeExecutor;
 import com.easyshell.server.workflow.node.NotifyNodeExecutor;
+import com.easyshell.server.workflow.node.StartNodeExecutor;
+import com.easyshell.server.workflow.node.TransformNodeExecutor;
 import com.easyshell.server.workflow.properties.WorkflowProperties;
 import com.easyshell.server.workflow.service.WorkflowRunService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -261,7 +265,7 @@ class WorkflowEngineH2Test {
         retryScheduler.shutdown();
     }
 
-    /** 注册表：5 类执行器，其中 condition/notify/approval 用真实实现 */
+    /** 注册表：本轮用到的执行器（start/transform/condition/end/notify/approval + 两个桩） */
     private NodeExecutorRegistry registry() {
         stubs.clear();
         StubExecutor scriptExec = new StubExecutor(NodeType.SCRIPT_EXEC);
@@ -270,7 +274,10 @@ class WorkflowEngineH2Test {
         stubs.add(wait);
         return new NodeExecutorRegistry(List.of(
                 scriptExec,
+                new StartNodeExecutor(),
+                new TransformNodeExecutor(expressionEvaluator),
                 new ConditionNodeExecutor(expressionEvaluator),
+                new EndNodeExecutor(expressionEvaluator),
                 new NotifyNodeExecutor(channelMessageRouter, expressionEvaluator, new SensitiveDataFilter()),
                 new ApprovalNodeExecutor(approvalStore, expressionEvaluator, properties),
                 wait));
@@ -344,6 +351,38 @@ class WorkflowEngineH2Test {
                    {"id":"e1","from":"start","to":"gate"},
                    {"id":"e2","from":"gate","to":"a"},
                    {"id":"e3","from":"gate","to":"b"}]}
+                """;
+    }
+
+    /**
+     * 工作流 2.0 主链路：start -> transform -> condition -> {true/false branch} -> end。
+     * 两条分支最终都汇到唯一 end；end 输出只取 condition 结果与 transform 映射值。
+     */
+    private String startTransformConditionEndDefinition() {
+        return """
+                {"schemaVersion":1,"defaultOnUpstreamFailure":"skip","onRejection":"abort",
+                 "variables":{"threshold":{"type":"number","required":true}},
+                 "nodes":[
+                   {"key":"begin","type":"start","name":"begin","config":{}},
+                   {"key":"mapping","type":"transform","name":"mapping","config":{"mappings":[
+                     {"name":"usage","value":"${nodes.begin.output.threshold}"},
+                     {"name":"label","value":"使用率 ${nodes.begin.output.threshold}%"}]}},
+                   {"key":"gate","type":"condition","name":"gate","config":{"expression":"nodes.mapping.output.usage > 90"}},
+                   {"key":"ok_branch","type":"transform","name":"ok","config":{"mappings":[
+                     {"name":"branch","value":"true"}]}},
+                   {"key":"bad_branch","type":"transform","name":"bad","config":{"mappings":[
+                     {"name":"branch","value":"false"}]}},
+                   {"key":"finish","type":"end","name":"finish","config":{"outputs":[
+                     {"name":"ok","value":"${nodes.gate.output.result}"},
+                     {"name":"usage","value":"${nodes.mapping.output.usage}"},
+                     {"name":"summary","value":"阈值 ${nodes.mapping.output.usage}"}]}}],
+                 "edges":[
+                   {"id":"e1","from":"begin","to":"mapping"},
+                   {"id":"e2","from":"mapping","to":"gate"},
+                   {"id":"e3","from":"gate","to":"ok_branch","sourceHandle":"true"},
+                   {"id":"e4","from":"gate","to":"bad_branch","sourceHandle":"false"},
+                   {"id":"e5","from":"ok_branch","to":"finish"},
+                   {"id":"e6","from":"bad_branch","to":"finish"}]}
                 """;
     }
 
@@ -509,6 +548,76 @@ class WorkflowEngineH2Test {
         WorkflowRun reloaded = runRepository.findById(run.getId()).orElseThrow();
         assertThat(reloaded.getVariablesJson()).contains("nodes.check.output");
         assertThat(reloaded.getHeartbeatAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("工作流 2.0：start -> transform -> condition -> end，true 只走 IF，run.output=end 映射")
+    void startTransformConditionEnd_trueBranch() throws Exception {
+        WorkflowRun run = startRun(startTransformConditionEndDefinition(), Map.of("threshold", 95));
+        WorkflowRun terminal = awaitTerminal(run.getId());
+
+        assertThat(terminal.getStatus()).as(dumpRun()).isEqualTo("succeeded");
+        assertThat(statusOf(run.getId(), "begin")).isEqualTo("succeeded");
+        assertThat(statusOf(run.getId(), "mapping")).isEqualTo("succeeded");
+        assertThat(nodeRun(run.getId(), "mapping").getOutputJson()).contains("\"usage\":95");
+        assertThat(nodeRun(run.getId(), "gate").getOutputJson()).contains("\"result\":true");
+        assertThat(statusOf(run.getId(), "ok_branch")).isEqualTo("succeeded");
+        assertThat(statusOf(run.getId(), "bad_branch")).as(dumpRun()).isEqualTo("skipped");
+        assertThat(statusOf(run.getId(), "finish")).isEqualTo("succeeded");
+
+        // run.output 只应是 end 的映射，不是各节点输出聚合
+        @SuppressWarnings("unchecked")
+        Map<String, Object> output = objectMapper.readValue(terminal.getOutputJson(), Map.class);
+        assertThat(output.get("ok")).isEqualTo(true);
+        assertThat(((Number) output.get("usage")).doubleValue()).isEqualTo(95.0);
+        assertThat(output.get("summary")).isEqualTo("阈值 95");
+        assertThat(output).doesNotContainKey("mapping");
+        assertThat(output).doesNotContainKey("begin");
+    }
+
+    @Test
+    @DisplayName("工作流 2.0：condition=false 时只走 ELSE，end 仍然产出完整 run.output")
+    void startTransformConditionEnd_falseBranch() throws Exception {
+        WorkflowRun run = startRun(startTransformConditionEndDefinition(), Map.of("threshold", 5));
+        WorkflowRun terminal = awaitTerminal(run.getId());
+
+        assertThat(terminal.getStatus()).as(dumpRun()).isEqualTo("succeeded");
+        assertThat(nodeRun(run.getId(), "gate").getOutputJson()).contains("\"result\":false");
+        assertThat(statusOf(run.getId(), "ok_branch")).as(dumpRun()).isEqualTo("skipped");
+        assertThat(statusOf(run.getId(), "bad_branch")).isEqualTo("succeeded");
+        assertThat(statusOf(run.getId(), "finish")).isEqualTo("succeeded");
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> output = objectMapper.readValue(terminal.getOutputJson(), Map.class);
+        assertThat(output.get("ok")).isEqualTo(false);
+        assertThat(((Number) output.get("usage")).doubleValue()).isEqualTo(5.0);
+    }
+
+    @Test
+    @DisplayName("queued run 泵回后 run.input.* 与立即启动一致（队列丢入参回归）")
+    void queuedRunSeedsTriggerInputs() {
+        properties.getEngine().setMaxConcurrentRuns(1);
+        Long publishedVersionId = publishDefinition(startTransformConditionEndDefinition());
+
+        WorkflowRun queued = new WorkflowRun();
+        queued.setId("wfr_queued_" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 12));
+        queued.setWorkflowId(workflowId);
+        queued.setVersionId(publishedVersionId);
+        queued.setVersionNo(1);
+        queued.setTriggerType("manual");
+        queued.setStatus("queued");
+        queued.setStartedBy(42L);
+        queued.setInputJson("{\"threshold\":95}");
+        runRepository.saveAndFlush(queued);
+
+        WorkflowPendingWakeupScanner scanner = new WorkflowPendingWakeupScanner(
+                runRepository, engine, auditLogService, properties, transactionManager);
+        scanner.scanOnce();
+
+        WorkflowRun terminal = awaitTerminal(queued.getId());
+        assertThat(terminal.getStatus()).as(dumpRun()).isEqualTo("succeeded");
+        assertThat(nodeRun(queued.getId(), "gate").getOutputJson()).contains("\"result\":true");
+        assertThat(nodeRun(queued.getId(), "mapping").getOutputJson()).contains("\"usage\":95");
     }
 
     @Test

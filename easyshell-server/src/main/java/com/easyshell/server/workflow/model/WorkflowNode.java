@@ -18,7 +18,7 @@ public class WorkflowNode {
     /** ^[a-z][a-z0-9_]{0,63}$，图内稳定 ID */
     private String key;
 
-    /** script-exec / condition / notify / approval / wait */
+    /** start / script-exec / transform / condition / ai-analyze / approval / notify / wait / end */
     private String type;
 
     private String name;

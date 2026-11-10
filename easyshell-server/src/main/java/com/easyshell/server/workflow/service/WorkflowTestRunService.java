@@ -23,6 +23,7 @@ import com.easyshell.server.workflow.expression.VariableResolver;
 import com.easyshell.server.workflow.expression.WorkflowValuePolicy;
 import com.easyshell.server.workflow.model.NodeType;
 import com.easyshell.server.workflow.model.RenderResult;
+import com.easyshell.server.workflow.model.ValueType;
 import com.easyshell.server.workflow.model.WorkflowDefinition;
 import com.easyshell.server.workflow.model.WorkflowNode;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -50,6 +51,9 @@ import java.util.Set;
 @Slf4j
 @Service
 public class WorkflowTestRunService {
+
+    private static final java.util.regex.Pattern EXACT_TEMPLATE =
+            java.util.regex.Pattern.compile("^\\$\\{([^{}]+)}$");
 
     private final WorkflowRunRepository runRepository;
     private final WorkflowVersionRepository versionRepository;
@@ -100,6 +104,17 @@ public class WorkflowTestRunService {
         WorkflowTestRunVO result = switch (node.nodeType() == null ? NodeType.SCRIPT_EXEC : node.nodeType()) {
             case SCRIPT_EXEC -> previewScriptExec(node, resolver, warnings);
             case CONDITION -> previewCondition(node, resolver);
+            case START -> previewStart(node, def, resolver, warnings);
+            case TRANSFORM -> previewMappings(node, "mappings", resolver, warnings);
+            case END -> previewMappings(node, "outputs", resolver, warnings);
+            case AI_ANALYZE -> WorkflowTestRunVO.builder()
+                    .nodeKey(nodeKey)
+                    .nodeType(NodeType.AI_ANALYZE.code())
+                    .status("ok")
+                    .riskLevel(RiskLevel.LOW.name())
+                    .riskMatches(List.of())
+                    .warnings(List.of("AI 节点试运行不会调用模型，请在真实运行中验证"))
+                    .build();
             case NOTIFY -> previewNotify(node);
             case APPROVAL, WAIT -> WorkflowTestRunVO.builder()
                     .nodeKey(nodeKey)
@@ -249,6 +264,82 @@ public class WorkflowTestRunService {
                 .riskLevel(RiskLevel.LOW.name())
                 .riskMatches(List.of())
                 .warnings(List.of("M1 试运行不外发通知，仅校验配置"))
+                .build();
+    }
+
+    /** start：按 definition.variables 预览从 run.input.* 能读到哪些入参 */
+    private WorkflowTestRunVO previewStart(WorkflowNode node, WorkflowDefinition def,
+                                           VariableResolver resolver, List<String> warnings) {
+        Map<String, String> resolved = new LinkedHashMap<>();
+        if (def.getVariables() != null) {
+            for (String key : def.getVariables().keySet()) {
+                resolver.resolve("run.input." + key).ifPresent(value ->
+                        resolved.put(key, ValueType.renderToString(value, warnings)));
+            }
+        }
+        return WorkflowTestRunVO.builder()
+                .nodeKey(node.getKey())
+                .nodeType(NodeType.START.code())
+                .status("ok")
+                .riskLevel(RiskLevel.LOW.name())
+                .riskMatches(List.of())
+                .resolvedParameters(resolved)
+                .warnings(filterWarnings(warnings))
+                .build();
+    }
+
+    /**
+     * transform/end 映射预览：试运行没有上游节点输出，解析不到的引用保留原模板并记 warning，
+     * 不把整个 test-run 判失败（用户仍能看到"将要映射成什么"）。
+     */
+    private WorkflowTestRunVO previewMappings(WorkflowNode node, String configKey,
+                                              VariableResolver resolver, List<String> warnings) {
+        Map<String, String> resolved = new LinkedHashMap<>();
+        List<Object> rows = node.configList(configKey);
+        if (rows == null) {
+            warnings.add("节点缺少 " + configKey + " 配置");
+        } else {
+            for (Object item : rows) {
+                if (!(item instanceof Map<?, ?> row)) {
+                    warnings.add(configKey + " 存在非对象行，已跳过");
+                    continue;
+                }
+                Object rawName = row.get("name");
+                Object rawValue = row.get("value");
+                if (!(rawName instanceof String name) || name.isBlank()
+                        || !(rawValue instanceof String value)) {
+                    warnings.add(configKey + " 存在缺少 name/value 的行，已跳过");
+                    continue;
+                }
+                String trimmed = value.trim();
+                java.util.regex.Matcher exact = EXACT_TEMPLATE.matcher(trimmed);
+                try {
+                    if (exact.matches()) {
+                        String path = ExpressionEvaluator.normalizePath(exact.group(1).trim());
+                        resolved.put(name, resolver.resolve(path)
+                                .map(v -> ValueType.renderToString(v, warnings))
+                                .orElseGet(() -> {
+                                    warnings.add("试运行缺少上游输出 " + path + "，已保留原模板");
+                                    return value;
+                                }));
+                    } else {
+                        resolved.put(name, expressionEvaluator.renderTemplate(trimmed, Map.of(),
+                                resolver, warnings::add));
+                    }
+                } catch (ExpressionException e) {
+                    warnings.add("试运行无法解析 " + name + "（" + e.getCode() + "），已保留原模板");
+                    resolved.put(name, value);
+                }
+            }
+        }
+        return WorkflowTestRunVO.builder()
+                .nodeKey(node.getKey())
+                .nodeType(node.nodeType().code())
+                .status("ok")
+                .riskLevel(RiskLevel.LOW.name())
+                .riskMatches(List.of())
+                .resolvedParameters(resolved)
+                .warnings(filterWarnings(warnings))
                 .build();
     }
 

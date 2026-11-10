@@ -3,8 +3,10 @@ package com.easyshell.server.workflow;
 import com.easyshell.server.workflow.controller.WorkflowAccess;
 import com.easyshell.server.workflow.controller.WorkflowController;
 import com.easyshell.server.workflow.engine.WorkflowEngine;
+import com.easyshell.server.workflow.engine.NodeExecutorRegistry;
 import com.easyshell.server.workflow.engine.WorkflowEvent;
 import com.easyshell.server.workflow.engine.WorkflowEventBroadcaster;
+import com.easyshell.server.workflow.model.NodeType;
 import com.easyshell.server.workflow.service.WorkflowDefinitionService;
 import com.easyshell.server.workflow.service.WorkflowRunService;
 import com.easyshell.server.workflow.service.WorkflowTestRunService;
@@ -55,6 +57,8 @@ class WorkflowApiWiringTest {
     private WorkflowRunService runService;
     @Autowired
     private WorkflowTestRunService testRunService;
+    @Autowired
+    private NodeExecutorRegistry nodeExecutorRegistry;
 
     @Test
     @DisplayName("17 个端点所属的 bean 全部装得起来（上下文启动即回归）")
@@ -65,6 +69,16 @@ class WorkflowApiWiringTest {
         assertThat(runService).isNotNull();
         assertThat(testRunService).isNotNull();
         assertThat(runWebSocketHandler).isNotNull();
+    }
+
+    @Test
+    @DisplayName("NodeType 枚举的每个类型都有 Spring 执行器 bean（含工作流 2.0 新增四类）")
+    void everyNodeTypeHasRegisteredExecutor() {
+        for (NodeType type : NodeType.values()) {
+            assertThat(nodeExecutorRegistry.supports(type))
+                    .as("节点类型 %s 缺少执行器 bean（用 @Component 注册）", type.code())
+                    .isTrue();
+        }
     }
 
     @Test

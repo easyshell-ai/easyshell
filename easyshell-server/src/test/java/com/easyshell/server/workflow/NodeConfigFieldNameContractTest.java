@@ -264,6 +264,33 @@ class NodeConfigFieldNameContractTest {
     }
 
     @Test
+    @DisplayName("已知枚举但注册表缺执行器：validate 与 publish 都报 NODE_EXECUTOR_MISSING")
+    void missingExecutorBlocksValidateAndPublish() {
+        // 本测试的注册表只含旧 5 类执行器；end 是已知枚举但没有执行器 bean
+        String definition = """
+                {"schemaVersion":1,
+                 "nodes":[
+                   {"key":"finish","type":"end","name":"finish","config":{"outputs":[]}}],
+                 "edges":[]}
+                """;
+
+        var result = service.validate(json(definition));
+        assertThat(result.getValid()).isFalse();
+        assertThat(result.getIssues()).anySatisfy(i -> {
+            assertThat(i.getCode()).isEqualTo("NODE_EXECUTOR_MISSING");
+            assertThat(i.getSeverity()).isEqualTo("ERROR");
+        });
+
+        Workflow workflow = newWorkflow();
+        service.saveDraft(workflow.getId(), draft(definition, 0, null), OWNER, authOf(OWNER), null);
+        assertThatThrownBy(() -> service.publish(workflow.getId(), null, OWNER, authOf(OWNER), null))
+                .isInstanceOfSatisfying(WorkflowValidationFailedException.class, e ->
+                        assertThat(e.getResult().getIssues())
+                                .anyMatch(i -> "NODE_EXECUTOR_MISSING".equals(i.getCode())
+                                        && "ERROR".equals(i.getSeverity())));
+    }
+
+    @Test
     @DisplayName("旧字段名 channel / message 仍然发布失败（channels + messageTemplate 是硬必填）")
     void legacyChannelMessage_isStillRejected() {
         Workflow workflow = newWorkflow();

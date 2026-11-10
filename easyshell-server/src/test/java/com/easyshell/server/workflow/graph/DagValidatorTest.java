@@ -228,6 +228,62 @@ class DagValidatorTest {
             assertThat(validate(nodes, List.of())).isEmpty();
             assertThat(validator.hasCycle(definition(nodes, List.of()))).isFalse();
         }
+
+        @Test
+        @DisplayName("start -> 中间节点 -> end：拓扑合法，无 sink 警告")
+        void startEndTopologyValid() {
+            List<WorkflowNode> nodes = List.of(
+                    node("begin", "start"), node("work", "script-exec"), node("finish", "end"));
+            List<ValidationIssue> issues = validate(nodes,
+                    List.of(edge("begin", "work"), edge("work", "finish")));
+            assertThat(issues).isEmpty();
+        }
+
+        @Test
+        @DisplayName("多个 start / start 有入边 → GRAPH_START_INVALID")
+        void startRules() {
+            List<WorkflowNode> twoStarts = List.of(
+                    node("s1", "start"), node("s2", "start"), node("end", "end"));
+            List<ValidationIssue> duplicate = validate(twoStarts,
+                    List.of(edge("s1", "end"), edge("s2", "end")));
+            assertThat(hasError(duplicate, "GRAPH_START_INVALID")).isTrue();
+
+            List<WorkflowNode> incoming = List.of(
+                    node("a", "script-exec"), node("begin", "start"), node("finish", "end"));
+            List<ValidationIssue> withIncoming = validate(incoming,
+                    List.of(edge("a", "begin"), edge("begin", "finish")));
+            assertThat(hasError(withIncoming, "GRAPH_START_INVALID")).isTrue();
+        }
+
+        @Test
+        @DisplayName("end 有出边 / 多个 end → GRAPH_END_INVALID")
+        void endRules() {
+            List<WorkflowNode> outgoing = List.of(
+                    node("begin", "start"), node("finish", "end"), node("tail", "notify"));
+            List<ValidationIssue> withOutgoing = validate(outgoing,
+                    List.of(edge("begin", "finish"), edge("finish", "tail")));
+            assertThat(hasError(withOutgoing, "GRAPH_END_INVALID")).isTrue();
+
+            List<WorkflowNode> twoEnds = List.of(
+                    node("begin", "start"), node("e1", "end"), node("e2", "end"));
+            List<ValidationIssue> duplicate = validate(twoEnds,
+                    List.of(edge("begin", "e1"), edge("begin", "e2")));
+            assertThat(hasError(duplicate, "GRAPH_END_INVALID")).isTrue();
+        }
+
+        @Test
+        @DisplayName("存在 end 时其他 sink 只给 WARNING GRAPH_SINK_NOT_END（不阻断旧工作流）")
+        void nonEndSinkWarns() {
+            WorkflowNode begin = node("begin", "start");
+            WorkflowNode gate = node("gate", "condition");
+            WorkflowNode sink = node("sink", "notify");
+            WorkflowNode finish = node("finish", "end");
+            List<ValidationIssue> issues = validate(List.of(begin, gate, sink, finish),
+                    List.of(edge("begin", "gate"), edge("gate", "sink"), edge("gate", "finish")));
+            assertThat(hasWarning(issues, "GRAPH_SINK_NOT_END")).isTrue();
+            assertThat(issues).noneSatisfy(i -> assertThat(i.severity())
+                    .isEqualTo(ValidationIssue.Severity.ERROR));
+        }
     }
 
     // ------------------------------------------------------------------
@@ -323,6 +379,41 @@ class DagValidatorTest {
             falseEdge.setCondition("nodes.gate.output.result == false");
             assertThat(hasError(validate(nodes, List.of(trueEdge, falseEdge)),
                     "EDGE_TYPE_INCOMPATIBLE")).isTrue();
+        }
+
+        @Test
+        @DisplayName("condition sourceHandle=true/false 各一条：合法；旧的 condition 字段允许并存")
+        void conditionSourceHandlesValid() {
+            List<WorkflowNode> nodes = List.of(
+                    node("gate", "condition"), node("yes", "notify"), node("no", "notify"));
+            WorkflowEdge trueEdge = edge("gate", "yes");
+            trueEdge.setSourceHandle("true");
+            trueEdge.setCondition("nodes.gate.output.result == true");
+            WorkflowEdge falseEdge = edge("gate", "no");
+            falseEdge.setSourceHandle("false");
+            // handle 存在时旧 condition 字段允许保留（被 handle 取代），即使两条都带也不报错
+            falseEdge.setCondition("nodes.gate.output.result == false");
+            assertThat(hasError(validate(nodes, List.of(trueEdge, falseEdge)),
+                    "EDGE_TYPE_INCOMPATIBLE")).isFalse();
+        }
+
+        @Test
+        @DisplayName("condition sourceHandle 重复 true / 非法值 → EDGE_TYPE_INCOMPATIBLE")
+        void conditionSourceHandlesInvalid() {
+            List<WorkflowNode> three = List.of(
+                    node("gate", "condition"), node("a", "notify"), node("b", "notify"), node("c", "notify"));
+            WorkflowEdge first = edge("gate", "a");
+            first.setSourceHandle("true");
+            WorkflowEdge second = edge("gate", "b");
+            second.setSourceHandle("true");
+            assertThat(hasError(validate(three, List.of(first, second)), "EDGE_TYPE_INCOMPATIBLE"))
+                    .isTrue();
+
+            List<WorkflowNode> two = List.of(
+                    node("gate", "condition"), node("a", "notify"), node("b", "notify"));
+            WorkflowEdge bad = edge("gate", "b");
+            bad.setSourceHandle("maybe");
+            assertThat(hasError(validate(two, List.of(first, bad)), "EDGE_TYPE_INCOMPATIBLE")).isTrue();
         }
     }
 
@@ -421,6 +512,59 @@ class DagValidatorTest {
             def.getVariables().put("token", spec);
             assertThat(validator.validate(def)).anySatisfy(i ->
                     assertThat(i.code()).isEqualTo("VARIABLE_TYPE_UNKNOWN"));
+        }
+
+        @Test
+        @DisplayName("transform 映射引用非祖先节点 → EXPRESSION_REFERENCE_NOT_ANCESTOR")
+        void transformReferencesNonAncestor() {
+            WorkflowNode map = node("map", "transform");
+            map.setConfig(new LinkedHashMap<>(Map.of("mappings", List.of(
+                    Map.of("name", "usage", "value", "${nodes.other.output.usage}")))));
+            List<WorkflowNode> nodes = List.of(
+                    node("begin", "start"), map, node("other", "script-exec"), node("finish", "end"));
+            List<WorkflowEdge> edges = List.of(
+                    edge("begin", "map"), edge("begin", "other"),
+                    edge("map", "finish"), edge("other", "finish"));
+            assertThat(hasError(validate(nodes, edges), "EXPRESSION_REFERENCE_NOT_ANCESTOR")).isTrue();
+        }
+
+        @Test
+        @DisplayName("transform 映射引用祖先节点（含 outputVar 别名）→ 通过")
+        void transformReferencesAncestorWithAlias() {
+            WorkflowNode check = node("check", "script-exec");
+            check.setOutputVar("disk");
+            WorkflowNode map = node("map", "transform");
+            map.setConfig(new LinkedHashMap<>(Map.of("mappings", List.of(
+                    Map.of("name", "usage", "value", "${disk.usage}"),
+                    Map.of("name", "summary", "value", "使用率 ${nodes.check.output.usage}%")))));
+            List<WorkflowNode> nodes = List.of(
+                    node("begin", "start"), check, map, node("finish", "end"));
+            List<WorkflowEdge> edges = List.of(
+                    edge("begin", "check"), edge("check", "map"), edge("map", "finish"));
+            assertThat(validate(nodes, edges)).isEmpty();
+        }
+
+        @Test
+        @DisplayName("AI input 纯路径 / ${path} 引用非祖先节点 → EXPRESSION_REFERENCE_NOT_ANCESTOR")
+        void aiInputReferencesNonAncestor() {
+            WorkflowNode aiPath = node("ai", "ai-analyze");
+            aiPath.setConfig(new LinkedHashMap<>(Map.of(
+                    "instructions", "分析",
+                    "input", "${nodes.other.output.text}")));
+            List<WorkflowNode> nodes = List.of(
+                    node("begin", "start"), aiPath, node("other", "script-exec"), node("finish", "end"));
+            List<WorkflowEdge> edges = List.of(
+                    edge("begin", "ai"), edge("begin", "other"),
+                    edge("ai", "finish"), edge("other", "finish"));
+            assertThat(hasError(validate(nodes, edges), "EXPRESSION_REFERENCE_NOT_ANCESTOR")).isTrue();
+
+            WorkflowNode aiBarePath = node("ai", "ai-analyze");
+            aiBarePath.setConfig(new LinkedHashMap<>(Map.of(
+                    "instructions", "分析",
+                    "input", "nodes.other.output")));
+            List<WorkflowNode> bareNodes = List.of(
+                    node("begin", "start"), aiBarePath, node("other", "script-exec"), node("finish", "end"));
+            assertThat(hasError(validate(bareNodes, edges), "EXPRESSION_REFERENCE_NOT_ANCESTOR")).isTrue();
         }
 
         @Test

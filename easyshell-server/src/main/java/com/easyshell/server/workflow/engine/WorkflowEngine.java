@@ -15,6 +15,7 @@ import com.easyshell.server.workflow.expression.ExpressionException;
 import com.easyshell.server.workflow.expression.ExpressionEvaluator;
 import com.easyshell.server.workflow.graph.DagValidator;
 import com.easyshell.server.workflow.model.FailurePolicy;
+import com.easyshell.server.workflow.model.NodeType;
 import com.easyshell.server.workflow.model.WorkflowDefinition;
 import com.easyshell.server.workflow.model.WorkflowEdge;
 import com.easyshell.server.workflow.model.WorkflowNode;
@@ -234,6 +235,7 @@ public class WorkflowEngine {
         if (run == null || TERMINAL_RUN.contains(run.getStatus())) {
             return;
         }
+        initVariablesIfAbsent(run);
         withLock(run, () -> {
             WorkflowDefinition def = loadDefinition(run.getVersionId());
             if (def == null) {
@@ -260,6 +262,9 @@ public class WorkflowEngine {
 
     /** 主循环（同步阻塞；测试直接调用） */
     public void drive(WorkflowRun run) {
+        // 队列泵回/扫描器重驱动不会经过 WorkflowRunService 的立即启动路径：在引擎入口
+        // 兜底播种 run.input.* 与 run 元信息，保证 queued 启动的 run 与立即启动的完全等价
+        initVariablesIfAbsent(run);
         withLock(run, () -> driveLocked(run));
     }
 
@@ -554,7 +559,13 @@ public class WorkflowEngine {
                 }
                 // PARTIAL：边可通行，失败上游的 output 视为不存在
             }
-            if (edge.getCondition() != null && !edge.getCondition().isBlank()) {
+            Boolean handleDecision = evaluateConditionHandle(def, edge, store);
+            if (handleDecision != null) {
+                // condition 出边的 sourceHandle 门控优先于 edge.condition（handle 存在即取代）
+                if (!handleDecision) {
+                    continue;
+                }
+            } else if (edge.getCondition() != null && !edge.getCondition().isBlank()) {
                 boolean pass;
                 try {
                     pass = expressionEvaluator.evaluate(edge.getCondition(), store);
@@ -579,6 +590,67 @@ public class WorkflowEngine {
             return new GateDecision(GateAction.SKIP, "upstream_failed");
         }
         return new GateDecision(GateAction.SKIP, anyUnsettled ? "upstream_not_settled" : "condition_false");
+    }
+
+    /**
+     * condition 出边 handle 门控（工作流 2.0 §2.2）。
+     *
+     * @return null = 本边不适用 handle 门控（上游不是 condition 或 sourceHandle 为空），
+     *         交由旧 edge.condition 语义处理；TRUE/FALSE = handle 的通行判定。
+     *         <b>fail-closed</b>：上游输出缺失/result 不是布尔值/handle 非法时返回 false。
+     */
+    private Boolean evaluateConditionHandle(WorkflowDefinition def, WorkflowEdge edge,
+                                            VariableStore store) {
+        String handle = edge.getSourceHandle();
+        if (handle == null || handle.isBlank()) {
+            return null;
+        }
+        WorkflowNode upstream = def.nodeByKey(edge.getFrom());
+        if (upstream == null || upstream.nodeType() != NodeType.CONDITION) {
+            return null;   // 非 condition 的 sourceHandle（如 out）不影响门控
+        }
+        Boolean result = readConditionResult(store, edge.getFrom());
+        boolean isTrueHandle = "true".equals(handle);
+        boolean isFalseHandle = "false".equals(handle);
+        if (result == null || (!isTrueHandle && !isFalseHandle)) {
+            store.addWarning("condition 出边门控失败（sourceHandle=" + handle + "，上游输出"
+                    + (result == null ? "缺失或 result 不是布尔值" : "可解析")
+                    + "），边未通行: " + edge.getFrom() + " -> " + edge.getTo());
+            return false;
+        }
+        return isTrueHandle ? result : !result;
+    }
+
+    /** 读取 condition 节点输出里的 result（只认 Boolean 与严格 "true"/"false" 字符串）。 */
+    private Boolean readConditionResult(VariableStore store, String nodeKey) {
+        VariableStore.StoredOutput output = store.nodeOutput(nodeKey);
+        if (output == null) {
+            return null;
+        }
+        Object value = output.value();
+        if (value instanceof Map<?, ?> map) {
+            return asBoolean(map.get("result"));
+        }
+        if (value == null) {
+            return null;
+        }
+        return asBoolean(ExpressionEvaluator.readJsonPath(output.json(), "result"));
+    }
+
+    private static Boolean asBoolean(Object value) {
+        if (value instanceof Boolean b) {
+            return b;
+        }
+        if (value instanceof String s) {
+            String text = s.trim();
+            if ("true".equalsIgnoreCase(text)) {
+                return true;
+            }
+            if ("false".equalsIgnoreCase(text)) {
+                return false;
+            }
+        }
+        return null;
     }
 
     // ==================================================================
@@ -696,7 +768,7 @@ public class WorkflowEngine {
         long duration = current.getStartedAt() == null ? 0L
                 : Duration.between(current.getStartedAt(), LocalDateTime.now()).toMillis();
         int finished = runRepository.finishRunAtomically(runId, status, LocalDateTime.now(), duration,
-                buildRunOutput(latest), truncate(error, 1000), TERMINAL_RUN);
+                buildRunOutput(def, latest), truncate(error, 1000), TERMINAL_RUN);
         if (finished == 1) {
             publish(WorkflowEvent.of(anyFailed ? "RUN_FAILED" : "RUN_SUCCEEDED", runId, null,
                     anyFailed ? truncate(error, 200) : "运行完成"));
@@ -704,7 +776,25 @@ public class WorkflowEngine {
         cleanup(runId);
     }
 
-    private String buildRunOutput(Map<String, WorkflowNodeRun> latest) {
+    /**
+     * 运行输出契约（工作流 2.0 §2.4）：
+     * 定义里恰好一个 end 节点且它已有 output_json 时，该 JSON 就是整个 run 的输出；
+     * 否则沿用旧的"各节点 output_json 聚合"。end 未执行/失败/output 为空、定义缺失、
+     * 或有多个 end（校验器会拦，但旧数据防御）时都安全回退到聚合。
+     */
+    private String buildRunOutput(WorkflowDefinition def, Map<String, WorkflowNodeRun> latest) {
+        if (def != null) {
+            List<WorkflowNode> ends = def.getNodes().stream()
+                    .filter(n -> n.nodeType() == NodeType.END)
+                    .toList();
+            if (ends.size() == 1) {
+                WorkflowNodeRun endRow = latest.get(ends.get(0).getKey());
+                if (endRow != null && endRow.getOutputJson() != null
+                        && !endRow.getOutputJson().isBlank()) {
+                    return endRow.getOutputJson();
+                }
+            }
+        }
         Map<String, Object> output = new LinkedHashMap<>();
         long total = 0;
         for (WorkflowNodeRun row : latest.values()) {
@@ -1017,6 +1107,41 @@ public class WorkflowEngine {
         store.putRunMetadata("run.triggerType", run.getTriggerType());
         if (input != null) {
             input.forEach((key, value) -> store.putInput(key, value));
+        }
+    }
+
+    /**
+     * 引擎入口兜底播种：仅当该 run 尚未在内存中建立变量存储时，从 run 行
+     * （{@code input_json} + 版本定义）重建 {@code run.input.*} 与 run 元信息。
+     *
+     * <p>为什么必须放在引擎而不是只放在 {@code WorkflowRunService}：queued run 由
+     * {@code WorkflowPendingWakeupScanner} 泵回、心跳过期 run 由扫描器重驱动，这两条路径
+     * 都不经过立即启动分支。没有这次兜底，它们会在"入参不存在"的状态下执行——
+     * condition/transform/ai 都会 fail-closed 跳过，表现为"从队列启动的 run 永远走 false"。</p>
+     */
+    public void initVariablesIfAbsent(WorkflowRun run) {
+        if (run == null || run.getId() == null || variableStores.containsKey(run.getId())) {
+            return;
+        }
+        WorkflowDefinition def = loadDefinition(run.getVersionId());
+        if (def == null) {
+            return;
+        }
+        initVariables(run, def, parseRunInput(run.getInputJson()));
+    }
+
+    private Map<String, Object> parseRunInput(String json) {
+        if (json == null || json.isBlank()) {
+            return Map.of();
+        }
+        try {
+            return objectMapper.readValue(json,
+                    new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {
+                    });
+        } catch (Exception e) {
+            // 不打印异常 message：Jackson 的解析错误可能带输入片段
+            log.warn("run.input_json 解析失败（按空入参处理）");
+            return Map.of();
         }
     }
 

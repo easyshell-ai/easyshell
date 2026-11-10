@@ -84,6 +84,27 @@ public class WorkflowEngineConfig {
         return executor.getThreadPoolExecutor();
     }
 
+    /**
+     * {@code workflowAiPool}：ai-analyze 节点的专用有界池。
+     *
+     * <p>不复用 {@code workflow-engine} 池：LLM 调用可能阻塞数十秒，混进引擎池会把
+     * drive/节点执行线程一起拖死。2 个核心线程、4 个上限、8 个排队位，队列满直接拒绝
+     * （执行器按 AI_UNAVAILABLE 失败），绝不无界堆积。</p>
+     */
+    @Bean(name = "workflowAiPool")
+    public ExecutorService workflowAiPool() {
+        org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor executor =
+                new org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(2);
+        executor.setMaxPoolSize(4);
+        executor.setQueueCapacity(8);
+        executor.setThreadFactory(daemonFactory("workflow-ai-"));
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(30);
+        executor.initialize();
+        return executor.getThreadPoolExecutor();
+    }
+
     /** 退避重试与看门狗的调度池（独立于 ai-scheduler-，SF-5） */
     @Bean(name = "workflowScheduler")
     public TaskScheduler workflowScheduler(WorkflowProperties properties) {

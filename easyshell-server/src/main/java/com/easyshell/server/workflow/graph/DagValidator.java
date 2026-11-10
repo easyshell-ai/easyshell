@@ -44,6 +44,13 @@ public class DagValidator {
     /** nodeKey / outputVar 格式（§2.2） */
     public static final Pattern NODE_KEY = Pattern.compile("^[a-z][a-z0-9_]{0,63}$");
 
+    /** 模板里的 ${path} 引用（只用于静态祖先校验，不改变 ExpressionEvaluator 的渲染语义） */
+    private static final Pattern TEMPLATE_REF = Pattern.compile("\\$\\{([^{}]*)}");
+
+    /** AI input 的纯路径形态（不含 ${} 时按一条路径读取） */
+    private static final Pattern PURE_PATH = Pattern.compile(
+            "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$");
+
     /** wait 节点最长等待秒（防一个节点占死引擎线程） */
     private static final int MAX_WAIT_SECONDS = 3600;
 
@@ -236,15 +243,84 @@ public class DagValidator {
                     sink.error("EDGE_TYPE_INCOMPATIBLE",
                             "condition 节点最多 2 条出边（true/false handle），实际 " + outs.size(), node.getKey());
                 }
+                int trueHandles = 0;
+                int falseHandles = 0;
+                for (WorkflowEdge out : outs) {
+                    String handle = out.getSourceHandle();
+                    if (handle == null || handle.isBlank()) {
+                        continue;
+                    }
+                    if ("true".equals(handle)) {
+                        trueHandles++;
+                    } else if ("false".equals(handle)) {
+                        falseHandles++;
+                    } else {
+                        sink.error("EDGE_TYPE_INCOMPATIBLE",
+                                "condition 出边 sourceHandle 只能是 true / false，实际 '" + handle
+                                        + "'（边 " + out.getFrom() + " -> " + out.getTo() + "）", node.getKey());
+                    }
+                }
+                if (trueHandles > 1) {
+                    sink.error("EDGE_TYPE_INCOMPATIBLE",
+                            "condition 节点 true handle 最多一条出边，实际 " + trueHandles, node.getKey());
+                }
+                if (falseHandles > 1) {
+                    sink.error("EDGE_TYPE_INCOMPATIBLE",
+                            "condition 节点 false handle 最多一条出边，实际 " + falseHandles, node.getKey());
+                }
                 long withCondition = outs.stream()
                         .filter(e -> e.getCondition() != null && !e.getCondition().isBlank()).count();
-                if (withCondition > 1) {
+                boolean allHandlesPresent = outs.stream()
+                        .allMatch(e -> e.getSourceHandle() != null && !e.getSourceHandle().isBlank());
+                // 旧语义只允许一条出边带 condition；新定义全部用 sourceHandle 时，
+                // condition 字段允许保留（被 handle 门控取代），不再按旧规则报错
+                if (withCondition > 1 && !allHandlesPresent) {
                     sink.error("EDGE_TYPE_INCOMPATIBLE",
-                            "condition 节点只允许一条出边带 condition（true handle），实际 " + withCondition, node.getKey());
+                            "condition 节点只允许一条出边带 condition（旧定义 true handle 语义），实际 "
+                                    + withCondition + "；新定义请改用 sourceHandle=true/false", node.getKey());
+                }
+            } else if (type == NodeType.END) {
+                if (!outs.isEmpty()) {
+                    sink.error("GRAPH_END_INVALID",
+                            "end 节点不允许有出边，实际 " + outs.size() + " 条", node.getKey());
                 }
             } else if (outs.size() > 1) {
                 sink.error("EDGE_TYPE_INCOMPATIBLE",
                         type.code() + " 节点是 1 入 1 出，不允许 " + outs.size() + " 条出边", node.getKey());
+            }
+        }
+
+        // ③-b start / end 拓扑（工作流 2.0 §2.1）
+        List<WorkflowNode> startNodes = def.getNodes().stream()
+                .filter(n -> n.nodeType() == NodeType.START).toList();
+        List<WorkflowNode> endNodes = def.getNodes().stream()
+                .filter(n -> n.nodeType() == NodeType.END).toList();
+        if (startNodes.size() > 1) {
+            sink.error("GRAPH_START_INVALID",
+                    "工作流最多 1 个 start 节点，实际 " + startNodes.size(), startNodes.get(0).getKey());
+        }
+        for (WorkflowNode start : startNodes) {
+            if (!def.inEdges(start.getKey()).isEmpty()) {
+                sink.error("GRAPH_START_INVALID",
+                        "start 节点不允许有入边，实际 " + def.inEdges(start.getKey()).size() + " 条",
+                        start.getKey());
+            }
+        }
+        if (endNodes.size() > 1) {
+            sink.error("GRAPH_END_INVALID",
+                    "工作流最多 1 个 end 节点，实际 " + endNodes.size(), endNodes.get(0).getKey());
+        }
+        // 有 end 时其他 sink 只警告（旧工作流没有 end，不能因为补端提示阻断发布）
+        if (!endNodes.isEmpty()) {
+            for (WorkflowNode node : def.getNodes()) {
+                if (node.nodeType() == NodeType.END) {
+                    continue;
+                }
+                if (outEdges.getOrDefault(node.getKey(), List.of()).isEmpty()) {
+                    sink.warning("GRAPH_SINK_NOT_END",
+                            "节点 '" + node.getKey() + "' 是汇点但不是 end 节点；运行输出可能不完整",
+                            node.getKey());
+                }
             }
         }
 
@@ -284,8 +360,9 @@ public class DagValidator {
             }
         }
 
-        // ⑥ 表达式：语法 / 禁用 token / 引用非祖先节点
+        // ⑥ 表达式：语法 / 禁用 token / 引用非祖先节点（含 transform/end 模板与 AI input）
         Map<String, Set<String>> ancestors = ancestorMap(def);
+        Map<String, String> aliases = outputVarWriters;
         for (WorkflowNode node : def.getNodes()) {
             List<String> expressions = new ArrayList<>();
             if (node.nodeType() == NodeType.CONDITION) {
@@ -317,6 +394,18 @@ public class DagValidator {
                     }
                 }
             }
+
+            // 模板字段（${path} 插值 / AI input 纯路径）：只做引用祖先校验，不做表达式词法分析
+            Set<String> allowed = ancestors.getOrDefault(node.getKey(), Set.of());
+            for (String template : templateFields(node)) {
+                for (String referenced : templateReferencedNodeKeys(template, aliases)) {
+                    if (!allowed.contains(referenced)) {
+                        sink.error("EXPRESSION_REFERENCE_NOT_ANCESTOR",
+                                "模板引用了非祖先节点 '" + referenced + "' 的输出（节点 " + node.getKey()
+                                        + "）：节点只能读其拓扑前驱的输出", node.getKey());
+                    }
+                }
+            }
             // 失败策略取值合法性（未知值在运行期按最严格 ABORT 处理，发布期先警告）
             for (String policy : new String[]{node.getOnFailure()}) {
                 if (policy != null && !policy.isBlank() && FailurePolicy.fromCode(policy) == null) {
@@ -335,6 +424,77 @@ public class DagValidator {
                             "wait 节点 durationSec 必须在 1.." + MAX_WAIT_SECONDS + " 之间，实际 " + duration,
                             node.getKey());
                 }
+            }
+        }
+    }
+
+    /** 需要做 ${path} 引用校验的模板字段（transform/end 映射值、AI input） */
+    private List<String> templateFields(WorkflowNode node) {
+        if (node.nodeType() == null) {
+            return List.of();
+        }
+        List<String> result = new ArrayList<>();
+        switch (node.nodeType()) {
+            case TRANSFORM -> addMappingValues(node, "mappings", result);
+            case END -> addMappingValues(node, "outputs", result);
+            case AI_ANALYZE -> result.add(node.configString("input", ""));
+            default -> {
+            }
+        }
+        return result;
+    }
+
+    private void addMappingValues(WorkflowNode node, String configKey, List<String> result) {
+        List<Object> rows = node.configList(configKey);
+        if (rows == null) {
+            return;
+        }
+        for (Object row : rows) {
+            if (row instanceof Map<?, ?> map && map.get("value") instanceof String value) {
+                result.add(value);
+            }
+        }
+    }
+
+    /**
+     * 从模板文本中提取被引用的 nodeKey：
+     * <ul>
+     *   <li>{@code ${nodes.check.output.x}} → check</li>
+     *   <li>{@code ${alias.x}} → alias 的写者节点</li>
+     *   <li>AI input 是纯路径（不含 ${}）时，整串按一条路径处理</li>
+     * </ul>
+     * 未知别名/非 nodes 路径（run.input.* 等）不产生引用，运行期由 resolver fail-closed。
+     */
+    private Set<String> templateReferencedNodeKeys(String text, Map<String, String> aliases) {
+        Set<String> keys = new LinkedHashSet<>();
+        if (text == null || text.isBlank()) {
+            return keys;
+        }
+        String trimmed = text.trim();
+        if (!trimmed.contains("${")) {
+            if (PURE_PATH.matcher(trimmed).matches()) {
+                collectNodeKey(trimmed, aliases, keys);
+            }
+            return keys;
+        }
+        java.util.regex.Matcher matcher = TEMPLATE_REF.matcher(trimmed);
+        while (matcher.find()) {
+            collectNodeKey(matcher.group(1).trim(), aliases, keys);
+        }
+        return keys;
+    }
+
+    private void collectNodeKey(String rawPath, Map<String, String> aliases, Set<String> keys) {
+        String normalized = ExpressionEvaluator.normalizePath(rawPath);
+        String[] segments = normalized.split("\\.");
+        if (segments.length >= 2 && "nodes".equals(segments[0])) {
+            keys.add(segments[1]);
+            return;
+        }
+        if (segments.length >= 1) {
+            String writer = aliases.get(segments[0]);
+            if (writer != null) {
+                keys.add(writer);
             }
         }
     }
