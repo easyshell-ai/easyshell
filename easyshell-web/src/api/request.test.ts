@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 import type { AxiosAdapter, InternalAxiosRequestConfig } from 'axios';
 import request from './request';
 
@@ -26,20 +26,50 @@ function rejectAdapter(status: number, data: unknown): AxiosAdapter {
 /** What GlobalExceptionHandler returns: HTTP 4xx with the R envelope in the body. */
 const envelope = (code: number, message: string) => ({ code, message, data: null });
 
+/**
+ * jsdom cannot navigate, so `location` has to be stubbed for the redirect to be observable.
+ * How the stub has to be written depends on the pool, and that is the whole bug:
+ *
+ * - `threads`/`forks` (the default) populate the worker's *own* global, so `window.location`
+ *   is a configurable accessor vitest installed on the Node global. Replacing it with
+ *   `Object.defineProperty(window, 'location', { value: { href } })` works.
+ * - `vmThreads`/`vmForks` run the test inside jsdom's own VM context, where `window` IS that
+ *   global and `location` is jsdom's `[LegacyUnforgeable]` property — non-configurable, and
+ *   every member of the `Location` wrapper is `[Unforgeable]` too. So neither
+ *   `Object.defineProperty(window, 'location', ...)` nor stubbing `href` on the instance
+ *   (nor `vi.stubGlobal`, which defines on the very same object) works: they all throw
+ *   `TypeError: Cannot redefine property: location`. Thrown from `beforeAll`, that fails the
+ *   whole suite and vitest reports every test as *skipped* rather than failed.
+ *
+ * What works everywhere is patching the `href` accessor on the jsdom `LocationImpl`
+ * prototype, which is a plain configurable property. The wrapper's own unforgeable
+ * accessor delegates to it, so `window.location.href` reads and writes our stub. The impl is
+ * reached through `window._document._location` — jsdom's own handle, stable across the
+ * jsdom versions this repo pins.
+ */
+function stubLocationHref(): void {
+  const impl = (window as unknown as { _document: { _location: object } })._document?._location;
+  if (!impl) {
+    throw new Error('cannot reach the jsdom Location implementation to stub location.href');
+  }
+  const proto = Object.getPrototypeOf(impl) as { href: string };
+  let href = LOGIN_URL;
+  Object.defineProperty(proto, 'href', {
+    configurable: true,
+    get: () => href,
+    set: (next: string) => {
+      href = next;
+    },
+  });
+}
+
 describe('response interceptor', () => {
   beforeAll(() => {
-    // jsdom cannot navigate; replace location so the redirect is observable.
-    Object.defineProperty(window, 'location', {
-      value: { href: LOGIN_URL },
-      writable: true,
-      configurable: true,
-    });
+    stubLocationHref();
   });
 
-  beforeEach(() => {
+  afterEach(() => {
     window.location.href = LOGIN_URL;
-    sessionStorage.clear();
-    localStorage.clear();
   });
 
   it('resolves a login 401 envelope instead of treating it as an expired session', async () => {

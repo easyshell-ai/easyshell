@@ -44,8 +44,25 @@ beforeAll(() => {
   });
 });
 
-/** @testing-library 不会自动卸载（没开 globals:true 的 setupFiles），逐个用例手工清理 */
-afterEach(cleanup);
+/**
+ * @testing-library 不会自动卸载（没开 globals:true 的 setupFiles），逐个用例手工清理。
+ *
+ * `cleanup()` 只拆 DOM，不会等 React 的 scheduler 排空：scheduler 用 `setImmediate` 跑
+ * `performWorkUntilDeadline`，任何没被 await 掉的 state 更新都会把一个宏任务留在队列里。
+ * 这个回调跑在测试文件结束、jsdom 环境被拆掉之后，此时 `window` 已是 undefined，于是 vitest
+ * 在测试全绿的情况下仍报一条 unhandled error：
+ *
+ *   ReferenceError: window is not defined
+ *    ❯ react-dom-client.development.js
+ *    ❯ Immediate.performWorkUntilDeadline scheduler.development.js
+ *
+ * CI 的时序（更快或更慢都行）决定它是否可见，所以本地复现不了。等一个宏任务让这些回调在
+ * 环境还活着的时候跑完，unhandled error 就无处可生。
+ */
+afterEach(async () => {
+  cleanup();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
 
 const emptyDefinition: WorkflowDefinition = {
   schemaVersion: 1,
