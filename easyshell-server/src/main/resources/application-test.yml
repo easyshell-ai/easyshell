@@ -63,6 +63,11 @@ easyshell:
     # run 占住并发位（审批挂起不释放），第三个用例触发的 run 因此挤进不去、
     # 永远等不到挂起，awaitility 40s 超时后随机失败。测试里把上限抬高，
     # 让用例之间不再互相挤占——这也是测试配置该做的事，不该让用例靠执行顺序碰运气。
+    #
+    # 注意：这一项对 WorkflowApiContractTest 不生效——它自己的 @TestPropertySource
+    # 把 max-concurrent-runs 设成 4，而内联属性的优先级高于本文件。真正让审批用例
+    # 稳定下来的是 WorkflowEngineConfig.workflowEnginePool 按并发配置推导池大小
+    # （三级嵌套的线程账），不是这个上限。
     engine:
       max-concurrent-runs: 16
   provision:
