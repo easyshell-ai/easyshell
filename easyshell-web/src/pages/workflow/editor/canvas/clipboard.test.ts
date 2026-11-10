@@ -84,6 +84,25 @@ describe('pasteWithNewKeys', () => {
     expect(falseEdge?.id).toBe(`${result.keyMap.cond}:${HANDLE_FALSE}->${result.keyMap.c}`);
   });
 
+  it('preserves classifier class/default handles instead of remapping them to true/false', () => {
+    const classifier: WorkflowNode = {
+      ...node('pick', 0, 0, 'classifier'),
+      config: { classes: [{ name: 'disk' }, { name: 'network' }] },
+    };
+    const edges: WorkflowEdge[] = [
+      { id: edgeIdFor('pick', 'disk', 'a'), from: 'pick', to: 'a', sourceHandle: 'disk' },
+      { id: edgeIdFor('pick', 'default', 'b'), from: 'pick', to: 'b', sourceHandle: 'default' },
+    ];
+    const payload = buildClipboardPayload([classifier, node('a'), node('b')], edges);
+    const result = pasteWithNewKeys(payload, []);
+    const from = result.keyMap.pick;
+    expect(result.edges.map((e) => e.sourceHandle)).toEqual(['disk', 'default']);
+    expect(result.edges.map((e) => e.id)).toEqual([
+      `${from}:disk->${result.keyMap.a}`,
+      `${from}:default->${result.keyMap.b}`,
+    ]);
+  });
+
   it('drops edges pointing outside the copied set', () => {
     const payload = buildClipboardPayload([node('a')], [{ id: 'a:out->zz', from: 'a', to: 'zz' }]);
     const result = pasteWithNewKeys(payload, []);

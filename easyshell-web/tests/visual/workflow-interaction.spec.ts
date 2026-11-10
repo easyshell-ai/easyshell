@@ -103,3 +103,78 @@ test('节点检查器 / 帮助 / 模板可以打开（信息架构冒烟）', as
 
   expect(pageErrors).toEqual([]);
 });
+
+test('LLM 检查器：配置 / 说明各自滚动，footer 固定（工作流 2.1）', async ({ page }) => {
+  const pageErrors: Error[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error));
+
+  await bootstrap(page, 'dark');
+  await page.goto('/workflow/editor/2');
+  await waitStable(page);
+
+  // 从调色板键盘添加 LLM 节点（与拖拽同一落点逻辑），打开长表单
+  await page.getByTestId('palette-llm').press('Enter');
+  const llmNode = page.locator('.react-flow__node').filter({ hasText: 'LLM' }).first();
+  await expect(llmNode).toBeVisible();
+  await llmNode.dblclick();
+  await expect(page.getByTestId('node-inspector')).toBeVisible();
+  await expect(page.getByTestId('llm-fields')).toBeVisible();
+
+  const content = page.locator('.wf-inspector-tabs .ant-tabs-content-active');
+  const configMetrics = await content.evaluate((el) => ({
+    overflowY: getComputedStyle(el).overflowY,
+    scrollHeight: el.scrollHeight,
+    clientHeight: el.clientHeight,
+    paddingBottom: getComputedStyle(el).paddingBottom,
+  }));
+  expect(configMetrics.overflowY).toBe('auto');
+  expect(configMetrics.clientHeight).toBeGreaterThan(300);
+  expect(configMetrics.paddingBottom).toBe('64px');
+  expect(configMetrics.scrollHeight).toBeGreaterThan(configMetrics.clientHeight);
+
+  await page.getByTestId('node-inspector-tab-docs').click();
+  await expect(page.getByTestId('node-docs')).toBeVisible();
+  const docsMetrics = await content.evaluate((el) => ({
+    overflowY: getComputedStyle(el).overflowY,
+    scrollHeight: el.scrollHeight,
+    clientHeight: el.clientHeight,
+  }));
+  expect(docsMetrics.overflowY).toBe('auto');
+  expect(docsMetrics.scrollHeight).toBeGreaterThanOrEqual(docsMetrics.clientHeight);
+
+  const footer = await page.locator('.wf-inspector-footer-bar').evaluate((el) => {
+    const rect = el.getBoundingClientRect();
+    return { bottom: rect.bottom, viewport: window.innerHeight };
+  });
+  expect(footer.bottom).toBeLessThanOrEqual(footer.viewport);
+  expect(pageErrors).toEqual([]);
+});
+
+test('问题分类节点：每个 class + default 渲染独立带标签的出边把手', async ({ page }) => {
+  const pageErrors: Error[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error));
+
+  await bootstrap(page, 'dark');
+  await page.goto('/workflow/editor/2');
+  await waitStable(page);
+
+  await page.getByTestId('palette-classifier').press('Enter');
+  const node = page.locator('.react-flow__node').filter({ hasText: '问题分类' }).first();
+  await expect(node).toBeVisible();
+  await node.dblclick();
+  await expect(page.getByTestId('classifier-fields')).toBeVisible();
+
+  await page.getByLabel('输入模板').fill('${nodes.n1.output}');
+  await page.getByRole('button', { name: /添加分类/ }).click();
+  await page.getByLabel('分类名').fill('disk');
+  await page.getByRole('button', { name: /添加分类/ }).click();
+  await page.getByLabel('分类名').nth(1).fill('network');
+  await page.getByTestId('node-inspector').getByRole('button', { name: /保存/ }).click();
+
+  await expect(node.locator('[data-handleid="disk"]')).toBeVisible();
+  await expect(node.locator('[data-handleid="network"]')).toBeVisible();
+  await expect(node.locator('[data-handleid="default"]')).toBeVisible();
+  await expect(node.locator('[data-handleid="disk"]')).toContainText('disk');
+  await expect(node.locator('[data-handleid="default"]')).toContainText('default');
+  expect(pageErrors).toEqual([]);
+});

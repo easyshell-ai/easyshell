@@ -16,6 +16,12 @@
   --wf-edge-pill-else-fg: var(--es-sem-timeout-text);
   --wf-edge-pill-else-bg: var(--es-color-bg-container);
   --wf-edge-pill-else-border: var(--es-sem-timeout-border);
+  --wf-edge-pill-class-fg: var(--es-color-primary);
+  --wf-edge-pill-class-bg: var(--es-color-bg-container);
+  --wf-edge-pill-class-border: var(--es-color-primary-border);
+  --wf-edge-pill-default-fg: var(--es-color-text-secondary);
+  --wf-edge-pill-default-bg: var(--es-color-bg-container);
+  --wf-edge-pill-default-border: var(--es-color-border);
   --wf-edge-badge-bg: var(--es-color-bg-elevated);
   --wf-edge-badge-fg: var(--es-color-text-secondary);
   --wf-edge-badge-border: var(--es-color-border-secondary);
@@ -31,6 +37,12 @@
   --wf-edge-pill-else-fg: var(--es-sem-timeout-text);
   --wf-edge-pill-else-bg: var(--es-color-bg-elevated);
   --wf-edge-pill-else-border: var(--es-sem-timeout-border);
+  --wf-edge-pill-class-fg: var(--es-color-primary);
+  --wf-edge-pill-class-bg: var(--es-color-bg-elevated);
+  --wf-edge-pill-class-border: var(--es-color-primary-border);
+  --wf-edge-pill-default-fg: var(--es-color-text-secondary);
+  --wf-edge-pill-default-bg: var(--es-color-bg-elevated);
+  --wf-edge-pill-default-border: var(--es-color-border);
   --wf-edge-badge-bg: var(--es-color-bg-elevated);
   --wf-edge-badge-fg: var(--es-color-text-secondary);
   --wf-edge-badge-border: var(--es-color-border-secondary);
@@ -134,9 +146,13 @@
   position: absolute;
   left: 9px;
   top: -8px;
+  max-width: 120px;
+  overflow: hidden;
   font-size: 9px;
   line-height: 12px;
   color: var(--es-color-text-tertiary);
+  white-space: nowrap;
+  text-overflow: ellipsis;
   pointer-events: none;
 }
 /* ── 自定义边标签（WorkflowEdge.tsx） ───────────────────────────────
@@ -177,6 +193,19 @@
   color: var(--wf-edge-pill-else-fg);
 }
 .wf-edge-pill--legacy {
+  font-style: italic;
+}
+.wf-edge-pill--class {
+  max-width: 120px;
+  border-color: var(--wf-edge-pill-class-border);
+  background: var(--wf-edge-pill-class-bg);
+  color: var(--wf-edge-pill-class-fg);
+  font-family: var(--es-font-family-code, monospace);
+}
+.wf-edge-pill--default {
+  border-color: var(--wf-edge-pill-default-border);
+  background: var(--wf-edge-pill-default-bg);
+  color: var(--wf-edge-pill-default-fg);
   font-style: italic;
 }
 .wf-edge-cond-badge {

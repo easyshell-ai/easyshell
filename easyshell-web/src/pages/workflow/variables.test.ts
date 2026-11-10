@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { availableVariablesForNode, ancestorKeysOf, workflowVariablesOf } from './variables';
+import {
+  availableVariablesForNode,
+  ancestorKeysOf,
+  knownOutputFieldsOf,
+  workflowVariablesOf,
+} from './variables';
 import type { WorkflowDefinition, WorkflowNode, WorkflowNodeType } from './types';
 
 function node(
@@ -68,6 +73,45 @@ describe('ancestorKeysOf', () => {
       ],
     });
     expect([...ancestorKeysOf(cyclic, 'a')]).toEqual(['b']);
+  });
+});
+
+describe('known output schema', () => {
+  it('exposes ai-analyze structured JSON outputs and localizes every description key', () => {
+    const ai = knownOutputFieldsOf(node('ai', 'ai-analyze'));
+    expect(ai.map((field) => field.name)).toEqual(['text', 'json', 'structured', 'model', 'truncated']);
+    expect(ai.find((field) => field.name === 'json')).toMatchObject({
+      type: 'json',
+      description: 'workflow.variable.output.ai-analyze.json',
+    });
+    expect(ai.find((field) => field.name === 'structured')).toMatchObject({
+      type: 'boolean',
+      description: 'workflow.variable.output.ai-analyze.structured',
+    });
+
+    const groups = workflowVariablesOf(
+      definition({
+        nodes: [node('ai', 'ai-analyze', { config: { outputMode: 'json' } })],
+        edges: [],
+      })
+    );
+    const refs = groups.flatMap((group) => group.refs.map((ref) => ref.path));
+    expect(refs).toContain('nodes.ai.output.json');
+    expect(refs).toContain('nodes.ai.output.structured');
+
+    for (const type of [
+      'condition',
+      'notify',
+      'approval',
+      'wait',
+      'ai-analyze',
+      'llm',
+      'classifier',
+    ] as WorkflowNodeType[]) {
+      for (const field of knownOutputFieldsOf(node(type, type))) {
+        expect(field.description).toMatch(/^workflow\.variable\.output\./);
+      }
+    }
   });
 });
 

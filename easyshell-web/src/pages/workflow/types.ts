@@ -12,6 +12,9 @@ export type WorkflowNodeType =
   | 'transform'
   | 'condition'
   | 'ai-analyze'
+  | 'llm'
+  | 'classifier'
+  | 'code'
   | 'approval'
   | 'notify'
   | 'wait'
@@ -21,9 +24,13 @@ export type VariableValueType = 'string' | 'number' | 'boolean' | 'json';
 
 export interface VariableSpec {
   type: VariableValueType;
+  /** 展示名；触发弹窗优先显示 label，缺省显示 name */
+  label?: string;
   required?: boolean;
   default?: unknown;
   description?: string;
+  /** 仅 type=string：下拉枚举值；非空时触发弹窗渲染 Select */
+  options?: string[];
 }
 
 /** abort / skip / partial / compensate(M2) */
@@ -129,12 +136,62 @@ export interface TransformConfig {
   mappings?: TransformMapping[];
 }
 
+export type AiOutputMode = 'text' | 'json';
+
 export interface AiAnalyzeConfig {
   instructions?: string;
   /** 上游输入表达式，如 ${nodes.check.output}；可截断到 maxInputChars */
   input?: string;
   /** 8000 默认；AI 只做分析，不执行命令 */
   maxInputChars?: number;
+  /** text(默认) / json：json 模式要求模型返回结构化 JSON */
+  outputMode?: AiOutputMode;
+  /** json 模式的 schema 提示（仅作为提示词指导，不参与本地 schema 校验） */
+  jsonSchema?: string;
+}
+
+/** LLM 节点：通用文本 / 结构化 JSON 生成，不执行任何命令 */
+export interface LlmConfig {
+  /** null = 默认 AI provider */
+  provider?: string | null;
+  /** null = provider 默认模型 */
+  model?: string | null;
+  systemPrompt?: string;
+  /** 必填模板，支持 ${path} */
+  userPrompt?: string;
+  /** text(默认) / json */
+  outputMode?: AiOutputMode;
+  /** json 模式下的 schema 提示 */
+  jsonSchema?: string;
+  /** 0..2 */
+  temperature?: number;
+  /** 1000..32000 */
+  maxInputChars?: number;
+}
+
+export interface ClassifierClass {
+  name: string;
+  description?: string;
+}
+
+/** 问题分类节点：每个 class 一个出边把手 + default */
+export interface ClassifierConfig {
+  input?: string;
+  classes?: ClassifierClass[];
+  instructions?: string;
+  provider?: string | null;
+  model?: string | null;
+}
+
+export type CodeLanguage = 'javascript' | 'python';
+
+/** 沙箱数据转换节点：只做数据变换，不做主机操作 */
+export interface CodeConfig {
+  language?: CodeLanguage;
+  code?: string;
+  inputs?: Record<string, string>;
+  /** 1..15 */
+  timeoutSec?: number;
 }
 
 export interface EndOutput {

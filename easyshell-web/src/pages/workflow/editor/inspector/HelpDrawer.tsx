@@ -5,7 +5,7 @@ import { NODE_REGISTRY } from '../nodeRegistry';
 import { NodeTypeIcon } from '../NodeIcon';
 
 /**
- * 帮助抽屉（设计 §3.4）：4 步入门 / 变量语法 / 9 类节点速查 / 完整示例 / 安全边界。
+ * 帮助抽屉（设计 §3.4）：4 步入门 / 变量语法 / 12 类节点速查 / 完整示例 / 安全边界。
  * 中英文均由 workflow.help.* 提供，代码示例保持英文（代码不是文案）。
  */
 export interface HelpDrawerProps {
@@ -87,6 +87,25 @@ export const HelpDrawer: React.FC<HelpDrawerProps> = ({ open, onClose }) => {
         </div>
 
         <Typography.Title level={5} style={{ marginTop: 20 }}>
+          {t('workflow.help.aiNodes.title')}
+        </Typography.Title>
+        <Typography.Paragraph type="secondary">{t('workflow.help.aiNodes.intro')}</Typography.Paragraph>
+        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          {(['llm', 'classifier', 'code'] as const).map((type) => (
+            <div key={type} className="wf-help-ai-node">
+              <Space size={6}>
+                <span className="wf-help-node-icon">
+                  <NodeTypeIcon type={type} />
+                </span>
+                <Typography.Text strong>{t(`workflow.node.type.${type}`)}</Typography.Text>
+              </Space>
+              <div className="wf-help-node-desc">{t(`workflow.help.aiNodes.${type}.desc`)}</div>
+              <pre className="wf-inline-json">{t(`workflow.help.aiNodes.${type}.example`)}</pre>
+            </div>
+          ))}
+        </Space>
+
+        <Typography.Title level={5} style={{ marginTop: 20 }}>
           {t('workflow.help.example.title')}
         </Typography.Title>
         <Typography.Paragraph type="secondary">{t('workflow.help.example.desc')}</Typography.Paragraph>
@@ -105,6 +124,8 @@ export const HelpDrawer: React.FC<HelpDrawerProps> = ({ open, onClose }) => {
           <Alert type="warning" showIcon message={t('workflow.help.security.ai')} />
           <Alert type="info" showIcon message={t('workflow.help.security.approval')} />
           <Alert type="info" showIcon message={t('workflow.help.security.script')} />
+          <Alert type="info" showIcon message={t('workflow.help.security.code')} />
+          <Alert type="info" showIcon message={t('workflow.help.security.host')} />
         </Space>
       </div>
     </Drawer>

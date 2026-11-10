@@ -17,11 +17,15 @@ export const NODE_HEIGHT_DUAL = 96;
 
 export const NODE_KEY_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
 
-/** sourceHandle：condition 双出（右上 true / 右下 false），其余单出 */
+/** sourceHandle：condition 双出（右上 true / 右下 false），classifier 每个 class + default */
 export const HANDLE_IN = 'in';
 export const HANDLE_OUT = 'out';
 export const HANDLE_TRUE = 'true';
 export const HANDLE_FALSE = 'false';
+export const HANDLE_CLASSIFIER_DEFAULT = 'default';
+
+export const CLASSIFIER_NAME_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
+export const MAX_CLASSIFIER_CLASSES = 10;
 
 export interface HandleContract {
   inputs: number;
@@ -35,13 +39,20 @@ export const HANDLE_CONTRACT: Record<WorkflowNodeType, HandleContract> = {
   transform: { inputs: 1, outputs: 1, height: NODE_HEIGHT_STANDARD },
   condition: { inputs: 1, outputs: 2, height: NODE_HEIGHT_DUAL },
   'ai-analyze': { inputs: 1, outputs: 1, height: NODE_HEIGHT_STANDARD },
+  llm: { inputs: 1, outputs: 1, height: NODE_HEIGHT_STANDARD },
+  classifier: { inputs: 1, outputs: 2, height: NODE_HEIGHT_DUAL },
+  code: { inputs: 1, outputs: 1, height: NODE_HEIGHT_STANDARD },
   approval: { inputs: 1, outputs: 1, height: NODE_HEIGHT_DUAL },
   notify: { inputs: 1, outputs: 1, height: NODE_HEIGHT_STANDARD },
   wait: { inputs: 1, outputs: 1, height: NODE_HEIGHT_STANDARD },
   end: { inputs: 1, outputs: 0, height: NODE_HEIGHT_STANDARD },
 };
 
-export function nodeHeight(type: WorkflowNodeType): number {
+export function nodeHeight(type: WorkflowNodeType, sourceHandleCount?: number): number {
+  if (type === 'classifier' && sourceHandleCount && sourceHandleCount > 3) {
+    // 每个 class 一个带标签的把手：3 个以内沿用双出口高度，更多时按行增高
+    return Math.max(NODE_HEIGHT_DUAL, 28 + sourceHandleCount * 18);
+  }
   return HANDLE_CONTRACT[type]?.height ?? NODE_HEIGHT_STANDARD;
 }
 
@@ -57,8 +68,76 @@ export function nodeHasOutput(type: WorkflowNodeType): boolean {
 export function sourceHandles(type: WorkflowNodeType): string[] {
   const outputs = HANDLE_CONTRACT[type]?.outputs ?? 0;
   if (outputs === 0) return [];
-  return outputs === 2 ? [HANDLE_TRUE, HANDLE_FALSE] : [HANDLE_OUT];
+  if (type === 'condition') return [HANDLE_TRUE, HANDLE_FALSE];
+  // classifier 的真实把手依赖 config.classes，静态入口只给兜底 default
+  if (type === 'classifier') return [HANDLE_CLASSIFIER_DEFAULT];
+  return [HANDLE_OUT];
 }
+
+/** classifier.classes 中的合法 class 名（去重、保序、最多 10 个；UI 预览与把手共用） */
+export function classifierClassNamesOf(config: unknown): string[] {
+  const raw = (config as { classes?: unknown } | undefined)?.classes;
+  if (!Array.isArray(raw)) return [];
+  const names: string[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const name = typeof (item as { name?: unknown }).name === 'string'
+      ? (item as { name: string }).name.trim()
+      : '';
+    if (!name || !CLASSIFIER_NAME_PATTERN.test(name) || names.includes(name)) continue;
+    names.push(name);
+    if (names.length >= MAX_CLASSIFIER_CLASSES) break;
+  }
+  return names;
+}
+
+export interface NodeHandleSource {
+  type?: WorkflowNodeType;
+  nodeType?: WorkflowNodeType;
+  config?: Record<string, unknown>;
+  classNames?: string[];
+}
+
+function normalizeHandleSource(
+  source: WorkflowNodeType | NodeHandleSource | WorkflowNode
+): { type: WorkflowNodeType; classNames: string[] } {
+  if (typeof source === 'string') return { type: source, classNames: [] };
+  const candidate = source as NodeHandleSource;
+  const type = (candidate.nodeType ?? candidate.type ?? 'script-exec') as WorkflowNodeType;
+  const explicit = candidate.classNames;
+  const classNames =
+    explicit && explicit.length > 0
+      ? explicit.filter((name) => CLASSIFIER_NAME_PATTERN.test(name)).slice(0, MAX_CLASSIFIER_CLASSES)
+      : classifierClassNamesOf(candidate.config);
+  return { type, classNames };
+}
+
+/**
+ * 节点实例的动态 source handle（condition / classifier 不再是静态契约）：
+ * - condition → true / false
+ * - classifier → 配置里的每个 class 名 + default
+ * - end → []
+ * - 其余 → out
+ */
+export function sourceHandlesForNode(
+  source: WorkflowNodeType | NodeHandleSource | WorkflowNode
+): string[] {
+  const { type, classNames } = normalizeHandleSource(source);
+  if (type === 'end') return [];
+  if (type === 'condition') return [HANDLE_TRUE, HANDLE_FALSE];
+  if (type === 'classifier') return [...classNames, HANDLE_CLASSIFIER_DEFAULT];
+  return [HANDLE_OUT];
+}
+
+/** classifier 的每个出边 handle（class / default）最多一条出边 */
+export function isClassifierHandle(
+  source: { type?: WorkflowNodeType; nodeType?: WorkflowNodeType },
+  sourceHandle: string | null | undefined
+): boolean {
+  const type = source.nodeType ?? source.type;
+  return type === 'classifier' && !!sourceHandle;
+}
+
 
 export function isFalseBranchHandle(sourceHandle: string | null | undefined, sourceType: WorkflowNodeType): boolean {
   return sourceType === 'condition' && sourceHandle === HANDLE_FALSE;
@@ -89,6 +168,8 @@ export type ConnectionRejection =
   | 'START_HAS_INPUT'
   | 'END_HAS_OUTPUT'
   | 'SELF_CONNECTION'
+  | 'UNKNOWN_HANDLE'
+  | 'CLASSIFIER_HANDLE_TAKEN'
   | 'DUPLICATE_EDGE'
   | 'CYCLE';
 
@@ -137,10 +218,21 @@ export function checkConnection(context: ConnectionContext, connection: Connecti
   if (source === target) return 'SELF_CONNECTION';
 
   const handle = connection.sourceHandle || HANDLE_OUT;
+  const sourceHandlesOfNode = sourceHandlesForNode(sourceNode);
+  // classifier 的 class handle 由 config.classes 动态生成；不存在/已改名的把手一律拒绝，
+  // 不能静默回落到 true/false（那是 condition 的语义）。
+  if (!sourceHandlesOfNode.includes(handle)) return 'UNKNOWN_HANDLE';
   const duplicate = context.edges.some(
     (e) => e.from === source && e.to === target && edgeHandleOf(context.nodes, e) === handle
   );
   if (duplicate) return 'DUPLICATE_EDGE';
+  if (
+    isClassifierHandle(sourceNode, handle) &&
+    context.edges.some((e) => e.from === source && edgeHandleOf(context.nodes, e) === handle)
+  ) {
+    // 每个出边分支最多一条出边（与 DagValidator 的 classifier handle 校验一致）
+    return 'CLASSIFIER_HANDLE_TAKEN';
+  }
   if (wouldCreateCycle(context.edges, source, target)) return 'CYCLE';
   return null;
 }
@@ -154,7 +246,7 @@ export function canSetEdgeCondition(
   edge: { from: string; sourceHandle?: string | null }
 ): boolean {
   const sourceType = nodes.find((n) => n.key === edge.from)?.type;
-  if (!sourceType) return false;
+  if (!sourceType || sourceType === 'classifier') return false;
   return !isFalseBranchHandle(edge.sourceHandle, sourceType);
 }
 
@@ -183,6 +275,16 @@ export interface WorkflowNodeData {
   scriptPreview?: string;
   /** ai-analyze：指令第一行 */
   aiInstructionsPreview?: string;
+  /** llm：provider/model（缺省时为空） */
+  providerModel?: string;
+  /** llm：userPrompt 第一行 */
+  userPromptPreview?: string;
+  /** classifier：class 数量与名单（画布直接渲染动态把手） */
+  classCount?: number;
+  classNames?: string[];
+  /** code：语言与代码第一行 */
+  language?: string;
+  codePreview?: string;
   /** condition：条件表达式 */
   expression?: string;
   /** notify：级别 */
@@ -211,6 +313,12 @@ export type WorkflowNodeSummary = Pick<
   | 'mappingCount'
   | 'scriptPreview'
   | 'aiInstructionsPreview'
+  | 'providerModel'
+  | 'userPromptPreview'
+  | 'classCount'
+  | 'classNames'
+  | 'language'
+  | 'codePreview'
   | 'expression'
   | 'notifyLevel'
   | 'channelCount'
@@ -253,6 +361,25 @@ export function nodeSummaryOf(
       return { scriptPreview: firstLineOf(config.script) };
     case 'ai-analyze':
       return { aiInstructionsPreview: firstLineOf(config.instructions) };
+    case 'llm': {
+      const provider = configString(config.provider);
+      const model = configString(config.model);
+      return {
+        providerModel: provider || model ? [provider, model].filter(Boolean).join('/') : undefined,
+        userPromptPreview: firstLineOf(config.userPrompt),
+      };
+    }
+    case 'classifier': {
+      const classNames = classifierClassNamesOf(config);
+      return { classCount: classNames.length, classNames };
+    }
+    case 'code': {
+      const language = configString(config.language);
+      return {
+        language: language === 'python' ? 'python' : language === 'javascript' ? 'javascript' : undefined,
+        codePreview: firstLineOf(config.code),
+      };
+    }
     case 'notify':
       return {
         notifyLevel: configString(config.level) || 'info',
@@ -287,6 +414,12 @@ export function nodeSummaryTextOf(type: WorkflowNodeType, summary: WorkflowNodeS
       return summary.scriptPreview || '';
     case 'ai-analyze':
       return summary.aiInstructionsPreview || '';
+    case 'llm':
+      return summary.providerModel || summary.userPromptPreview || '';
+    case 'classifier':
+      return summary.classCount == null ? '' : `${summary.classCount} classes`;
+    case 'code':
+      return [summary.language, summary.codePreview].filter(Boolean).join(' · ');
     case 'notify':
       return [summary.notifyLevel || 'info', `${summary.channelCount ?? 0} ch`].join(' · ');
     case 'approval':
@@ -382,6 +515,10 @@ export function edgeHandleOf(
 ): string {
   if (edge.sourceHandle) return edge.sourceHandle;
   const source = nodes.find((n) => n.key === edge.from);
+  if (source?.type === 'classifier') {
+    // classifier 没有旧定义兼容语义：无 handle 时落到显式 default 兜底
+    return HANDLE_CLASSIFIER_DEFAULT;
+  }
   if (source?.type !== 'condition') return HANDLE_OUT;
   return edge.condition ? HANDLE_TRUE : HANDLE_FALSE;
 }
@@ -416,11 +553,12 @@ export function flowToDefinition(
         condition: e.data?.condition,
       });
       const isFalse = isFalseBranchHandle(sourceHandle, sourceType);
-      const condition = isFalse ? undefined : e.data?.condition || undefined;
+      const condition =
+        isFalse || sourceType === 'classifier' ? undefined : e.data?.condition || undefined;
       const existing = base.edges.find((edge) => edge.id === e.id);
       // 普通节点的 out 是缺省语义，不写进 definition（减少老定义的无意义 diff）；
-      // condition 必须写 true/false，自定义 handle 原样保留。
-      const writeHandle = sourceType === 'condition' || sourceHandle !== HANDLE_OUT;
+      // condition 必须写 true/false，classifier 必须写 class/default，其他自定义 handle 原样保留。
+      const writeHandle = sourceType === 'condition' || sourceType === 'classifier' || sourceHandle !== HANDLE_OUT;
       return {
         id: e.id || edgeIdFor(e.source, sourceHandle, e.target),
         from: e.source,
@@ -512,7 +650,36 @@ export const DEFAULT_NODE_CONFIG: Record<WorkflowNodeType, Record<string, unknow
   },
   transform: { mappings: [] },
   condition: { expression: '' },
-  'ai-analyze': { instructions: '', input: '', maxInputChars: 8000 },
+  'ai-analyze': {
+    instructions: '',
+    input: '',
+    maxInputChars: 8000,
+    outputMode: 'text',
+    jsonSchema: '',
+  },
+  llm: {
+    provider: null,
+    model: null,
+    systemPrompt: '',
+    userPrompt: '',
+    outputMode: 'text',
+    jsonSchema: '',
+    temperature: 0.3,
+    maxInputChars: 8000,
+  },
+  classifier: {
+    input: '',
+    classes: [],
+    instructions: '',
+    provider: null,
+    model: null,
+  },
+  code: {
+    language: 'javascript',
+    code: '',
+    inputs: {},
+    timeoutSec: 5,
+  },
   notify: { channels: ['telegram'], messageTemplate: '', parameters: {} },
   approval: {
     mode: 'approval',
@@ -536,6 +703,9 @@ const DEFAULT_TIMEOUT_SEC: Record<WorkflowNodeType, number | null> = {
   transform: 60,
   condition: 600,
   'ai-analyze': 120,
+  llm: 180,
+  classifier: 120,
+  code: 30,
   approval: 600,
   notify: 600,
   wait: null,

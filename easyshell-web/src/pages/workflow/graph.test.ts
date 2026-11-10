@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_NODE_CONFIG,
+  HANDLE_CLASSIFIER_DEFAULT,
   HANDLE_CONTRACT,
   HANDLE_FALSE,
   HANDLE_OUT,
@@ -8,6 +9,7 @@ import {
   applyNodeStatuses,
   autoLayoutPositions,
   checkConnection,
+  classifierClassNamesOf,
   computeDeleteImpact,
   createStartAndEndNodes,
   createWorkflowNode,
@@ -23,6 +25,7 @@ import {
   nodeSummaryOf,
   nodeSummaryTextOf,
   sourceHandles,
+  sourceHandlesForNode,
   wouldCreateCycle,
 } from './graph';
 import type { WorkflowDefinition, WorkflowEdge, WorkflowNode, WorkflowNodeType } from './types';
@@ -74,6 +77,8 @@ describe('handle contract', () => {
       'script-exec',
       'transform',
       'ai-analyze',
+      'llm',
+      'code',
       'notify',
       'wait',
       'approval',
@@ -81,16 +86,40 @@ describe('handle contract', () => {
       expect(HANDLE_CONTRACT[type].outputs).toBe(1);
       expect(HANDLE_CONTRACT[type].inputs).toBe(1);
     }
+    expect(HANDLE_CONTRACT.classifier.inputs).toBe(1);
     expect(nodeHeight('condition')).toBe(96);
     expect(nodeHeight('approval')).toBe(96);
     expect(nodeHeight('script-exec')).toBe(72);
+    expect(nodeHeight('classifier', 11)).toBeGreaterThan(96);
+    expect(nodeHeight('classifier', 3)).toBe(96);
   });
 
   it('exposes true/false handles only for condition and none for end', () => {
     expect(sourceHandles('condition')).toEqual([HANDLE_TRUE, HANDLE_FALSE]);
+    expect(sourceHandles('classifier')).toEqual([HANDLE_CLASSIFIER_DEFAULT]);
     expect(sourceHandles('script-exec')).toEqual([HANDLE_OUT]);
     expect(sourceHandles('start')).toEqual([HANDLE_OUT]);
     expect(sourceHandles('end')).toEqual([]);
+  });
+
+  it('derives classifier class handles dynamically from config.classes', () => {
+    const classifier = node('pick', 'classifier');
+    classifier.config = {
+      classes: [
+        { name: 'disk', description: 'disk issues' },
+        { name: 'network' },
+        { name: 'disk', description: 'duplicate is dropped' },
+        { name: 'Bad-Name' },
+      ],
+    };
+    expect(classifierClassNamesOf(classifier.config)).toEqual(['disk', 'network']);
+    expect(sourceHandlesForNode(classifier)).toEqual(['disk', 'network', HANDLE_CLASSIFIER_DEFAULT]);
+    // 空配置时仍有 default 兜底
+    expect(sourceHandlesForNode(node('empty', 'classifier'))).toEqual([HANDLE_CLASSIFIER_DEFAULT]);
+    // 静态入口与其它类型保持兼容
+    expect(sourceHandlesForNode('condition')).toEqual([HANDLE_TRUE, HANDLE_FALSE]);
+    expect(sourceHandlesForNode('llm')).toEqual([HANDLE_OUT]);
+    expect(sourceHandlesForNode('end')).toEqual([]);
   });
 });
 
@@ -139,6 +168,40 @@ describe('checkConnection', () => {
     const ctx = { nodes: context.nodes, edges: withTrue };
     expect(checkConnection(ctx, { source: 'cond', target: 'x', sourceHandle: HANDLE_FALSE })).toBeNull();
     expect(checkConnection(ctx, { source: 'cond', target: 'x', sourceHandle: HANDLE_TRUE })).toBe('DUPLICATE_EDGE');
+  });
+
+  it('validates classifier class handles and keeps one edge per class', () => {
+    const classifier: WorkflowNode = {
+      ...node('pick', 'classifier'),
+      config: { classes: [{ name: 'disk' }, { name: 'network' }] },
+    };
+    const ctx = {
+      nodes: [classifier, node('a'), node('b'), node('c')],
+      edges: [] as WorkflowEdge[],
+    };
+    expect(checkConnection(ctx, { source: 'pick', target: 'a', sourceHandle: 'disk' })).toBeNull();
+    expect(checkConnection(ctx, { source: 'pick', target: 'a', sourceHandle: 'true' })).toBe('UNKNOWN_HANDLE');
+    expect(checkConnection(ctx, { source: 'pick', target: 'a', sourceHandle: 'default' })).toBeNull();
+
+    const withDisk = {
+      ...ctx,
+      edges: [{ id: 'pick:disk->a', from: 'pick', to: 'a', sourceHandle: 'disk' }],
+    };
+    // 同一 class 换目标：拒绝；同一 class 同一目标：重复边；default 同样只允许一条出边
+    expect(checkConnection(withDisk, { source: 'pick', target: 'b', sourceHandle: 'disk' })).toBe(
+      'CLASSIFIER_HANDLE_TAKEN'
+    );
+    expect(checkConnection(withDisk, { source: 'pick', target: 'a', sourceHandle: 'disk' })).toBe('DUPLICATE_EDGE');
+    expect(checkConnection(withDisk, { source: 'pick', target: 'b', sourceHandle: 'default' })).toBeNull();
+    expect(checkConnection(withDisk, { source: 'pick', target: 'b', sourceHandle: 'network' })).toBeNull();
+
+    const withDefault = {
+      ...withDisk,
+      edges: [...withDisk.edges, { id: 'pick:default->b', from: 'pick', to: 'b', sourceHandle: 'default' }],
+    };
+    expect(checkConnection(withDefault, { source: 'pick', target: 'c', sourceHandle: 'default' })).toBe(
+      'CLASSIFIER_HANDLE_TAKEN'
+    );
   });
 
   it('rejects any edge into start and any edge out of end', () => {
@@ -239,6 +302,28 @@ describe('definition <-> flow roundtrip', () => {
     expect(back.edges[0].condition).toBeUndefined();
   });
 
+  it('preserves classifier class handles through definition <-> flow roundtrip', () => {
+    const base = definition({
+      nodes: [
+        {
+          ...node('pick', 'classifier'),
+          config: { classes: [{ name: 'disk' }, { name: 'network' }] },
+        },
+        node('a'),
+        node('b'),
+      ],
+      edges: [
+        { id: 'pick:disk->a', from: 'pick', to: 'a', sourceHandle: 'disk' },
+        { id: 'pick:default->b', from: 'pick', to: 'b', sourceHandle: HANDLE_CLASSIFIER_DEFAULT },
+      ],
+    });
+    const flow = definitionToFlow(base);
+    expect(flow.edges.map((e) => e.sourceHandle)).toEqual(['disk', HANDLE_CLASSIFIER_DEFAULT]);
+    const back = flowToDefinition(flow.nodes, flow.edges, base);
+    expect(back.edges.map((e) => e.sourceHandle)).toEqual(['disk', HANDLE_CLASSIFIER_DEFAULT]);
+    expect(back.edges[0].condition).toBeUndefined();
+  });
+
   it('falls back to condition text for legacy condition nodes without sourceHandle', () => {
     const nodes = [node('cond', 'condition'), node('a'), node('b')];
     expect(edgeHandleOf(nodes, { from: 'cond', condition: 'x>0' })).toBe(HANDLE_TRUE);
@@ -291,13 +376,16 @@ describe('delete impact', () => {
 });
 
 describe('new node defaults', () => {
-  it('has defaults for all 9 node types with server field names', () => {
+  it('has defaults for all 12 node types with server field names', () => {
     const types: WorkflowNodeType[] = [
       'start',
       'script-exec',
       'transform',
       'condition',
       'ai-analyze',
+      'llm',
+      'classifier',
+      'code',
       'approval',
       'notify',
       'wait',
@@ -305,7 +393,21 @@ describe('new node defaults', () => {
     ];
     for (const type of types) expect(DEFAULT_NODE_CONFIG[type]).toBeDefined();
     expect(DEFAULT_NODE_CONFIG.transform).toEqual({ mappings: [] });
-    expect(DEFAULT_NODE_CONFIG['ai-analyze']).toMatchObject({ maxInputChars: 8000 });
+    expect(DEFAULT_NODE_CONFIG['ai-analyze']).toMatchObject({ maxInputChars: 8000, outputMode: 'text' });
+    expect(DEFAULT_NODE_CONFIG.llm).toMatchObject({
+      provider: null,
+      model: null,
+      outputMode: 'text',
+      temperature: 0.3,
+      maxInputChars: 8000,
+    });
+    expect(DEFAULT_NODE_CONFIG.classifier).toMatchObject({ classes: [], provider: null, model: null });
+    expect(DEFAULT_NODE_CONFIG.code).toEqual({
+      language: 'javascript',
+      code: '',
+      inputs: {},
+      timeoutSec: 5,
+    });
     expect(DEFAULT_NODE_CONFIG.end).toEqual({ outputs: [] });
   });
 
@@ -315,6 +417,9 @@ describe('new node defaults', () => {
     expect(createWorkflowNode('wait', 'w', { x: 0, y: 0 }).timeoutSec).toBeNull();
     expect(createWorkflowNode('transform', 't', { x: 0, y: 0 }).timeoutSec).toBe(60);
     expect(createWorkflowNode('ai-analyze', 'ai', { x: 0, y: 0 }).timeoutSec).toBe(120);
+    expect(createWorkflowNode('llm', 'llm', { x: 0, y: 0 }).timeoutSec).toBe(180);
+    expect(createWorkflowNode('classifier', 'cls', { x: 0, y: 0 }).timeoutSec).toBe(120);
+    expect(createWorkflowNode('code', 'code', { x: 0, y: 0 }).timeoutSec).toBe(30);
     expect(createWorkflowNode('script-exec', 's', { x: 0, y: 0 }).timeoutSec).toBe(600);
   });
 
@@ -401,6 +506,24 @@ describe('node summary extraction', () => {
     expect(nodeSummaryOf({ ...node('w', 'wait'), config: { durationSec: 30 } })).toEqual({
       durationSec: 30,
     });
+    expect(
+      nodeSummaryOf({
+        ...node('llm', 'llm'),
+        config: { provider: 'openai', model: 'gpt-4o-mini', userPrompt: '分析磁盘\n第二行' },
+      })
+    ).toEqual({ providerModel: 'openai/gpt-4o-mini', userPromptPreview: '分析磁盘' });
+    expect(
+      nodeSummaryOf({
+        ...node('pick', 'classifier'),
+        config: { classes: [{ name: 'disk' }, { name: 'network' }, { name: 'disk' }] },
+      })
+    ).toEqual({ classCount: 2, classNames: ['disk', 'network'] });
+    expect(
+      nodeSummaryOf({
+        ...node('code', 'code'),
+        config: { language: 'python', code: 'def main(input):\n    return input' },
+      })
+    ).toEqual({ language: 'python', codePreview: 'def main(input):' });
   });
 
   it('renders neutral one-line text and truncates the first line', () => {
@@ -409,6 +532,10 @@ describe('node summary extraction', () => {
     expect(nodeSummaryTextOf('transform', { mappingCount: 4 })).toBe('map: 4');
     expect(nodeSummaryTextOf('wait', { durationSec: 60 })).toBe('60s');
     expect(nodeSummaryTextOf('notify', { notifyLevel: 'info', channelCount: 2 })).toBe('info · 2 ch');
+    expect(nodeSummaryTextOf('classifier', { classCount: 3 })).toBe('3 classes');
+    expect(nodeSummaryTextOf('code', { language: 'javascript', codePreview: 'function main()' })).toBe(
+      'javascript · function main()'
+    );
     const long = 'x'.repeat(120);
     const summary = nodeSummaryOf({ ...node('s'), config: { script: `${long}\nnext` } });
     expect(summary.scriptPreview).toHaveLength(72);

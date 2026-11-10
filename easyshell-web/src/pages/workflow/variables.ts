@@ -61,22 +61,35 @@ interface KnownField {
 
 /** 已知输出 schema（§2.3）；start 由 definition.variables 动态生成。 */
 const KNOWN_OUTPUT_FIELDS: Partial<Record<WorkflowNodeType, KnownField[]>> = {
-  condition: [{ name: 'result', type: 'boolean', description: '条件表达式结果' }],
+  condition: [{ name: 'result', type: 'boolean', description: 'workflow.variable.output.condition.result' }],
   notify: [
-    { name: 'delivered', type: 'json', description: '成功送达的渠道列表' },
-    { name: 'failed', type: 'json', description: '推送失败的渠道列表' },
-    { name: 'skipped', type: 'json', description: '未启用/无目标的渠道列表' },
+    { name: 'delivered', type: 'json', description: 'workflow.variable.output.notify.delivered' },
+    { name: 'failed', type: 'json', description: 'workflow.variable.output.notify.failed' },
+    { name: 'skipped', type: 'json', description: 'workflow.variable.output.notify.skipped' },
   ],
   approval: [
-    { name: 'decision', type: 'string', description: 'approved / rejected' },
-    { name: 'comment', type: 'string', description: '审批意见' },
-    { name: 'decidedBy', type: 'number', description: '审批人' },
+    { name: 'decision', type: 'string', description: 'workflow.variable.output.approval.decision' },
+    { name: 'comment', type: 'string', description: 'workflow.variable.output.approval.comment' },
+    { name: 'decidedBy', type: 'number', description: 'workflow.variable.output.approval.decidedBy' },
   ],
-  wait: [{ name: 'waitedMs', type: 'number', description: '实际等待毫秒数' }],
+  wait: [{ name: 'waitedMs', type: 'number', description: 'workflow.variable.output.wait.waitedMs' }],
   'ai-analyze': [
-    { name: 'text', type: 'string', description: '分析结论文本' },
-    { name: 'model', type: 'string', description: '使用的模型' },
-    { name: 'truncated', type: 'boolean', description: '输入是否被截断' },
+    { name: 'text', type: 'string', description: 'workflow.variable.output.ai-analyze.text' },
+    { name: 'json', type: 'json', description: 'workflow.variable.output.ai-analyze.json' },
+    { name: 'structured', type: 'boolean', description: 'workflow.variable.output.ai-analyze.structured' },
+    { name: 'model', type: 'string', description: 'workflow.variable.output.ai-analyze.model' },
+    { name: 'truncated', type: 'boolean', description: 'workflow.variable.output.ai-analyze.truncated' },
+  ],
+  llm: [
+    { name: 'text', type: 'string', description: 'workflow.variable.output.llm.text' },
+    { name: 'json', type: 'json', description: 'workflow.variable.output.llm.json' },
+    { name: 'structured', type: 'boolean', description: 'workflow.variable.output.llm.structured' },
+    { name: 'model', type: 'string', description: 'workflow.variable.output.llm.model' },
+  ],
+  classifier: [
+    { name: 'class', type: 'string', description: 'workflow.variable.output.classifier.class' },
+    { name: 'reason', type: 'string', description: 'workflow.variable.output.classifier.reason' },
+    { name: 'raw', type: 'string', description: 'workflow.variable.output.classifier.raw' },
   ],
 };
 

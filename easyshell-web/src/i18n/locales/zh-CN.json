@@ -1585,7 +1585,10 @@
         "start": "开始",
         "transform": "数据映射",
         "ai-analyze": "AI 分析",
-        "end": "结束"
+        "end": "结束",
+        "llm": "LLM 生成",
+        "classifier": "问题分类",
+        "code": "代码转换"
       },
       "desc": {
         "script-exec": "在目标主机上执行脚本，落到真实 Task",
@@ -1596,7 +1599,10 @@
         "start": "声明工作流入参，运行从这里开始",
         "transform": "把上游输出整理成命名字段，供下游引用",
         "ai-analyze": "读取上游输出并给出结论文本，只分析不执行",
-        "end": "汇总最终输出，运行结果取这里的映射"
+        "end": "汇总最终输出，运行结果取这里的映射",
+        "llm": "调用大模型生成文本或结构化 JSON，不执行命令",
+        "classifier": "按模型分类结果路由到对应 class 分支",
+        "code": "在隔离沙箱里做数据转换，支持 JavaScript / Python"
       },
       "category": {
         "entry": "入口",
@@ -1642,11 +1648,11 @@
           "example": "expression: nodes.check.output.count > 0"
         },
         "ai-analyze": {
-          "purpose": "读取上游输出并产出结论文本。",
-          "when": "需要总结、判断或生成风险结论，但不执行命令时。",
-          "input": "input 模板，按 maxInputChars 截断。",
-          "output": "{ text, model, truncated }。",
-          "example": "instructions: 找出超过阈值的挂载点并给出结论\ninput: ${nodes.check.output}\nmaxInputChars: 8000"
+          "purpose": "读取上游输出并产出结论文本，或按提示返回结构化 JSON，不执行命令。",
+          "when": "需要总结、判断或风险结论；text 模式适合自然语言，json 模式适合下游机器读取。",
+          "input": "input 模板按 maxInputChars 截断；outputMode=json 时 jsonSchema 作为提示词指导，解释字段与类型。",
+          "output": "{ text, model, truncated }；json 模式的解析结果在 text 中返回，schema 只做提示，不参与本地校验。",
+          "example": "instructions: 找出超过阈值的挂载点\ninput: ${nodes.check.output}\noutputMode: json\njsonSchema: {\"type\":\"object\",\"properties\":{\"verdict\":{\"type\":\"string\"}}}\n# JSON 解析失败会自动修复重试一次"
         },
         "approval": {
           "purpose": "挂起运行，等待管理员审批。",
@@ -1668,6 +1674,29 @@
           "input": "上游输出（透传）。",
           "output": "{ waitedMs }。",
           "example": "durationSec: 60"
+        },
+        "llm": {
+          "purpose": "调用通用大模型，生成文本或结构化 JSON。",
+          "when": "需要总结、抽取字段或生成机器可读结论，但不执行任何命令时；text 返回自然语言，json 返回解析后的对象。",
+          "input": "userPrompt / systemPrompt 模板，按 maxInputChars 截断上游输入。",
+          "output": "{ text, json, structured, model }；json 模式会剥离 ```json 围栏并解析，失败自动修复重试一次，仍失败则节点失败。",
+          "example": "provider: openai\nmodel: gpt-4o-mini\nuserPrompt: |\n  分析 ${nodes.check.output}，输出风险结论\noutputMode: json\njsonSchema: {\"type\":\"object\",\"properties\":{\"verdict\":{\"type\":\"string\"}}}"
+        },
+        "classifier": {
+          "purpose": "用模型把输入分到恰好一个 class，并按 class 走不同出边。",
+          "when": "需要按问题类型分流（如磁盘 / 网络 / 权限）时。",
+          "input": "input 模板（必填）+ 1..10 个 class（名称 + 说明）。",
+          "output": "{ class, reason, raw }；每个 class 一个出边把手，另有 default 兜底。",
+          "example": "input: ${nodes.check.output}\nclasses:\n  - { name: disk, description: 磁盘/容量/挂载点 }\n  - { name: network, description: 网络/端口/连接 }\ninstructions: Classify the input into exactly one class."
+        },
+        "code": {
+          "purpose": "在隔离沙箱内运行数据转换代码，返回可 JSON 序列化的结果。",
+          "when": "需要合并、裁剪或重排上游 JSON，但不需要操作主机时。",
+          "input": "inputs 映射（名称 → ${path} 模板）会作为 main(input) 的输入对象。",
+          "output": "main 的返回值，按 JSON 存为 nodes.<key>.output。",
+          "example": "function main(input) {\n  return { total: input.a + input.b };\n}\n// inputs: { a: ${nodes.a.output.count}, b: 2 }",
+          "examplePython": "def main(input):\n    return {\"total\": input[\"a\"] + input[\"b\"]}\n\n# inputs: { a: ${nodes.a.output.count}, b: 2 }",
+          "pythonLabel": "Python 示例"
         }
       }
     },
@@ -1691,7 +1720,9 @@
         "CYCLE": "不允许成环（工作流必须是有向无环图）",
         "ENDPOINT_MISSING": "连线端点不存在",
         "START_HAS_INPUT": "开始节点不能有入边",
-        "END_HAS_OUTPUT": "结束节点不能有出边"
+        "END_HAS_OUTPUT": "结束节点不能有出边",
+        "UNKNOWN_HANDLE": "该出边把手不存在（节点配置可能已变更）",
+        "CLASSIFIER_HANDLE_TAKEN": "这个分类分支已经有一条出边了，每个 class / default 最多连接一个下游"
       },
       "deleteTitle": "确认删除",
       "deleteConfirm": "将删除 {{nodes}} 个节点与 {{edges}} 条连线，此操作可用 Ctrl+Z 撤销。",
@@ -1813,7 +1844,9 @@
       "onUpstreamFailure": "上游失败时",
       "conditionGatedTitle": "IF / ELSE 由出边把手门控",
       "conditionGatedDesc": "条件节点的分支结果由 sourceHandle 决定：true 走 IF，false 走 ELSE。这里不再编辑表达式。",
-      "sourceBranch": "当前分支"
+      "sourceBranch": "当前分支",
+      "classifierGatedTitle": "分类路由由出边把手决定",
+      "classifierGatedDesc": "问题分类节点的每条出边对应一个 class；运行时命中哪个 class 就走哪条边，default 只在没有命中时使用。这里不再编辑表达式。"
     },
     "json": {
       "title": "定义 JSON（只读）",
@@ -1863,7 +1896,8 @@
       "validationFailed": "表单填写有误，请检查后重试",
       "idempotencyKey": "幂等键 (Idempotency-Key)",
       "idempotencyHint": "同一用户同一 key 重复触发会返回首个 run；参数不同则 409",
-      "invalidJson": "请输入合法的 JSON（例如 [\"agent-1\"]）"
+      "invalidJson": "请输入合法的 JSON（例如 [\"agent-1\"]）",
+      "selectPlaceholder": "请选择"
     },
     "conflict": {
       "title": "版本冲突（409）",
@@ -1978,8 +2012,8 @@
     },
     "error": {
       "403": "无权访问此工作流",
-      "403Desc": "只有创建者或管理员可以访问。",
       "404": "工作流不存在",
+      "403Desc": "只有创建者或管理员可以访问。",
       "404Desc": "它可能已被删除或归档。",
       "run404": "运行不存在",
       "backToList": "返回工作流列表",
@@ -2002,9 +2036,12 @@
         "output": "输出",
         "example": "最小示例",
         "security": {
-          "ai-analyze": "AI 只分析文本，绝不执行命令或派发任务。",
+          "ai-analyze": "AI 只分析文本，绝不执行命令或派发任务；输出不能直接作为脚本 raw 参数。",
           "approval": "审批是唯一的人工授权路径；超时按节点配置处理。",
-          "script-exec": "脚本仍然经过统一风险门禁；非 LOW 脚本需要审批祖先。"
+          "script-exec": "脚本仍然经过统一风险门禁；非 LOW 脚本需要审批祖先。",
+          "llm": "LLM 输出不能直接作为脚本 raw 参数；需要执行时仍走 script-exec 并经过审批。",
+          "classifier": "分类只决定路由，不构成执行授权；下游执行仍受风险门禁约束。",
+          "code": "代码在隔离数据沙箱中运行，无主机 IO / 命令 / 网络访问；需要主机操作请用 script-exec 或 agent。"
         }
       },
       "data": {
@@ -2035,6 +2072,42 @@
         "number": "数字",
         "boolean": "布尔",
         "json": "JSON"
+      },
+      "output": {
+        "condition": {
+          "result": "条件表达式结果"
+        },
+        "notify": {
+          "delivered": "成功送达的渠道列表",
+          "failed": "推送失败的渠道列表",
+          "skipped": "未启用/无目标的渠道列表"
+        },
+        "approval": {
+          "decision": "approved / rejected",
+          "comment": "审批意见",
+          "decidedBy": "审批人"
+        },
+        "wait": {
+          "waitedMs": "实际等待毫秒数"
+        },
+        "ai-analyze": {
+          "text": "分析结论文本",
+          "model": "使用的模型",
+          "truncated": "输入是否被截断",
+          "json": "json 模式解析结果（object / array / null）",
+          "structured": "是否为结构化 JSON 输出"
+        },
+        "llm": {
+          "text": "模型原始文本",
+          "json": "json 模式解析结果（未结构化时为 null）",
+          "structured": "是否为结构化 JSON 输出",
+          "model": "实际使用的 provider/model"
+        },
+        "classifier": {
+          "class": "命中的 class 名",
+          "reason": "分类理由",
+          "raw": "模型原始输出"
+        }
       }
     },
     "start": {
@@ -2048,7 +2121,14 @@
       "defaultPlaceholder": "可选",
       "description": "说明",
       "descriptionPlaceholder": "这个入参控制什么？",
-      "invalidName": "变量名必须匹配 ^[a-z][a-z0-9_]*$ 且不能重复："
+      "invalidName": "变量名必须匹配 ^[a-z][a-z0-9_]*$ 且不能重复：",
+      "label": "展示名",
+      "labelPlaceholder": "例如 目标主机",
+      "options": "枚举值（仅字符串）",
+      "optionValue": "枚举值",
+      "optionPlaceholder": "例如 prod",
+      "addOption": "添加枚举值",
+      "optionsHint": "存在枚举值时，触发弹窗渲染下拉选择，只允许提交这些值。"
     },
     "end": {
       "hint": "结束节点的输出就是 workflow_run.output；纯 ${path} 会保留原类型。",
@@ -2074,7 +2154,19 @@
       "input": "输入模板",
       "inputHint": "用 ${path} 引用上游输出；过长的输入会按最大字符数截断。",
       "maxInputChars": "最大输入字符",
-      "maxInputCharsHint": "1000..32000；默认 8000。"
+      "maxInputCharsHint": "1000..32000；默认 8000。",
+      "provider": "Provider",
+      "providerHint": "留空使用系统默认 AI provider；列表来自 AI 配置。",
+      "defaultProvider": "默认 provider",
+      "model": "模型",
+      "modelHint": "留空使用 provider 默认模型；可输入任意模型名。",
+      "defaultModel": "默认模型",
+      "outputMode": "输出模式",
+      "outputModeHint": "text = 只产出文本；json = 要求模型返回可解析的 JSON。",
+      "outputModeText": "文本（text）",
+      "outputModeJson": "结构化 JSON（json）",
+      "jsonSchema": "JSON Schema 提示",
+      "jsonSchemaHint": "仅作为提示词指导，不参与本地 schema 校验；建议描述字段与类型。"
     },
     "entryExit": {
       "bannerTitle": "这个工作流缺少开始/结束节点",
@@ -2090,7 +2182,7 @@
     "help": {
       "action": "帮助",
       "title": "工作流帮助",
-      "intro": "四步上手，再看变量语法与安全边界。",
+      "intro": "四步上手，再看变量语法、12 类节点与安全边界。",
       "steps": {
         "title": "四步入门",
         "declare": {
@@ -2118,12 +2210,12 @@
         "template": "模板插值",
         "expression": "表达式",
         "script": "脚本槽位",
-        "templateWhere": "脚本参数、通知/审批模板、transform、AI 输入、结束输出",
+        "templateWhere": "脚本参数、通知/审批模板、transform、AI/LLM 输入、结束输出",
         "expressionWhere": "condition 节点与旧边条件",
         "scriptWhere": "脚本内容中的 {{NAME}}，值来自 parameters"
       },
       "nodes": {
-        "title": "9 类节点速查"
+        "title": "12 类节点速查"
       },
       "example": {
         "title": "完整示例",
@@ -2131,9 +2223,27 @@
       },
       "security": {
         "title": "安全边界",
-        "ai": "AI 分析只产出结论文本，永不执行命令。",
+        "ai": "AI / LLM 只产出文本或 JSON，永不执行命令；LLM 输出不能直接作为脚本 raw 参数。",
         "approval": "审批是唯一的人工授权路径；高风险脚本必须有审批祖先。",
-        "script": "脚本仍经过统一风险门禁，不会因为放在工作流里而绕过。"
+        "script": "脚本仍经过统一风险门禁，不会因为放在工作流里而绕过。",
+        "code": "代码节点在隔离数据沙箱中运行，无主机 IO / 命令 / 网络；需要主机操作时仍用 script-exec / agent。",
+        "host": "主机操作只走 script-exec / agent 任务，并经过统一风险门禁与审批。"
+      },
+      "aiNodes": {
+        "title": "LLM / 分类 / 代码节点怎么用",
+        "intro": "这三类节点处理“理解与变换”，执行仍然只发生在 script-exec / agent。",
+        "llm": {
+          "desc": "选 provider/model，写 userPrompt（可插入上游变量）。text 模式返回文本；json 模式会要求模型只返回 JSON，剥离 ```json 围栏并解析，失败自动修复重试一次。",
+          "example": "userPrompt: 分析 ${nodes.check.output}\noutputMode: json\njsonSchema: {\"type\":\"object\",\"properties\":{\"verdict\":{\"type\":\"string\"}}}"
+        },
+        "classifier": {
+          "desc": "定义 1..10 个 class。每个 class 生成一个出边把手，画布上直接按 class 名连线；default 只在没有命中时兜底，每个 class / default 最多一条出边。",
+          "example": "classes: disk / network / permission\n出边: disk → 清理流程，network → 网络排查"
+        },
+        "code": {
+          "desc": "写 main(input) 做数据转换（JavaScript 或 Python）。inputs 把上游变量传进 input；代码在隔离沙箱运行，没有主机 IO、命令或网络权限。",
+          "example": "function main(input) {\n  return { total: input.a + input.b };\n}\ninputs: { a: ${nodes.a.output.count}, b: 2 }"
+        }
       }
     },
     "template": {
@@ -2158,6 +2268,79 @@
         "name": "批量健康检查",
         "desc": "对目标主机批量探活，任一输出即通知，否则短暂等待。"
       }
+    },
+    "llm": {
+      "warning": "LLM 节点只生成文本或 JSON，不执行命令；输出不能直接作为脚本 raw 参数。",
+      "userPrompt": "用户提示词",
+      "userPromptHint": "必填模板，用 ${path} 引用上游输出；过长输入会按最大字符数截断。",
+      "userPromptRequired": "请输入用户提示词",
+      "systemPrompt": "系统提示词",
+      "systemPromptHint": "可选，用来约束角色、语气与输出格式。",
+      "systemPromptPlaceholder": "You are an SRE assistant…",
+      "outputMode": "输出模式",
+      "outputModeHint": "json 模式会要求模型只返回 JSON，并自动剥离 ```json 围栏；解析失败会重试一次修复。",
+      "outputModeText": "文本（text）",
+      "outputModeJson": "结构化 JSON（json）",
+      "jsonSchema": "JSON Schema",
+      "jsonSchemaHint": "只作为提示词指导；格式错误只会产生发布警告，不会在本地做 schema 校验。",
+      "temperature": "温度",
+      "temperatureHint": "0..2，越低越稳定；结构化输出建议 0.1 ~ 0.3。",
+      "maxInputChars": "最大输入字符",
+      "maxInputCharsHint": "1000..32000；超出部分在送入模型前截断。"
+    },
+    "classifier": {
+      "warning": "分类结果只用于路由，不会执行命令；每个 class 对应一个出边把手。",
+      "input": "输入模板",
+      "inputHint": "用 ${path} 引用上游输出，作为分类模型的输入。",
+      "inputRequired": "请输入分类输入模板",
+      "classes": "分类（classes）",
+      "classesHint": "1..10 个，名称匹配 ^[a-z][a-z0-9_]{0,63}$ 且唯一；每个 class 生成一个出边把手（每个分支最多一条出边）。",
+      "emptyClasses": "还没有分类，至少添加一个 class。",
+      "addClass": "添加分类",
+      "classCount": "{{count}} / {{max}} 个分类",
+      "className": "分类名",
+      "classNamePlaceholder": "例如 disk",
+      "classDescription": "分类说明",
+      "classDescriptionPlaceholder": "这个分类包含哪些问题？",
+      "invalidClassName": "分类名必须匹配 ^[a-z][a-z0-9_]{0,63}$ 且不能重复：",
+      "invalidClassList": "分类节点至少需要一个合法且唯一的 class",
+      "tooManyClasses": "分类节点最多 10 个 class",
+      "instructions": "分类指令",
+      "instructionsHint": "可选，补充分类标准；执行器默认要求只返回一个 class。",
+      "instructionsPlaceholder": "Classify the operations input into exactly one class.",
+      "outputHint": "输出 { class, reason, raw }；画布会显示 {{count}} 个 class 把手 + default。"
+    },
+    "code": {
+      "warning": "代码节点只在服务端隔离数据沙箱里做数据转换，没有主机文件/网络/命令访问权限。",
+      "language": "语言",
+      "languageHint": "javascript 需定义 main(input)；python 需定义 def main(input)。",
+      "languageJavascript": "JavaScript",
+      "languagePython": "Python",
+      "code": "代码",
+      "codeHint": "代码长度 ≤ 20000 字符；返回值必须可 JSON 序列化。",
+      "codeRequired": "请输入代码",
+      "insertSkeleton": "插入 main 骨架",
+      "inputs": "输入映射",
+      "inputsHint": "名称 → 上游变量模板，会作为 main(input) 的输入对象。",
+      "addInput": "添加输入",
+      "inputsEmpty": "还没有输入；main(input) 会收到空对象。",
+      "inputNamePlaceholder": "例如 a",
+      "timeoutSec": "超时（秒）",
+      "timeoutSecHint": "1..15 秒；超时会关闭沙箱上下文并取消执行。",
+      "outputHint": "输出 = main 的返回值（对象 / 数组 / 标量），按 JSON 保存。",
+      "inputName": "输入名",
+      "inputValue": "输入值"
+    },
+    "condition": {
+      "builderHint": "用结构化字段拼表达式；高级输入框始终保存最终文本。",
+      "left": "左值",
+      "operator": "操作符",
+      "right": "右值（字面量或变量）",
+      "rightPlaceholder": "90 或 nodes.n1.output.threshold",
+      "advanced": "高级：直接写表达式",
+      "advancedHint": "支持路径 / 数字 / 单引号字符串 / == != > < >= <= contains / && ||，≤512 字符。",
+      "advancedOnly": "当前表达式包含复合条件",
+      "advancedOnlyDesc": "结构化构建器只表达单个条件；请继续在高级输入框中编辑，保存的仍是这段原文。"
     }
   }
 }

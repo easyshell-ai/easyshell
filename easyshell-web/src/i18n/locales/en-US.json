@@ -1585,7 +1585,10 @@
         "start": "Start",
         "transform": "Transform",
         "ai-analyze": "AI analyze",
-        "end": "End"
+        "end": "End",
+        "llm": "LLM",
+        "classifier": "Classifier",
+        "code": "Code"
       },
       "desc": {
         "script-exec": "Run a script on target hosts via a real Task",
@@ -1596,7 +1599,10 @@
         "start": "Declare workflow inputs; a run starts here",
         "transform": "Reshape upstream output into named fields",
         "ai-analyze": "Read upstream output and produce a text conclusion; never executes",
-        "end": "Aggregate final outputs; the run result comes from here"
+        "end": "Aggregate final outputs; the run result comes from here",
+        "llm": "Generate text or structured JSON with a model; never executes commands",
+        "classifier": "Route to a class branch based on the model classification",
+        "code": "Transform data in an isolated sandbox with JavaScript or Python"
       },
       "category": {
         "entry": "Entry",
@@ -1642,11 +1648,11 @@
           "example": "expression: nodes.check.output.count > 0"
         },
         "ai-analyze": {
-          "purpose": "Read upstream output and produce a conclusion.",
-          "when": "Summaries or risk conclusions are needed without executing commands.",
-          "input": "The input template, truncated to maxInputChars.",
-          "output": "{ text, model, truncated }.",
-          "example": "instructions: Find mounts over the threshold and conclude\ninput: ${nodes.check.output}\nmaxInputChars: 8000"
+          "purpose": "Read upstream output and produce a conclusion, or structured JSON when requested; never executes commands.",
+          "when": "For summaries, judgments or risk verdicts; text suits humans, json suits downstream machine reads.",
+          "input": "input template truncated to maxInputChars; in json mode jsonSchema is prompt guidance describing fields and types.",
+          "output": "{ text, model, truncated }; in json mode the parsed result is returned in text; the schema is guidance only, not local validation.",
+          "example": "instructions: Find mounts above the threshold\ninput: ${nodes.check.output}\noutputMode: json\njsonSchema: {\"type\":\"object\",\"properties\":{\"verdict\":{\"type\":\"string\"}}}\n# invalid JSON triggers one repair retry"
         },
         "approval": {
           "purpose": "Suspend the run until an admin decides.",
@@ -1668,6 +1674,29 @@
           "input": "Upstream output (passed through).",
           "output": "{ waitedMs }.",
           "example": "durationSec: 60"
+        },
+        "llm": {
+          "purpose": "Call a general LLM to produce text or structured JSON.",
+          "when": "When you need summaries, field extraction or machine-readable output, but no command execution; text returns prose, json returns a parsed object.",
+          "input": "userPrompt / systemPrompt templates, with upstream input truncated to maxInputChars.",
+          "output": "{ text, json, structured, model }; json mode strips ```json fences and parses, retries once with a repair prompt, then fails the node if still invalid.",
+          "example": "provider: openai\nmodel: gpt-4o-mini\nuserPrompt: |\n  Analyze ${nodes.check.output} and return a risk verdict\noutputMode: json\njsonSchema: {\"type\":\"object\",\"properties\":{\"verdict\":{\"type\":\"string\"}}}"
+        },
+        "classifier": {
+          "purpose": "Ask a model to put the input into exactly one class and route by class.",
+          "when": "When different problem types (disk / network / permission) need different branches.",
+          "input": "input template (required) plus 1..10 classes (name + description).",
+          "output": "{ class, reason, raw }; one source handle per class plus a default fallback.",
+          "example": "input: ${nodes.check.output}\nclasses:\n  - { name: disk, description: Disk / capacity / mount issues }\n  - { name: network, description: Network / port / connectivity }\ninstructions: Classify the input into exactly one class."
+        },
+        "code": {
+          "purpose": "Run data-transformation code in an isolated sandbox and return a JSON-serializable result.",
+          "when": "When upstream JSON needs merging, trimming or reshaping, but no host access is needed.",
+          "input": "inputs mapping (name → ${path} template) becomes the object passed to main(input).",
+          "output": "The return value of main, stored as nodes.<key>.output.",
+          "example": "function main(input) {\n  return { total: input.a + input.b };\n}\n// inputs: { a: ${nodes.a.output.count}, b: 2 }",
+          "examplePython": "def main(input):\n    return {\"total\": input[\"a\"] + input[\"b\"]}\n\n# inputs: { a: ${nodes.a.output.count}, b: 2 }",
+          "pythonLabel": "Python example"
         }
       }
     },
@@ -1691,7 +1720,9 @@
         "CYCLE": "Cycles are not allowed (workflows must be a DAG)",
         "ENDPOINT_MISSING": "Connection endpoint does not exist",
         "START_HAS_INPUT": "Start nodes cannot have incoming edges",
-        "END_HAS_OUTPUT": "End nodes cannot have outgoing edges"
+        "END_HAS_OUTPUT": "End nodes cannot have outgoing edges",
+        "UNKNOWN_HANDLE": "That source handle no longer exists (node config may have changed)",
+        "CLASSIFIER_HANDLE_TAKEN": "This classifier branch already has an outgoing edge; each class / default connects to at most one downstream"
       },
       "deleteTitle": "Confirm delete",
       "deleteConfirm": "This removes {{nodes}} node(s) and {{edges}} edge(s). Ctrl+Z undoes it.",
@@ -1813,7 +1844,9 @@
       "onUpstreamFailure": "When upstream fails",
       "conditionGatedTitle": "IF / ELSE is gated by the outgoing handle",
       "conditionGatedDesc": "The branch is determined by sourceHandle: true runs IF, false runs ELSE. The expression is no longer edited here.",
-      "sourceBranch": "Branch"
+      "sourceBranch": "Branch",
+      "classifierGatedTitle": "Routing is determined by the outgoing handle",
+      "classifierGatedDesc": "Each outgoing edge of a classifier maps to one class; the run follows the branch for the matched class, and default only when nothing matched. The expression is not edited here."
     },
     "json": {
       "title": "Definition JSON (read-only)",
@@ -1863,7 +1896,8 @@
       "validationFailed": "Please fix the form errors and try again",
       "idempotencyKey": "Idempotency-Key",
       "idempotencyHint": "Same user + same key returns the first run; different inputs → 409",
-      "invalidJson": "Enter valid JSON (for example [\"agent-1\"])"
+      "invalidJson": "Enter valid JSON (for example [\"agent-1\"])",
+      "selectPlaceholder": "Select a value"
     },
     "conflict": {
       "title": "Version conflict (409)",
@@ -1978,8 +2012,8 @@
     },
     "error": {
       "403": "You cannot access this workflow",
-      "403Desc": "Only the owner or an admin can access it.",
       "404": "Workflow not found",
+      "403Desc": "Only the owner or an admin can access it.",
       "404Desc": "It may have been deleted or archived.",
       "run404": "Run not found",
       "backToList": "Back to workflows",
@@ -2002,9 +2036,12 @@
         "output": "Output",
         "example": "Minimal example",
         "security": {
-          "ai-analyze": "AI only analyzes text; it never executes commands or dispatches tasks.",
+          "ai-analyze": "AI only analyzes text and never executes commands or dispatches tasks; its output cannot be raw script parameters.",
           "approval": "Approval is the only human authorization path; expiry follows the node config.",
-          "script-exec": "Scripts still pass the shared risk gate; non-LOW scripts need an approval ancestor."
+          "script-exec": "Scripts still pass the shared risk gate; non-LOW scripts need an approval ancestor.",
+          "llm": "LLM output cannot be raw script parameters; execution still goes through script-exec and approval.",
+          "classifier": "Classification only selects a route and never grants execution; downstream execution still passes the risk gate.",
+          "code": "Code runs in an isolated data sandbox with no host IO / commands / network. Use script-exec or an agent for host operations."
         }
       },
       "data": {
@@ -2035,6 +2072,42 @@
         "number": "Number",
         "boolean": "Boolean",
         "json": "JSON"
+      },
+      "output": {
+        "condition": {
+          "result": "Condition expression result"
+        },
+        "notify": {
+          "delivered": "Channels delivered successfully",
+          "failed": "Channels that failed",
+          "skipped": "Disabled or targetless channels"
+        },
+        "approval": {
+          "decision": "approved / rejected",
+          "comment": "Approval comment",
+          "decidedBy": "Approver"
+        },
+        "wait": {
+          "waitedMs": "Actual wait in milliseconds"
+        },
+        "ai-analyze": {
+          "text": "Analysis text",
+          "model": "Model used",
+          "truncated": "Whether the input was truncated",
+          "json": "Parsed JSON in json mode (object / array / null)",
+          "structured": "Whether the output is structured JSON"
+        },
+        "llm": {
+          "text": "Raw model text",
+          "json": "Parsed JSON in json mode (null when unstructured)",
+          "structured": "Whether the output is structured JSON",
+          "model": "Actual provider/model"
+        },
+        "classifier": {
+          "class": "Matched class name",
+          "reason": "Classification reason",
+          "raw": "Raw model output"
+        }
       }
     },
     "start": {
@@ -2048,7 +2121,14 @@
       "defaultPlaceholder": "optional",
       "description": "Description",
       "descriptionPlaceholder": "What does this input control?",
-      "invalidName": "Names must match ^[a-z][a-z0-9_]*$ and be unique:"
+      "invalidName": "Names must match ^[a-z][a-z0-9_]*$ and be unique:",
+      "label": "Label",
+      "labelPlaceholder": "e.g. Target hosts",
+      "options": "Options (string only)",
+      "optionValue": "Option value",
+      "optionPlaceholder": "e.g. prod",
+      "addOption": "Add option",
+      "optionsHint": "When options exist the trigger modal renders a Select and only these values can be submitted."
     },
     "end": {
       "hint": "End outputs become workflow_run.output; a pure ${path} keeps its original type.",
@@ -2074,7 +2154,19 @@
       "input": "Input template",
       "inputHint": "Reference upstream output with ${path}; long input is truncated to the max characters.",
       "maxInputChars": "Max input chars",
-      "maxInputCharsHint": "1000..32000; default 8000."
+      "maxInputCharsHint": "1000..32000; default 8000.",
+      "provider": "Provider",
+      "providerHint": "Empty uses the system default AI provider; options come from the AI config.",
+      "defaultProvider": "Default provider",
+      "model": "Model",
+      "modelHint": "Empty uses the provider default; any model name can be typed.",
+      "defaultModel": "Default model",
+      "outputMode": "Output mode",
+      "outputModeHint": "text = plain text; json = ask the model for parseable JSON.",
+      "outputModeText": "Text (text)",
+      "outputModeJson": "Structured JSON (json)",
+      "jsonSchema": "JSON Schema guidance",
+      "jsonSchemaHint": "Prompt guidance only, not local schema validation; describe fields and types."
     },
     "entryExit": {
       "bannerTitle": "This workflow is missing Start/End nodes",
@@ -2090,7 +2182,7 @@
     "help": {
       "action": "Help",
       "title": "Workflow help",
-      "intro": "Four steps to get going, then variable syntax and security boundaries.",
+      "intro": "Four steps to get started, then variable syntax, 12 node types and security boundaries.",
       "steps": {
         "title": "Four-step tour",
         "declare": {
@@ -2118,12 +2210,12 @@
         "template": "Template",
         "expression": "Expression",
         "script": "Script slot",
-        "templateWhere": "Script parameters, notify/approval templates, transform, AI input, end outputs",
+        "templateWhere": "Script parameters, notify/approval templates, transform, AI/LLM input, end outputs",
         "expressionWhere": "Condition nodes and legacy edge conditions",
-        "scriptWhere": "{{NAME}} inside a script; values come from parameters"
+        "scriptWhere": "{{NAME}} slots inside a script; values come from parameters"
       },
       "nodes": {
-        "title": "Nine-node quick reference"
+        "title": "12 node types"
       },
       "example": {
         "title": "Full example",
@@ -2131,9 +2223,27 @@
       },
       "security": {
         "title": "Security boundaries",
-        "ai": "AI analyze only produces a text conclusion; it never executes commands.",
+        "ai": "AI / LLM only produce text or JSON and never execute commands; LLM output cannot be raw script parameters.",
         "approval": "Approval is the only human authorization path; high-risk scripts need an approval ancestor.",
-        "script": "Scripts still pass the shared risk gate; wrapping them in a workflow does not bypass it."
+        "script": "Scripts still pass the shared risk gate; wrapping them in a workflow does not bypass it.",
+        "code": "The code node runs in an isolated data sandbox with no host IO / commands / network; host operations still use script-exec / agents.",
+        "host": "Host operations only go through script-exec / agent tasks and the shared risk gate plus approval."
+      },
+      "aiNodes": {
+        "title": "How LLM / classifier / code nodes work",
+        "intro": "These three nodes handle understanding and transformation; execution still happens only in script-exec / agents.",
+        "llm": {
+          "desc": "Pick a provider/model and write userPrompt (variables can be inserted). text returns plain text; json asks for JSON only, strips ```json fences, parses it and retries once with a repair prompt on failure.",
+          "example": "userPrompt: Analyze ${nodes.check.output}\noutputMode: json\njsonSchema: {\"type\":\"object\",\"properties\":{\"verdict\":{\"type\":\"string\"}}}"
+        },
+        "classifier": {
+          "desc": "Define 1..10 classes. Each class creates a visible source handle and is wired by class name; default only catches no-match, and each class / default allows at most one outgoing edge.",
+          "example": "classes: disk / network / permission\nedges: disk → cleanup, network → network triage"
+        },
+        "code": {
+          "desc": "Write main(input) for data transformation (JavaScript or Python). inputs feed upstream values into input; code runs in an isolated sandbox without host IO, commands or network.",
+          "example": "function main(input) {\n  return { total: input.a + input.b };\n}\ninputs: { a: ${nodes.a.output.count}, b: 2 }"
+        }
       }
     },
     "template": {
@@ -2158,6 +2268,79 @@
         "name": "Batch health check",
         "desc": "Probe target hosts, notify on any output, otherwise wait briefly."
       }
+    },
+    "llm": {
+      "warning": "The LLM node only produces text or JSON and never executes commands; its output cannot be used as raw script parameters.",
+      "userPrompt": "User prompt",
+      "userPromptHint": "Required template; reference upstream output with ${path}. Long input is truncated to maxInputChars.",
+      "userPromptRequired": "Please enter a user prompt",
+      "systemPrompt": "System prompt",
+      "systemPromptHint": "Optional; constrains role, tone and output format.",
+      "systemPromptPlaceholder": "You are an SRE assistant…",
+      "outputMode": "Output mode",
+      "outputModeHint": "json mode asks for JSON only, strips ```json fences and parses it; one repair retry is attempted on failure.",
+      "outputModeText": "Text (text)",
+      "outputModeJson": "Structured JSON (json)",
+      "jsonSchema": "JSON Schema",
+      "jsonSchemaHint": "Prompt guidance only; invalid JSON here is a publish warning, not local schema validation.",
+      "temperature": "Temperature",
+      "temperatureHint": "0..2; lower is more stable. Structured output works best around 0.1–0.3.",
+      "maxInputChars": "Max input chars",
+      "maxInputCharsHint": "1000..32000; the excess is truncated before the model call."
+    },
+    "classifier": {
+      "warning": "Classification is only used for routing and never executes commands; each class gets one source handle.",
+      "input": "Input template",
+      "inputHint": "Reference upstream output with ${path}; this is the classifier input.",
+      "inputRequired": "Please enter a classifier input template",
+      "classes": "Classes",
+      "classesHint": "1..10, names matching ^[a-z][a-z0-9_]{0,63}$ and unique; each class creates a source handle (one outgoing edge per branch).",
+      "emptyClasses": "No classes yet; add at least one class.",
+      "addClass": "Add class",
+      "classCount": "{{count}} / {{max}} classes",
+      "className": "Class name",
+      "classNamePlaceholder": "e.g. disk",
+      "classDescription": "Class description",
+      "classDescriptionPlaceholder": "What belongs in this class?",
+      "invalidClassName": "Class names must match ^[a-z][a-z0-9_]{0,63}$ and be unique:",
+      "invalidClassList": "A classifier needs at least one valid, unique class",
+      "tooManyClasses": "A classifier supports at most 10 classes",
+      "instructions": "Instructions",
+      "instructionsHint": "Optional extra guidance; the executor already asks for exactly one class.",
+      "instructionsPlaceholder": "Classify the operations input into exactly one class.",
+      "outputHint": "Outputs { class, reason, raw }; the canvas shows {{count}} class handles plus default."
+    },
+    "code": {
+      "warning": "The code node only transforms data inside a server-side isolated data sandbox; it has no host file, network or command access.",
+      "language": "Language",
+      "languageHint": "javascript needs main(input); python needs def main(input).",
+      "languageJavascript": "JavaScript",
+      "languagePython": "Python",
+      "code": "Code",
+      "codeHint": "Up to 20,000 chars; the return value must be JSON-serializable.",
+      "codeRequired": "Please enter the code",
+      "insertSkeleton": "Insert main skeleton",
+      "inputs": "Inputs",
+      "inputsHint": "Name → upstream variable template; becomes the object passed to main(input).",
+      "addInput": "Add input",
+      "inputsEmpty": "No inputs yet; main(input) receives an empty object.",
+      "inputNamePlaceholder": "e.g. a",
+      "timeoutSec": "Timeout (s)",
+      "timeoutSecHint": "1..15 seconds; on expiry the sandbox context is closed and execution cancelled.",
+      "outputHint": "Output = the return value of main (object / array / scalar), stored as JSON.",
+      "inputName": "Input name",
+      "inputValue": "Input value"
+    },
+    "condition": {
+      "builderHint": "Compose the expression with structured fields; the advanced input always stores the final text.",
+      "left": "Left value",
+      "operator": "Operator",
+      "right": "Right value (literal or variable)",
+      "rightPlaceholder": "90 or nodes.n1.output.threshold",
+      "advanced": "Advanced: write the expression directly",
+      "advancedHint": "Supports paths / numbers / single-quoted strings / == != > < >= <= contains / && ||, up to 512 chars.",
+      "advancedOnly": "This expression contains compound conditions",
+      "advancedOnlyDesc": "The structured builder only expresses a single condition; keep editing in the advanced input — the stored value is still that raw text."
     }
   }
 }

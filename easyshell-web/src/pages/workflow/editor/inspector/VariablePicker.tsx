@@ -101,7 +101,7 @@ export const VariablePicker: React.FC<VariablePickerProps> = ({
                   type="button"
                   className="wf-variable-item"
                   data-testid={variableTestId(ref.path)}
-                  title={`${insert}${ref.description ? ` · ${ref.description}` : ''}`}
+                  title={`${insert}${ref.description ? ` · ${t(ref.description)}` : ''}`}
                   onClick={() => {
                     onInsert(ref.path);
                     setOpen(false);
