@@ -20,10 +20,16 @@ import { useTranslation } from 'react-i18next';
 import { theme } from 'antd';
 import type {
   AiAnalyzeConfig,
+  AiOutputMode,
   ApprovalConfig,
   ApprovalMode,
+  ClassifierClass,
+  ClassifierConfig,
+  CodeConfig,
+  CodeLanguage,
   ConditionConfig,
   EndOutput,
+  LlmConfig,
   NotifyConfig,
   ScriptExecConfig,
   TargetsConfig,
@@ -34,7 +40,13 @@ import type {
   WorkflowNode,
   WorkflowNodeType,
 } from '../types';
-import { nodeHeight, NODE_WIDTH, sourceHandles } from '../graph';
+import {
+  MAX_CLASSIFIER_CLASSES,
+  classifierClassNamesOf,
+  nodeHeight,
+  NODE_WIDTH,
+  sourceHandlesForNode,
+} from '../graph';
 import { availableVariablesForNode } from '../variables';
 import type { WorkflowVariableGroup } from '../variables';
 import { ChannelsEditor, ParametersEditor, TargetsEditor, type TargetOptions } from './NodeConfigFields';
@@ -44,6 +56,10 @@ import { getClusterList } from '../../../api/cluster';
 import { getTagList } from '../../../api/tag';
 import { VariableInput } from './inspector/VariablePicker';
 import { AiAnalyzeFields } from './inspector/AiAnalyzeFields';
+import { LlmFields } from './inspector/LlmFields';
+import { ClassifierFields } from './inspector/ClassifierFields';
+import { CodeFields } from './inspector/CodeFields';
+import { ConditionBuilder } from './inspector/ConditionBuilder';
 import { StartVariablesEditor } from './inspector/StartVariablesEditor';
 import {
   invalidVariableNames,
@@ -119,6 +135,23 @@ interface FormValues {
   aiInstructions?: string;
   aiInput?: string;
   aiMaxInputChars?: number;
+  aiOutputMode?: AiOutputMode;
+  aiJsonSchema?: string;
+  llmProvider?: string | null;
+  llmModel?: string | null;
+  llmSystemPrompt?: string;
+  llmUserPrompt?: string;
+  llmOutputMode?: AiOutputMode;
+  llmJsonSchema?: string;
+  llmTemperature?: number;
+  llmMaxInputChars?: number;
+  classifierInput?: string;
+  classifierInstructions?: string;
+  classifierProvider?: string | null;
+  classifierModel?: string | null;
+  codeLanguage?: CodeLanguage;
+  code?: string;
+  codeTimeoutSec?: number;
 }
 
 /* ── config 读取助手（宽松：老草稿/手写 JSON 可能缺字段或类型不符） ── */
@@ -230,6 +263,8 @@ const NodeFormPanel: React.FC<NodeFormPanelProps> = ({
   const [startRows, setStartRows] = useState<StartVariableRow[]>([]);
   const [endRows, setEndRows] = useState<EndOutput[]>([]);
   const [transformRows, setTransformRows] = useState<TransformMapping[]>([]);
+  const [classifierClasses, setClassifierClasses] = useState<ClassifierClass[]>([]);
+  const [codeInputs, setCodeInputs] = useState<Record<string, string>>({});
   const [targetOptions, setTargetOptions] = useState<TargetOptions | undefined>(undefined);
 
   const groups = useMemo<WorkflowVariableGroup[]>(
@@ -274,6 +309,23 @@ const NodeFormPanel: React.FC<NodeFormPanelProps> = ({
       aiInstructions: str(config.instructions),
       aiInput: str(config.input),
       aiMaxInputChars: num(config.maxInputChars, 8000),
+      aiOutputMode: config.outputMode === 'json' ? 'json' : 'text',
+      aiJsonSchema: str(config.jsonSchema),
+      llmProvider: typeof config.provider === 'string' ? config.provider : undefined,
+      llmModel: typeof config.model === 'string' ? config.model : undefined,
+      llmSystemPrompt: str(config.systemPrompt),
+      llmUserPrompt: str(config.userPrompt),
+      llmOutputMode: config.outputMode === 'json' ? 'json' : 'text',
+      llmJsonSchema: str(config.jsonSchema),
+      llmTemperature: num(config.temperature, 0.3),
+      llmMaxInputChars: num(config.maxInputChars, 8000),
+      classifierInput: str(config.input),
+      classifierInstructions: str(config.instructions),
+      classifierProvider: typeof config.provider === 'string' ? config.provider : undefined,
+      classifierModel: typeof config.model === 'string' ? config.model : undefined,
+      codeLanguage: config.language === 'python' ? 'python' : 'javascript',
+      code: str(config.code),
+      codeTimeoutSec: num(config.timeoutSec, 5),
     };
   }, [node]);
 
@@ -288,6 +340,15 @@ const NodeFormPanel: React.FC<NodeFormPanelProps> = ({
     setStartRows(variablesToRows(definition.variables));
     setEndRows(configOutputs(config.outputs));
     setTransformRows(mappingRows(config.mappings));
+    setClassifierClasses(
+      Array.isArray(config.classes)
+        ? config.classes.map((item) => {
+            const row = (item || {}) as Record<string, unknown>;
+            return { name: str(row.name), description: str(row.description) };
+          })
+        : []
+    );
+    setCodeInputs(strMap(config.inputs));
     form.setFieldsValue(initialValues);
   }, [open, node, initialValues, form, definition.variables]);
 
@@ -407,8 +468,67 @@ const NodeFormPanel: React.FC<NodeFormPanelProps> = ({
         instructions: values.aiInstructions || '',
         input: values.aiInput || '',
         maxInputChars: values.aiMaxInputChars ?? 8000,
+        outputMode: values.aiOutputMode === 'json' ? 'json' : 'text',
       };
+      if (ai.outputMode === 'json' && values.aiJsonSchema && values.aiJsonSchema.trim()) {
+        ai.jsonSchema = values.aiJsonSchema;
+      }
+      delete config.jsonSchema;
       Object.assign(config, ai);
+    }
+    if (nodeType === 'llm') {
+      const llm: LlmConfig = {
+        provider: values.llmProvider && values.llmProvider.trim() ? values.llmProvider.trim() : null,
+        model: values.llmModel && values.llmModel.trim() ? values.llmModel.trim() : null,
+        systemPrompt: values.llmSystemPrompt || '',
+        userPrompt: values.llmUserPrompt || '',
+        outputMode: values.llmOutputMode === 'json' ? 'json' : 'text',
+        temperature: values.llmTemperature ?? 0.3,
+        maxInputChars: values.llmMaxInputChars ?? 8000,
+      };
+      if (llm.outputMode === 'json' && values.llmJsonSchema && values.llmJsonSchema.trim()) {
+        llm.jsonSchema = values.llmJsonSchema;
+      }
+      delete config.jsonSchema;
+      Object.assign(config, llm);
+    }
+    if (nodeType === 'classifier') {
+      const classes = classifierClasses
+        .filter((item) => item.name.trim())
+        .map((item) => ({
+          name: item.name.trim(),
+          ...(item.description && item.description.trim() ? { description: item.description.trim() } : {}),
+        }));
+      const classNames = classifierClassNamesOf({ classes });
+      const nonEmpty = classifierClasses.filter((item) => item.name.trim()).length;
+      if (
+        classes.length === 0 ||
+        classNames.length !== nonEmpty ||
+        classes.length > MAX_CLASSIFIER_CLASSES
+      ) {
+        message.error(t('workflow.classifier.invalidClassList'));
+        return;
+      }
+      const classifier: ClassifierConfig = {
+        input: values.classifierInput || '',
+        classes,
+        instructions: values.classifierInstructions || '',
+        provider:
+          values.classifierProvider && values.classifierProvider.trim()
+            ? values.classifierProvider.trim()
+            : null,
+        model: values.classifierModel && values.classifierModel.trim() ? values.classifierModel.trim() : null,
+      };
+      Object.assign(config, classifier);
+    }
+    if (nodeType === 'code') {
+      const code: CodeConfig = {
+        language: values.codeLanguage === 'python' ? 'python' : 'javascript',
+        code: values.code || '',
+        inputs: compactParameters(codeInputs),
+        timeoutSec: values.codeTimeoutSec ?? 5,
+      };
+      Object.assign(config, code);
     }
 
     onSave(node.key, {
@@ -460,6 +580,20 @@ const NodeFormPanel: React.FC<NodeFormPanelProps> = ({
       )}
 
       {nodeType === 'ai-analyze' && <AiAnalyzeFields groups={groups} />}
+
+      {nodeType === 'llm' && <LlmFields groups={groups} />}
+
+      {nodeType === 'classifier' && (
+        <ClassifierFields
+          groups={groups}
+          classes={classifierClasses}
+          onClassesChange={setClassifierClasses}
+        />
+      )}
+
+      {nodeType === 'code' && (
+        <CodeFields groups={groups} inputs={codeInputs} onInputsChange={setCodeInputs} />
+      )}
 
       {nodeType === 'script-exec' && (
         <>
@@ -517,13 +651,7 @@ const NodeFormPanel: React.FC<NodeFormPanelProps> = ({
             tooltip={t('workflow.form.expressionHint')}
             extra={t('workflow.form.expressionSyntax')}
           >
-            <VariableInput
-              groups={groups}
-              mode="expression"
-              ariaLabel={t('workflow.form.expression')}
-              placeholder="nodes.n1.output.count > 0"
-              monospace
-            />
+            <ConditionBuilder groups={groups} />
           </Form.Item>
           <Alert
             type="info"
@@ -723,7 +851,7 @@ const NodeFormPanel: React.FC<NodeFormPanelProps> = ({
             {' · '}
             {t('workflow.form.handles', {
               in: 1,
-              out: sourceHandles(nodeType).length,
+              out: sourceHandlesForNode(node).length,
             })}
           </div>
         </>

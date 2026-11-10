@@ -276,15 +276,31 @@
   display: flex;
   flex-direction: column;
 }
+.wf-inspector-tabs > .ant-tabs-content-holder,
+.wf-inspector-tabs > .ant-tabs-body-holder {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.wf-inspector-tabs .ant-tabs-body {
+  height: 100%;
+}
+.wf-inspector-tabs .ant-tabs-content {
+  height: 100%;
+}
+.wf-inspector-tabs .ant-tabs-tabpane {
+  height: 100%;
+  overflow-y: auto;
+  padding: 10px 14px 64px;
+}
+/* AntD 6 Tabs 不再渲染 .ant-tabs-tabpane，面板本体是 .ant-tabs-content-active */
+.wf-inspector-tabs .ant-tabs-content-active {
+  overflow-y: auto;
+  padding: 10px 14px 64px;
+}
 .wf-inspector-tabs > .ant-tabs-nav {
   margin: 0;
   padding: 0 14px;
-}
-.wf-inspector-tabs > .ant-tabs-content-holder {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 10px 14px 14px;
 }
 .wf-inspector-empty {
   align-items: center;
@@ -329,6 +345,50 @@
   padding: 6px;
   border: 1px solid var(--es-color-border-secondary);
   border-radius: 6px;
+}
+.wf-start-options {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border: 1px dashed var(--es-color-border-secondary);
+  border-radius: 6px;
+}
+.wf-start-options-title {
+  font-size: 11px;
+  font-weight: 600;
+}
+.wf-start-options-hint {
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+/* ── 条件构建器 ─────────────────────────────────────────────────── */
+.wf-condition-builder {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.wf-condition-builder-hint {
+  font-size: 11px;
+  line-height: 1.4;
+}
+.wf-condition-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.wf-condition-label {
+  color: var(--es-color-text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+.wf-condition-advanced {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--es-color-border-secondary);
 }
 
 /* ── 变量选择器 ─────────────────────────────────────────────────── */
@@ -523,6 +583,14 @@
   color: var(--es-color-text-secondary);
   font-size: 12px;
   line-height: 1.5;
+}
+.wf-help-ai-node {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--es-color-border-secondary);
+  border-radius: 6px;
 }
 
 @media (max-width: 1199px) {

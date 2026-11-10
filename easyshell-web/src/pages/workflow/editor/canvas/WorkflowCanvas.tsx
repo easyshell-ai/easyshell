@@ -26,11 +26,13 @@ import {
   BranchesOutlined,
   ClockCircleOutlined,
   CodeOutlined,
+  MessageOutlined,
   NotificationOutlined,
   PlayCircleOutlined,
   RobotOutlined,
   StopOutlined,
   SwapOutlined,
+  TagsOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { semanticVar } from '../../../../theme/semantics';
@@ -44,7 +46,7 @@ import {
   nodeHasInput,
   nodeHeight,
   nodeSummaryTextOf,
-  sourceHandles,
+  sourceHandlesForNode,
   type ConnectionContext,
   type WorkflowFlowEdge,
   type WorkflowFlowNode,
@@ -63,6 +65,9 @@ const NODE_TYPE_ICON: Record<WorkflowNodeType, React.ReactNode> = {
   transform: <SwapOutlined />,
   condition: <BranchesOutlined />,
   'ai-analyze': <RobotOutlined />,
+  llm: <MessageOutlined />,
+  classifier: <TagsOutlined />,
+  code: <CodeOutlined />,
   approval: <AuditOutlined />,
   notify: <NotificationOutlined />,
   wait: <ClockCircleOutlined />,
@@ -82,13 +87,32 @@ const STATUS_VAR: Record<string, string> = {
   timeout: semanticVar('timeout'),
 };
 
-/** condition 双出把手的纵向位置（右上 true / 右下 false） */
+/** condition 双出把手的纵向位置（右上 true / 右下 false）；classifier 按 handle 数均分 */
 const HANDLE_TOP_RATIO: Record<string, number> = {
   [HANDLE_IN]: 0.5,
   [HANDLE_OUT]: 0.5,
   true: 0.32,
   false: 0.68,
 };
+
+function handleTopRatio(
+  nodeType: WorkflowNodeType,
+  handleId: string,
+  index: number,
+  count: number
+): number {
+  if (nodeType === 'condition' && (handleId === 'true' || handleId === 'false')) {
+    return HANDLE_TOP_RATIO[handleId];
+  }
+  if (nodeType === 'classifier') return count <= 1 ? 0.5 : (index + 1) / (count + 1);
+  return 0.5;
+}
+
+function handleLabelOf(handleId: string): string {
+  if (handleId === 'true') return 'IF';
+  if (handleId === 'false') return 'ELSE';
+  return handleId;
+}
 
 interface WorkflowNodeCardProps {
   data: WorkflowNodeData;
@@ -98,8 +122,8 @@ interface WorkflowNodeCardProps {
 const WorkflowNodeCard = React.memo(function WorkflowNodeCard({ data, selected }: WorkflowNodeCardProps) {
   const { t } = useTranslation();
   const statusColor = data.status ? STATUS_VAR[data.status] : undefined;
-  const handles = sourceHandles(data.nodeType);
-  const height = nodeHeight(data.nodeType);
+  const handles = sourceHandlesForNode(data);
+  const height = nodeHeight(data.nodeType, handles.length);
   const summary = data.summary || nodeSummaryTextOf(data.nodeType, data);
 
   return (
@@ -145,16 +169,16 @@ const WorkflowNodeCard = React.memo(function WorkflowNodeCard({ data, selected }
         <span className="wf-node-key">{data.key}</span>
         <span className="wf-node-type">{t(`workflow.node.type.${data.nodeType}`)}</span>
       </div>
-      {handles.map((handleId) => (
+      {handles.map((handleId, index) => (
         <Handle
           key={handleId}
           type="source"
           position={Position.Right}
           id={handleId}
-          style={{ top: `${HANDLE_TOP_RATIO[handleId] * 100}%` }}
+          style={{ top: `${handleTopRatio(data.nodeType, handleId, index, handles.length) * 100}%` }}
         >
           {handleId !== HANDLE_OUT && (
-            <span className="wf-handle-label">{handleId === 'true' ? 'IF' : 'ELSE'}</span>
+            <span className="wf-handle-label">{handleLabelOf(handleId)}</span>
           )}
         </Handle>
       ))}
@@ -268,11 +292,16 @@ function WorkflowCanvasInner(props: WorkflowCanvasProps) {
         x: node.position.x,
         y: node.position.y,
         width: NODE_WIDTH,
-        height: nodeHeight(node.data.nodeType),
+        height: nodeHeight(node.data.nodeType, sourceHandlesForNode(node.data).length),
       };
       const others = nodes
         .filter((n) => !draggedIds.has(n.id))
-        .map<Box>((n) => ({ x: n.position.x, y: n.position.y, width: NODE_WIDTH, height: nodeHeight(n.data.nodeType) }));
+        .map<Box>((n) => ({
+          x: n.position.x,
+          y: n.position.y,
+          width: NODE_WIDTH,
+          height: nodeHeight(n.data.nodeType, sourceHandlesForNode(n.data).length),
+        }));
       return { movingBox, others };
     },
     [nodes]

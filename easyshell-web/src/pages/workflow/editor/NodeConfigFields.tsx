@@ -167,6 +167,12 @@ export interface ParametersEditorProps {
   ariaLabel?: string;
   /** 上游可插入变量（值字段使用 VariablePicker） */
   groups?: WorkflowVariableGroup[];
+  /** 文案覆盖（code 节点复用同一控件时用 inputs 口径） */
+  addLabel?: string;
+  emptyText?: string;
+  keyPlaceholder?: string;
+  keyAriaLabel?: string;
+  valueAriaLabel?: string;
 }
 
 /**
@@ -176,7 +182,17 @@ export interface ParametersEditorProps {
  * 落进 definition 前由 `NodeFormPanel` 统一滤掉（服务端把空键当噪声）。
  * 已有空键行时不允许再添加—— Record 装不下两个空键，加了也会被 quietly 吞掉一行。
  */
-export const ParametersEditor: React.FC<ParametersEditorProps> = ({ value, onChange, ariaLabel, groups = [] }) => {
+export const ParametersEditor: React.FC<ParametersEditorProps> = ({
+  value,
+  onChange,
+  ariaLabel,
+  groups = [],
+  addLabel,
+  emptyText,
+  keyPlaceholder,
+  keyAriaLabel,
+  valueAriaLabel,
+}) => {
   const { t } = useTranslation();
   const entries = Object.entries(value || {});
   const hasUnnamed = entries.some(([key]) => !key.trim());
@@ -189,7 +205,7 @@ export const ParametersEditor: React.FC<ParametersEditorProps> = ({ value, onCha
 
   return (
     <Space direction="vertical" size={8} style={{ width: '100%' }} role="group" aria-label={ariaLabel}>
-      {entries.length === 0 && <Text type="secondary">{t('workflow.form.parametersEmpty')}</Text>}
+      {entries.length === 0 && <Text type="secondary">{emptyText || t('workflow.form.parametersEmpty')}</Text>}
       {entries.map(([key, item], index) => (
         <Space key={index} size={4} style={{ width: '100%' }} align="start">
           <Input
@@ -199,9 +215,9 @@ export const ParametersEditor: React.FC<ParametersEditorProps> = ({ value, onCha
               next[index] = [event.target.value, item];
               emit(next);
             }}
-            placeholder={t('workflow.form.parameterKey')}
+            placeholder={keyPlaceholder || t('workflow.form.parameterKey')}
             style={{ width: 120, fontFamily: 'monospace' }}
-            aria-label={t('workflow.form.parameterKey')}
+            aria-label={keyAriaLabel || t('workflow.form.parameterKey')}
           />
           <div style={{ flex: 1, minWidth: 0 }}>
             <VariableInput
@@ -213,7 +229,7 @@ export const ParametersEditor: React.FC<ParametersEditorProps> = ({ value, onCha
               }}
               groups={groups}
               mode="template"
-              ariaLabel={t('workflow.form.parameterValue')}
+              ariaLabel={valueAriaLabel || t('workflow.form.parameterValue')}
               placeholder="${nodes.n1.output.x}"
               monospace
             />
@@ -232,7 +248,7 @@ export const ParametersEditor: React.FC<ParametersEditorProps> = ({ value, onCha
         disabled={hasUnnamed}
         onClick={() => emit([...entries, ['', '']])}
       >
-        {t('workflow.form.addParameter')}
+        {addLabel || t('workflow.form.addParameter')}
       </Button>
     </Space>
   );

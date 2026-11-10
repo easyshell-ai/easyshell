@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Card, Empty, Input, Tag, Tooltip } from 'antd';
+import { Card, Empty, Input, Tag } from 'antd';
 import { SearchOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { HANDLE_CONTRACT } from '../graph';
@@ -89,48 +89,47 @@ const NodePalette: React.FC = () => {
             <div key={category} className="wf-palette-group">
               <div className="wf-palette-group-title">{t(NODE_CATEGORY_LABEL_KEY[category])}</div>
               {groupItems.map((item) => (
-                <Tooltip key={item.type} title={item.description} placement="right">
-                  <div
-                    className="wf-palette-item"
-                    data-testid={`palette-${item.type}`}
-                    data-fixed={item.fixed ? 'true' : 'false'}
-                    draggable={!item.fixed}
-                    onDragStart={
-                      item.fixed
-                        ? undefined
-                        : (event) => {
-                            event.dataTransfer.setData(CLIPBOARD_MIME, JSON.stringify({ type: item.type }));
-                            event.dataTransfer.effectAllowed = 'copy';
-                          }
-                    }
-                    role="button"
-                    tabIndex={0}
-                    aria-disabled={item.fixed || undefined}
-                    aria-label={`${item.fixed ? t('workflow.node.fixed') : t('workflow.palette.add')} ${item.label}`}
-                    onKeyDown={(event) => {
-                      if (event.key !== 'Enter' || item.fixed) return;
-                      addToCanvas(item.type);
-                    }}
-                  >
-                    <span className="wf-palette-icon">
-                      <NodeTypeIcon type={item.type} />
+                <div
+                  key={item.type}
+                  className="wf-palette-item"
+                  data-testid={`palette-${item.type}`}
+                  data-fixed={item.fixed ? 'true' : 'false'}
+                  draggable={!item.fixed}
+                  onDragStart={
+                    item.fixed
+                      ? undefined
+                      : (event) => {
+                          event.dataTransfer.setData(CLIPBOARD_MIME, JSON.stringify({ type: item.type }));
+                          event.dataTransfer.effectAllowed = 'copy';
+                        }
+                  }
+                  role="button"
+                  tabIndex={0}
+                  aria-disabled={item.fixed || undefined}
+                  aria-label={`${item.fixed ? t('workflow.node.fixed') : t('workflow.palette.add')} ${item.label}`}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Enter' || item.fixed) return;
+                    addToCanvas(item.type);
+                  }}
+                >
+                  <span className="wf-palette-icon">
+                    <NodeTypeIcon type={item.type} />
+                  </span>
+                  <span className="wf-palette-body">
+                    <span className="wf-palette-label">
+                      {item.label}
+                      {item.fixed && (
+                        <Tag className="wf-palette-fixed" color="default">
+                          {t('workflow.node.fixed')}
+                        </Tag>
+                      )}
                     </span>
-                    <span className="wf-palette-body">
-                      <span className="wf-palette-label">
-                        {item.label}
-                        {item.fixed && (
-                          <Tag className="wf-palette-fixed" color="default">
-                            {t('workflow.node.fixed')}
-                          </Tag>
-                        )}
-                      </span>
-                      <span className="wf-palette-meta">{item.description}</span>
-                      <span className="wf-palette-counts">
-                        {t('workflow.palette.handles', { in: item.inputs, out: item.outputs })}
-                      </span>
+                    <span className="wf-palette-meta">{item.description}</span>
+                    <span className="wf-palette-counts">
+                      {t('workflow.palette.handles', { in: item.inputs, out: item.outputs })}
                     </span>
-                  </div>
-                </Tooltip>
+                  </span>
+                </div>
               ))}
             </div>
           );

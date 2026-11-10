@@ -1,5 +1,5 @@
 /**
- * 9 类节点的展示元数据（分组 / 是否固定 / 一句话说明的 i18n key）。
+ * 12 类节点的展示元数据（分组 / 是否固定 / 一句话说明的 i18n key）。
  *
  * 纯数据层：图标在 NodePalette / NodeInspector 里按同一份 NODE_ICON 映射渲染，
  * 避免 .ts 文件导出 JSX 触发 react-refresh 规则。
@@ -27,6 +27,9 @@ export const NODE_REGISTRY: NodeRegistryEntry[] = [
   { type: 'script-exec', category: 'execute' },
   { type: 'transform', category: 'execute' },
   { type: 'ai-analyze', category: 'execute' },
+  { type: 'llm', category: 'execute' },
+  { type: 'classifier', category: 'execute' },
+  { type: 'code', category: 'execute' },
   { type: 'condition', category: 'flow' },
   { type: 'wait', category: 'flow' },
   { type: 'approval', category: 'human' },

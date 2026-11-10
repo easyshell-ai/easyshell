@@ -42,6 +42,13 @@ beforeAll(() => {
       dispatchEvent: () => false,
     }),
   });
+  if (!('ResizeObserver' in window)) {
+    (window as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    };
+  }
 });
 
 /**
@@ -84,6 +91,13 @@ const definitionWithOptionalVariable: WorkflowDefinition = {
   ...emptyDefinition,
   variables: {
     target: { type: 'string', required: false, default: 'staging' },
+  },
+};
+
+const definitionWithOptions: WorkflowDefinition = {
+  ...emptyDefinition,
+  variables: {
+    env: { type: 'string', label: 'Environment', required: true, options: ['prod', 'staging'] },
   },
 };
 
@@ -224,6 +238,23 @@ describe('TriggerModal', () => {
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(onSubmit.mock.calls[0][0]).toEqual({ target: 'prod-cluster' });
   });
+
+  it('展示 label（缺省回落 name），有 options 的 string 渲染 Select 并提交选项值', async () => {
+    const onSubmit = vi.fn();
+    renderTrigger(definitionWithOptions, onSubmit);
+
+    expect(screen.getByText('Environment')).toBeTruthy();
+    expect(screen.getByText('env')).toBeTruthy();
+
+    const select = document.querySelector('#env')?.closest('.ant-select') as HTMLElement;
+    expect(select).toBeTruthy();
+    fireEvent.mouseDown(select);
+    fireEvent.click(screen.getByTitle('prod'));
+
+    clickOk();
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0]).toEqual({ env: 'prod' });
+  });
 });
 
 /* ── EdgeEditModal：condition 边由 sourceHandle 门控 ─────────────── */
@@ -275,5 +306,32 @@ describe('EdgeEditModal', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(onSave).toHaveBeenCalled());
     expect(onSave.mock.calls[0][1].condition).toBe('nodes.n1.output.count > 0');
+  });
+
+  it('classifier 来源：隐藏表达式、展示 class 分支并清掉旧 condition', () => {
+    const onSave = vi.fn();
+    const classifier: WorkflowNode = {
+      ...edgeNode('pick', 'classifier'),
+      config: { classes: [{ name: 'disk' }, { name: 'network' }] },
+    };
+    render(
+      <EdgeEditModal
+        open
+        edge={{ id: 'pick:disk->end', from: 'pick', to: 'end', sourceHandle: 'disk', condition: 'legacy' }}
+        nodes={[classifier, edgeNode('end', 'end')]}
+        onCancel={() => {}}
+        onSave={onSave}
+      />
+    );
+
+    expect(screen.getByText('Routing is determined by the outgoing handle')).toBeTruthy();
+    expect(screen.getAllByText('disk').length).toBeGreaterThan(0);
+    expect(screen.queryByLabelText('Condition (empty = always true)')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(onSave).toHaveBeenCalledWith('pick:disk->end', {
+      condition: undefined,
+      onUpstreamFailure: 'skip',
+    });
   });
 });

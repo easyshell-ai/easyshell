@@ -6,7 +6,7 @@
  * 且两条路径都过同一套 parse + 校验，不会把不可信文本塞进 definition。
  */
 
-import { edgeHandleOf, edgeIdFor, nextNodeKey } from '../../graph';
+import { edgeHandleOf, edgeIdFor, nextNodeKey, sourceHandlesForNode } from '../../graph';
 import type { WorkflowEdge, WorkflowNode } from '../../types';
 
 export const CLIPBOARD_MIME = 'application/easyshell-node';
@@ -94,9 +94,19 @@ export function pasteWithNewKeys(
     .map((e) => {
       const from = keyMap[e.from];
       const to = keyMap[e.to];
-      const handle = edgeHandleOf(nodes, { from, condition: e.condition });
-      return { ...e, id: edgeIdFor(from, handle, to), from, to };
-    });
+      const sourceNode = nodes.find((node) => node.key === from);
+      // 显式 handle 必须原样保留（condition true/false、classifier class/default），
+      // 只在旧边确实没有 handle 时才按 condition 文本回退。
+      const handle = e.sourceHandle
+        ? e.sourceHandle
+        : edgeHandleOf(nodes, { from, condition: e.condition });
+      // 动态 handle（classifier class）必须仍存在于复制后的节点配置里，避免粘贴出不可发布的边
+      const valid = !sourceNode || sourceHandlesForNode(sourceNode).includes(handle);
+      return valid
+        ? ({ ...e, id: edgeIdFor(from, handle, to), from, to } as WorkflowEdge)
+        : null;
+    })
+    .filter((edge): edge is WorkflowEdge => edge !== null);
 
   return { nodes, edges, keyMap };
 }

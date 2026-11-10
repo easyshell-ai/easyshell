@@ -16,7 +16,7 @@ import {
 import { ReloadOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import type { ValidationIssue, WorkflowDefinition, WorkflowNode } from '../types';
-import { sourceHandles } from '../graph';
+import { sourceHandlesForNode } from '../graph';
 
 const { Text } = Typography;
 
@@ -181,9 +181,11 @@ export const TriggerModal: React.FC<TriggerModalProps> = ({
           <Form.Item
             key={name}
             name={name}
+            data-testid={`trigger-variable-${name}`}
             label={
-              <Space size={6}>
-                <Text code>{name}</Text>
+              <Space size={6} wrap>
+                <span>{spec.label || name}</span>
+                {spec.label && spec.label !== name && <Text code>{name}</Text>}
                 <Tag>{spec.type}</Tag>
                 {spec.required && <Tag color="red">{t('workflow.trigger.required')}</Tag>}
               </Space>
@@ -209,7 +211,14 @@ export const TriggerModal: React.FC<TriggerModalProps> = ({
             ]}
             initialValue={spec.type === 'json' ? jsonInitialValue(spec.default) : spec.default}
           >
-            {spec.type === 'number' ? (
+            {spec.type === 'string' && (spec.options?.length ?? 0) > 0 ? (
+              <Select
+                options={(spec.options || []).map((option) => ({ value: option, label: option }))}
+                showSearch
+                optionFilterProp="label"
+                placeholder={spec.description || t('workflow.trigger.selectPlaceholder')}
+              />
+            ) : spec.type === 'number' ? (
               <InputNumber style={{ width: '100%' }} />
             ) : spec.type === 'boolean' ? (
               <Switch />
@@ -311,11 +320,15 @@ export const EdgeEditModal: React.FC<EdgeEditModalProps> = ({ open, edge, nodes,
     }
   }, [open, edge]);
 
-  const sourceType = nodes.find((n) => n.key === edge?.from)?.type;
-  // condition 的 IF/ELSE 由 sourceHandle 真实门控（§2.2）：不再要求用户把表达式写两遍，
-  // 边编辑弹窗直接展示分支；其他边保留旧语义 condition 表达式编辑。
+  const sourceNode = nodes.find((n) => n.key === edge?.from);
+  const sourceType = sourceNode?.type;
+  // condition 的 IF/ELSE、classifier 的 class/default 都由 sourceHandle 真实门控（§2.2）：
+  // 不再要求用户把表达式/分类写两遍，边编辑弹窗直接展示分支。
   const conditionGated = sourceType === 'condition';
-  const handleCount = sourceType ? sourceHandles(sourceType).length : 1;
+  const classifierGated = sourceType === 'classifier';
+  const branchGated = conditionGated || classifierGated;
+  const handleCount = sourceNode ? sourceHandlesForNode(sourceNode).length : 1;
+  const branchLabel = edge?.sourceHandle || (classifierGated ? 'default' : 'true');
 
   return (
     <Modal
@@ -325,7 +338,7 @@ export const EdgeEditModal: React.FC<EdgeEditModalProps> = ({ open, edge, nodes,
       onOk={() =>
         edge &&
         onSave(edge.id, {
-          condition: conditionGated ? undefined : condition.trim() || undefined,
+          condition: branchGated ? undefined : condition.trim() || undefined,
           onUpstreamFailure,
         })
       }
@@ -345,18 +358,35 @@ export const EdgeEditModal: React.FC<EdgeEditModalProps> = ({ open, edge, nodes,
                 <Tag color={edge?.sourceHandle === 'false' ? 'orange' : 'green'}>
                   {edge?.sourceHandle === 'false' ? 'ELSE' : 'IF'}
                 </Tag>
-                <Text code>{edge?.sourceHandle || 'true'}</Text>
+                <Text code>{branchLabel}</Text>
               </Space>
             </Space>
           }
           style={{ marginBottom: 12 }}
         />
       )}
-      {!conditionGated && (
+      {classifierGated && (
+        <Alert
+          type="info"
+          showIcon
+          message={t('workflow.edge.classifierGatedTitle')}
+          description={
+            <Space direction="vertical" size={4}>
+              <span>{t('workflow.edge.classifierGatedDesc')}</span>
+              <Space size={6}>
+                <span>{t('workflow.edge.sourceBranch')}:</span>
+                <Tag color={branchLabel === 'default' ? 'default' : 'blue'}>{branchLabel}</Tag>
+              </Space>
+            </Space>
+          }
+          style={{ marginBottom: 12 }}
+        />
+      )}
+      {!branchGated && (
         <Alert type="info" showIcon message={t('workflow.edge.conditionHint')} style={{ marginBottom: 12 }} />
       )}
       <Form layout="vertical">
-        {!conditionGated && (
+        {!branchGated && (
           <Form.Item
             label={t('workflow.edge.condition')}
             tooltip={t('workflow.edge.conditionHint')}
