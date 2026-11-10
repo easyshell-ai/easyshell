@@ -66,10 +66,17 @@ public class WorkflowPendingWakeupScanner {
         }
     }
 
-    /** 背压①：queued run 在有余量时启动 */
+    /**
+     * 背压①：queued run 在有余量时启动。
+     *
+     * <p>活跃数只算 running/waiting：queued 行不能把自己算成占位，否则"满队列但没有
+     * 一个在跑"时 {@code active >= max} 永远成立，队列永久饿死。每启动一个后重新按
+     * 剩余并发计算（不把 queued 计入，也不会超发）。</p>
+     */
     private void pumpQueued() {
-        long active = runRepository.countByStatusIn(List.of("pending", "queued", "running", "waiting"));
-        while (active <= properties.getEngine().getMaxConcurrentRuns()) {
+        int limit = Math.max(1, properties.getEngine().getMaxConcurrentRuns());
+        long active = runRepository.countByStatusIn(List.of("running", "waiting"));
+        while (active < limit) {
             List<WorkflowRun> queued = runRepository.findByStatusIn(List.of("queued"));
             if (queued.isEmpty()) {
                 return;

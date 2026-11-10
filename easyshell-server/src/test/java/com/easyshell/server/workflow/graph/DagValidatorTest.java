@@ -272,6 +272,16 @@ class DagValidatorTest {
         }
 
         @Test
+        @DisplayName("定义里还有其他节点时 end 必须有入边 → GRAPH_END_INVALID")
+        void endWithoutInboundEdge() {
+            List<WorkflowNode> nodes = List.of(
+                    node("begin", "start"), node("work", "script-exec"), node("finish", "end"));
+            List<ValidationIssue> issues = validate(nodes,
+                    List.of(edge("begin", "work")));
+            assertThat(hasError(issues, "GRAPH_END_INVALID")).isTrue();
+        }
+
+        @Test
         @DisplayName("存在 end 时其他 sink 只给 WARNING GRAPH_SINK_NOT_END（不阻断旧工作流）")
         void nonEndSinkWarns() {
             WorkflowNode begin = node("begin", "start");
@@ -565,6 +575,103 @@ class DagValidatorTest {
             List<WorkflowNode> bareNodes = List.of(
                     node("begin", "start"), aiBarePath, node("other", "script-exec"), node("finish", "end"));
             assertThat(hasError(validate(bareNodes, edges), "EXPRESSION_REFERENCE_NOT_ANCESTOR")).isTrue();
+        }
+
+        @Test
+        @DisplayName("表达式用 outputVar 别名引用非祖先 → EXPRESSION_REFERENCE_NOT_ANCESTOR")
+        void aliasExpressionReferencesNonAncestor() {
+            WorkflowNode begin = node("begin", "start");
+            WorkflowNode gate = node("gate", "condition");
+            gate.setConfig(new LinkedHashMap<>(Map.of("expression", "disk.usage > 90")));
+            WorkflowNode check = node("check", "script-exec");
+            check.setOutputVar("disk");
+            WorkflowNode finish = node("finish", "end");
+            List<ValidationIssue> issues = validate(List.of(begin, gate, check, finish),
+                    List.of(edge("begin", "gate"), edge("begin", "check"),
+                            edge("gate", "finish"), edge("check", "finish")));
+            assertThat(hasError(issues, "EXPRESSION_REFERENCE_NOT_ANCESTOR")).isTrue();
+        }
+
+        @Test
+        @DisplayName("表达式用括号路径引用非祖先 → EXPRESSION_REFERENCE_NOT_ANCESTOR")
+        void bracketPathReferencesNonAncestor() {
+            WorkflowNode begin = node("begin", "start");
+            WorkflowNode gate = node("gate", "condition");
+            gate.setConfig(new LinkedHashMap<>(Map.of("expression", "nodes['other'].output.x > 1")));
+            WorkflowNode other = node("other", "script-exec");
+            WorkflowNode finish = node("finish", "end");
+            List<ValidationIssue> issues = validate(List.of(begin, gate, other, finish),
+                    List.of(edge("begin", "gate"), edge("begin", "other"),
+                            edge("gate", "finish"), edge("other", "finish")));
+            assertThat(hasError(issues, "EXPRESSION_REFERENCE_NOT_ANCESTOR")).isTrue();
+        }
+
+        @Test
+        @DisplayName("script-exec parameters 模板引用非祖先 → EXPRESSION_REFERENCE_NOT_ANCESTOR")
+        void scriptParametersReferenceNonAncestor() {
+            WorkflowNode begin = node("begin", "start");
+            WorkflowNode run = node("run", "script-exec");
+            run.setConfig(new LinkedHashMap<>(Map.of(
+                    "script", "echo {{VALUE}}",
+                    "parameters", Map.of("VALUE", "${nodes.other.output.x}"))));
+            WorkflowNode other = node("other", "script-exec");
+            WorkflowNode finish = node("finish", "end");
+            List<ValidationIssue> issues = validate(List.of(begin, run, other, finish),
+                    List.of(edge("begin", "run"), edge("begin", "other"),
+                            edge("run", "finish"), edge("other", "finish")));
+            assertThat(hasError(issues, "EXPRESSION_REFERENCE_NOT_ANCESTOR")).isTrue();
+        }
+
+        @Test
+        @DisplayName("notify messageTemplate / parameters 引用非祖先 → EXPRESSION_REFERENCE_NOT_ANCESTOR")
+        void notifyTemplatesReferenceNonAncestor() {
+            WorkflowNode begin = node("begin", "start");
+            WorkflowNode tell = node("tell", "notify");
+            tell.setConfig(new LinkedHashMap<>(Map.of(
+                    "channels", List.of("telegram"),
+                    "messageTemplate", "${nodes.other.output.x}",
+                    "parameters", Map.of("FINAL", "${nodes.other.output}"))));
+            WorkflowNode other = node("other", "script-exec");
+            WorkflowNode finish = node("finish", "end");
+            List<ValidationIssue> issues = validate(List.of(begin, tell, other, finish),
+                    List.of(edge("begin", "tell"), edge("begin", "other"),
+                            edge("tell", "finish"), edge("other", "finish")));
+            assertThat(hasError(issues, "EXPRESSION_REFERENCE_NOT_ANCESTOR")).isTrue();
+        }
+
+        @Test
+        @DisplayName("approval title / detailTemplate / parameters 引用非祖先 → EXPRESSION_REFERENCE_NOT_ANCESTOR")
+        void approvalTemplatesReferenceNonAncestor() {
+            WorkflowNode begin = node("begin", "start");
+            WorkflowNode ask = node("ask", "approval");
+            ask.setConfig(new LinkedHashMap<>(Map.of(
+                    "title", "${nodes.other.output.x}",
+                    "detailTemplate", "${nodes.other.output}",
+                    "parameters", Map.of("P", "${nodes.other.output}"))));
+            WorkflowNode other = node("other", "script-exec");
+            WorkflowNode finish = node("finish", "end");
+            List<ValidationIssue> issues = validate(List.of(begin, ask, other, finish),
+                    List.of(edge("begin", "ask"), edge("begin", "other"),
+                            edge("ask", "finish"), edge("other", "finish")));
+            assertThat(hasError(issues, "EXPRESSION_REFERENCE_NOT_ANCESTOR")).isTrue();
+        }
+
+        @Test
+        @DisplayName("rawParams 直引 ai-analyze 输出 → AI_OUTPUT_RAW_FORBIDDEN")
+        void rawParamsCannotReferenceAiOutput() {
+            WorkflowNode begin = node("begin", "start");
+            WorkflowNode ai = node("ai", "ai-analyze");
+            ai.setConfig(new LinkedHashMap<>(Map.of("instructions", "分析")));
+            WorkflowNode run = node("run", "script-exec");
+            run.setConfig(new LinkedHashMap<>(Map.of(
+                    "script", "run {{BODY:raw}}",
+                    "rawParams", List.of("BODY"),
+                    "parameters", Map.of("BODY", "${nodes.ai.output.text}"))));
+            WorkflowNode finish = node("finish", "end");
+            List<ValidationIssue> issues = validate(List.of(begin, ai, run, finish),
+                    List.of(edge("begin", "ai"), edge("ai", "run"), edge("run", "finish")));
+            assertThat(hasError(issues, "EXPRESSION_REFERENCE_NOT_ANCESTOR")).isFalse();
+            assertThat(hasError(issues, "AI_OUTPUT_RAW_FORBIDDEN")).isTrue();
         }
 
         @Test

@@ -39,7 +39,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -146,6 +148,38 @@ class AiAnalyzeNodeExecutorTest {
     }
 
     @Test
+    @DisplayName("input 支持纯路径（无 ${}）：与 DagValidator 的静态识别一致")
+    void barePathInputIsResolved() {
+        when(chatModelFactory.getChatModel((String) null)).thenReturn(chatModel);
+        when(chatModel.call(any(Prompt.class))).thenReturn(response("ok"));
+
+        VariableStore variables = new VariableStore();
+        variables.putNodeOutput("up", null, Map.of("text", "disk-ok"));
+
+        WorkflowNode node = node("分析", "nodes.up.output.text", 1000, 60);
+        executor.execute(context(node, variables));
+
+        ArgumentCaptor<Prompt> prompt = ArgumentCaptor.forClass(Prompt.class);
+        verify(chatModel).call(prompt.capture());
+        String promptText = String.join("\n", prompt.getValue().getInstructions().stream()
+                .map(org.springframework.ai.chat.messages.Message::getText).toList());
+        assertThat(promptText).contains("disk-ok");
+    }
+
+    @Test
+    @DisplayName("模型解析失败：不消耗配额（先取模型后计费）")
+    void modelFailureDoesNotConsumeQuota() {
+        when(chatModelFactory.getChatModel(isNull()))
+                .thenThrow(new BusinessException(400, "未配置默认 Provider"));
+
+        WorkflowNode node = node("分析", "", 1000, 60);
+        assertThatThrownBy(() -> executor.execute(context(node, new VariableStore())))
+                .isInstanceOfSatisfying(NodeFailedException.class, e ->
+                        assertThat(e.getCode()).isEqualTo("AI_UNAVAILABLE"));
+        verify(aiQuotaService, never()).checkAndIncrement(any(), any());
+    }
+
+    @Test
     @DisplayName("输入超过 maxInputChars：截断并标记 truncated=true")
     void longInputIsTruncated() {
         when(chatModelFactory.getChatModel((String) null)).thenReturn(chatModel);
@@ -180,8 +214,23 @@ class AiAnalyzeNodeExecutorTest {
     }
 
     @Test
+    @DisplayName("线程池准入失败：退回已扣配额（AI_UNAVAILABLE）")
+    void poolAdmissionFailureRefundsQuota() {
+        when(chatModelFactory.getChatModel((String) null)).thenReturn(chatModel);
+        aiPool.shutdownNow();
+
+        WorkflowNode node = node("分析", "", 1000, 60);
+        assertThatThrownBy(() -> executor.execute(context(node, new VariableStore())))
+                .isInstanceOfSatisfying(NodeFailedException.class, e ->
+                        assertThat(e.getCode()).isEqualTo("AI_UNAVAILABLE"));
+        verify(aiQuotaService).checkAndIncrement(42L, "workflow-ai-analyze");
+        verify(aiQuotaService).refund(42L);
+    }
+
+    @Test
     @DisplayName("配额超限：AI_QUOTA_EXCEEDED，且不调用模型")
     void quotaExceededFailsWithoutModelCall() {
+        when(chatModelFactory.getChatModel((String) null)).thenReturn(chatModel);
         org.mockito.Mockito.doThrow(new BusinessException(429, "quota exceeded"))
                 .when(aiQuotaService).checkAndIncrement(42L, "workflow-ai-analyze");
 

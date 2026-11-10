@@ -27,11 +27,12 @@ class WorkflowTestRunServiceTest {
 
     private static final String DEFINITION = """
             {"schemaVersion":1,
-             "variables":{"threshold":{"type":"number"}},
+             "variables":{"threshold":{"type":"number"},"secret":{"type":"string"}},
              "nodes":[
                {"key":"begin","type":"start","name":"begin","config":{}},
                {"key":"mapping","type":"transform","name":"mapping","config":{"mappings":[
                  {"name":"usage","value":"${run.input.threshold}"},
+                 {"name":"secret","value":"${run.input.secret}"},
                  {"name":"up","value":"${nodes.begin.output.threshold}"}]}},
                {"key":"ai","type":"ai-analyze","name":"ai","config":{"instructions":"分析"}},
                {"key":"finish","type":"end","name":"finish","config":{"outputs":[
@@ -62,7 +63,7 @@ class WorkflowTestRunServiceTest {
         run.setVersionId(1L);
         run.setStatus("running");
         run.setStartedBy(42L);
-        run.setInputJson("{\"threshold\":95}");
+        run.setInputJson("{\"threshold\":95,\"secret\":\"token=abc123\"}");
 
         workflow = new Workflow();
         workflow.setName("preview");
@@ -79,6 +80,7 @@ class WorkflowTestRunServiceTest {
         assertThat(result.getStatus()).isEqualTo("ok");
         assertThat(result.getNodeType()).isEqualTo("start");
         assertThat(result.getResolvedParameters()).containsEntry("threshold", "95");
+        assertThat(result.getResolvedParameters()).containsEntry("secret", "token=***");
     }
 
     @Test
@@ -87,6 +89,7 @@ class WorkflowTestRunServiceTest {
         WorkflowTestRunVO transform = test("mapping");
         assertThat(transform.getStatus()).isEqualTo("ok");
         assertThat(transform.getResolvedParameters()).containsEntry("usage", "95");
+        assertThat(transform.getResolvedParameters()).containsEntry("secret", "token=***");
         assertThat(transform.getWarnings()).anySatisfy(w -> assertThat(w).contains("试运行"));
 
         WorkflowTestRunVO end = test("finish");

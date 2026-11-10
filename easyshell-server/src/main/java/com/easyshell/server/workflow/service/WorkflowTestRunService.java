@@ -220,7 +220,7 @@ public class WorkflowTestRunService {
                 .riskMatches(matches)
                 .riskPolicy(riskPolicy)
                 .renderedScript(rendered.rendered())
-                .resolvedParameters(values)
+                .resolvedParameters(masked(values))
                 .targetAgentCount(countTargets(node))
                 .warnings(filterWarnings(warnings))
                 .build();
@@ -283,7 +283,7 @@ public class WorkflowTestRunService {
                 .status("ok")
                 .riskLevel(RiskLevel.LOW.name())
                 .riskMatches(List.of())
-                .resolvedParameters(resolved)
+                .resolvedParameters(masked(resolved))
                 .warnings(filterWarnings(warnings))
                 .build();
     }
@@ -338,9 +338,19 @@ public class WorkflowTestRunService {
                 .status("ok")
                 .riskLevel(RiskLevel.LOW.name())
                 .riskMatches(List.of())
-                .resolvedParameters(resolved)
+                .resolvedParameters(masked(resolved))
                 .warnings(filterWarnings(warnings))
                 .build();
+    }
+
+    /** 预览结果同样可能含凭据：出站前统一复用 SensitiveDataFilter（禁止第二套掩码） */
+    private Map<String, String> masked(Map<String, String> values) {
+        if (values == null || values.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, String> result = new LinkedHashMap<>();
+        values.forEach((key, value) -> result.put(key, sensitiveDataFilter.filter(value)));
+        return result;
     }
 
     // ------------------------------------------------------------------

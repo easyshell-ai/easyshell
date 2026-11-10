@@ -60,6 +60,8 @@ public class EndNodeExecutor implements NodeExecutor {
         if (output == null) {
             output = new LinkedHashMap<>();
         }
+        // 专用 64KB 通道：普通 node 输出仍按 8192B preview 截断，运行输出保留完整对象
+        ctx.variables().setRunOutput(output);
         ctx.variables().putNodeOutput(ctx.node().getKey(), ctx.node().getOutputVar(), output);
         return NodeOutcome.SUCCEEDED;
     }

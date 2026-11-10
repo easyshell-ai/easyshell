@@ -240,7 +240,7 @@ class WorkflowEngineH2Test {
                 .thenReturn(PushOutcome.DELIVERED);
         Consumer<WorkflowEvent> sink = events::add;
 
-        engine = new WorkflowEngine(runRepository, nodeRunRepository, approvalRepository, versionRepository,
+        engine = new WorkflowEngine(runRepository, nodeRunRepository, approvalRepository, versionRepository, workflowRepository,
                 jobRepository, registry(), dagValidator, expressionEvaluator, attemptAllocator,
                 auditLogService, new SensitiveDataFilter(), Optional.of(sink), enginePool, retryScheduler,
                 properties, objectMapper, transactionManager);
@@ -547,6 +547,7 @@ class WorkflowEngineH2Test {
         assertThat(nodeRun(run.getId(), "gate").getOutputJson()).contains("\"result\":true");
         WorkflowRun reloaded = runRepository.findById(run.getId()).orElseThrow();
         assertThat(reloaded.getVariablesJson()).contains("nodes.check.output");
+        assertThat(reloaded.getVariablesJson()).contains("\"run.workflowName\":\"engine-test\"");
         assertThat(reloaded.getHeartbeatAt()).isNotNull();
     }
 
@@ -717,7 +718,7 @@ class WorkflowEngineH2Test {
         // uk_node_run 本身挡住重复 INSERT 的行为由 WorkflowRepositoryTest 覆盖；
         // 这里用必然冲突的分配器确定性地验证引擎的兜底路径（§3.6）
         WorkflowEngine conflictingEngine = new WorkflowEngine(runRepository, nodeRunRepository,
-                approvalRepository, versionRepository, jobRepository, registry(), dagValidator,
+                approvalRepository, versionRepository, workflowRepository, jobRepository, registry(), dagValidator,
                 expressionEvaluator, new ConflictingAllocator(nodeRunRepository, transactionManager),
                 auditLogService, new SensitiveDataFilter(), Optional.of(events::add), enginePool,
                 retryScheduler, properties, objectMapper, transactionManager);
@@ -973,7 +974,7 @@ class WorkflowEngineH2Test {
                 cancelAtTerminalInsert, releaseCancelTerminal);
         AttemptAllocator raceAllocator = new AttemptAllocator(latchingRepo, transactionManager);
         WorkflowEngine raceEngine = new WorkflowEngine(runRepository, latchingRepo,
-                approvalRepository, versionRepository, jobRepository, raceRegistry, dagValidator,
+                approvalRepository, versionRepository, workflowRepository, jobRepository, raceRegistry, dagValidator,
                 expressionEvaluator, raceAllocator, auditLogService, new SensitiveDataFilter(),
                 Optional.of(events::add), enginePool, retryScheduler, properties, objectMapper,
                 transactionManager);
@@ -1109,6 +1110,328 @@ class WorkflowEngineH2Test {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    @Test
+    @DisplayName("运行期祖先隔离：节点读不到兄弟节点输出（master store 里存在也不算）")
+    void runtimeAncestorIsolationHidesSiblingOutputs() {
+        AtomicReference<Boolean> sawSibling = new AtomicReference<>(null);
+        stub(NodeType.SCRIPT_EXEC).behavior = ctx -> {
+            switch (ctx.node().getKey()) {
+                case "a" -> ctx.variables().putNodeOutput("a", null, Map.of("secret", "sibling"));
+                case "c" -> {
+                    long deadline = System.currentTimeMillis() + 5000;
+                    while (ctx.variables().nodeOutput("a") == null
+                            && System.currentTimeMillis() < deadline) {
+                        sleepQuietly(10);
+                    }
+                }
+                case "b" -> sawSibling.set(
+                        ctx.resolver().resolve("nodes.a.output.secret").isPresent());
+                default -> {
+                }
+            }
+            return NodeOutcome.SUCCEEDED;
+        };
+
+        String definition = """
+                {"schemaVersion":1,"defaultOnUpstreamFailure":"skip",
+                 "nodes":[
+                   {"key":"root","type":"script-exec","config":{"script":"echo root"}},
+                   {"key":"gate","type":"condition","config":{"expression":"true"}},
+                   {"key":"a","type":"script-exec","config":{"script":"echo a"}},
+                   {"key":"c","type":"script-exec","config":{"script":"echo c"}},
+                   {"key":"b","type":"script-exec","config":{"script":"echo b"}}],
+                 "edges":[
+                   {"id":"e1","from":"root","to":"gate"},
+                   {"id":"e2","from":"gate","to":"a"},
+                   {"id":"e3","from":"gate","to":"c"},
+                   {"id":"e4","from":"c","to":"b"}]}
+                """;
+        WorkflowRun run = startRun(definition, Map.of());
+        WorkflowRun terminal = awaitTerminal(run.getId());
+
+        assertThat(terminal.getStatus()).as(dumpRun()).isEqualTo("succeeded");
+        // c 在 master store 里能看到 a（证明 a 确实先产出），但 b 的 resolver 被裁剪
+        assertThat(statusOf(run.getId(), "c")).isEqualTo("succeeded");
+        assertThat(sawSibling.get()).as("b 不得读到非祖先 a 的输出").isFalse();
+    }
+
+    @Test
+    @DisplayName("重驱动恢复 succeeded condition 输出：只走正确分支（不静默双跳）")
+    void redriveRestoresConditionOutput() {
+        String definition = """
+                {"schemaVersion":1,"defaultOnUpstreamFailure":"skip",
+                 "nodes":[
+                   {"key":"begin","type":"start","config":{}},
+                   {"key":"gate","type":"condition","config":{"expression":"true"}},
+                   {"key":"yes","type":"notify","config":{"channels":["telegram"],"messageTemplate":"yes"}},
+                   {"key":"no","type":"notify","config":{"channels":["telegram"],"messageTemplate":"no"}}],
+                 "edges":[
+                   {"id":"e1","from":"begin","to":"gate"},
+                   {"id":"e2","from":"gate","to":"yes","sourceHandle":"true"},
+                   {"id":"e3","from":"gate","to":"no","sourceHandle":"false"}]}
+                """;
+        Long version = publishDefinition(definition);
+
+        WorkflowRun run = newRunningRun(version, "{}");
+        saveSucceededNodeRun(run.getId(), "gate", "condition", "{\"result\":true}");
+
+        engine.drive(run);
+
+        WorkflowRun terminal = awaitTerminal(run.getId());
+        assertThat(terminal.getStatus()).as(dumpRun()).isEqualTo("succeeded");
+        assertThat(statusOf(run.getId(), "yes")).isEqualTo("succeeded");
+        assertThat(statusOf(run.getId(), "no")).as(dumpRun()).isEqualTo("skipped");
+    }
+
+    @Test
+    @DisplayName("condition 输出无法恢复（非布尔）→ run failed VARIABLE_RESTORE_FAILED")
+    void redriveFailsClosedWhenConditionOutputUnrecoverable() {
+        String definition = """
+                {"schemaVersion":1,
+                 "nodes":[
+                   {"key":"begin","type":"start","config":{}},
+                   {"key":"gate","type":"condition","config":{"expression":"true"}},
+                   {"key":"yes","type":"notify","config":{"channels":["telegram"],"messageTemplate":"yes"}}],
+                 "edges":[{"id":"e1","from":"begin","to":"gate"},
+                          {"id":"e2","from":"gate","to":"yes","sourceHandle":"true"}]}
+                """;
+        Long version = publishDefinition(definition);
+
+        WorkflowRun run = newRunningRun(version, "{}");
+        saveSucceededNodeRun(run.getId(), "gate", "condition", "{\"result\":\"yes\"}");
+
+        engine.drive(run);
+
+        WorkflowRun terminal = awaitTerminal(run.getId());
+        assertThat(terminal.getStatus()).as(dumpRun()).isEqualTo("failed");
+        assertThat(terminal.getErrorMessage()).contains("VARIABLE_RESTORE_FAILED");
+        assertThat(statusOf(run.getId(), "yes")).as(dumpRun()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("大 End 输出（>8KB）：run.output_json 仍是合法对象，API presenter 可解析")
+    void largeEndOutputSurvivesPreviewChannel() throws Exception {
+        String definition = """
+                {"schemaVersion":1,
+                 "variables":{"blob":{"type":"string","required":true},
+                              "secret":{"type":"string","required":true}},
+                 "nodes":[
+                   {"key":"begin","type":"start","config":{}},
+                   {"key":"finish","type":"end","config":{"outputs":[
+                     {"name":"summary","value":"${run.input.blob}"},
+                     {"name":"token","value":"${run.input.secret}"}]}}],
+                 "edges":[{"id":"e1","from":"begin","to":"finish"}]}
+                """;
+        String blob = "x".repeat(9000);
+        WorkflowRun run = startRun(definition, Map.of("blob", blob, "secret", "token=supersecret"));
+        WorkflowRun terminal = awaitTerminal(run.getId());
+
+        assertThat(terminal.getStatus()).as(dumpRun()).isEqualTo("succeeded");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> persisted = objectMapper.readValue(terminal.getOutputJson(), Map.class);
+        assertThat((String) persisted.get("summary")).hasSize(9000);
+
+        com.easyshell.server.workflow.service.WorkflowApiPresenter presenter =
+                new com.easyshell.server.workflow.service.WorkflowApiPresenter(
+                        objectMapper, new SensitiveDataFilter(), workflowRepository, runRepository);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> presented = (Map<String, Object>) presenter.run(terminal).getOutput();
+        assertThat(presented).isNotNull();
+        assertThat((String) presented.get("summary")).hasSize(9000);
+        // End 从 run.input 复制的秘密在 API 出口被现有 SensitiveDataFilter 掩码
+        assertThat((String) presented.get("token")).isEqualTo("token=***");
+    }
+
+    @Test
+    @DisplayName("End 未执行（skipped）：run.output 回退为旧聚合，不丢其它节点输出")
+    void skippedEndFallsBackToAggregateOutput() throws Exception {
+        String definition = """
+                {"schemaVersion":1,"defaultOnUpstreamFailure":"skip",
+                 "variables":{"threshold":{"type":"number","required":true}},
+                 "nodes":[
+                   {"key":"begin","type":"script-exec","config":{"script":"echo begin"}},
+                   {"key":"gate","type":"condition","config":{"expression":"run.input.threshold > 90"}},
+                   {"key":"finish","type":"end","config":{"outputs":[
+                     {"name":"summary","value":"high"}]}},
+                   {"key":"notify","type":"notify","config":{"channels":["telegram"],"messageTemplate":"low"}}],
+                 "edges":[
+                   {"id":"e1","from":"begin","to":"gate"},
+                   {"id":"e2","from":"gate","to":"finish","sourceHandle":"true"},
+                   {"id":"e3","from":"gate","to":"notify","sourceHandle":"false"}]}
+                """;
+        WorkflowRun run = startRun(definition, Map.of("threshold", 5));
+        WorkflowRun terminal = awaitTerminal(run.getId());
+
+        assertThat(terminal.getStatus()).as(dumpRun()).isEqualTo("succeeded");
+        assertThat(statusOf(run.getId(), "finish")).as(dumpRun()).isEqualTo("skipped");
+        assertThat(statusOf(run.getId(), "notify")).isEqualTo("succeeded");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> output = objectMapper.readValue(terminal.getOutputJson(), Map.class);
+        assertThat(output).containsKey("notify");
+        assertThat(output).doesNotContainKey("summary");
+    }
+
+    @Test
+    @DisplayName("End 执行失败：run.output 回退为旧聚合，不把失败节点的残缺输出当整体输出")
+    void failedEndFallsBackToAggregateOutput() throws Exception {
+        String definition = """
+                {"schemaVersion":1,"defaultOnUpstreamFailure":"skip",
+                 "nodes":[
+                   {"key":"begin","type":"start","config":{}},
+                   {"key":"gate","type":"condition","config":{"expression":"true"}},
+                   {"key":"finish","type":"end","config":{"outputs":[
+                     {"name":"summary","value":"${nodes.ghost.output.text}"}]}}],
+                 "edges":[
+                   {"id":"e1","from":"begin","to":"gate"},
+                   {"id":"e2","from":"gate","to":"finish","sourceHandle":"true"}]}
+                """;
+        WorkflowRun run = startRun(definition, Map.of());
+        WorkflowRun terminal = awaitTerminal(run.getId());
+
+        assertThat(terminal.getStatus()).as(dumpRun()).isEqualTo("failed");
+        assertThat(statusOf(run.getId(), "finish")).as(dumpRun()).isEqualTo("failed");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> output = objectMapper.readValue(terminal.getOutputJson(), Map.class);
+        assertThat(output).containsKey("gate");
+        assertThat(output).doesNotContainKey("summary");
+    }
+
+    @Test
+    @DisplayName("condition 输出缺失：true/false 两条边都 fail-closed（不误放行）")
+    void missingConditionOutputSkipsBothBranches() {
+        StubExecutor conditionStub = new StubExecutor(NodeType.CONDITION);
+        conditionStub.behavior = ctx -> NodeOutcome.SUCCEEDED;   // 故意不写 output
+        NodeExecutorRegistry localRegistry = new NodeExecutorRegistry(List.of(
+                new StubExecutor(NodeType.SCRIPT_EXEC),
+                new StartNodeExecutor(),
+                conditionStub,
+                new NotifyNodeExecutor(channelMessageRouter, expressionEvaluator, new SensitiveDataFilter())));
+        WorkflowEngine localEngine = new WorkflowEngine(runRepository, nodeRunRepository,
+                approvalRepository, versionRepository, workflowRepository, jobRepository,
+                localRegistry, dagValidator, expressionEvaluator, attemptAllocator,
+                auditLogService, new SensitiveDataFilter(), Optional.of(events::add), enginePool,
+                retryScheduler, properties, objectMapper, transactionManager);
+
+        String definition = """
+                {"schemaVersion":1,"defaultOnUpstreamFailure":"skip",
+                 "nodes":[
+                   {"key":"begin","type":"start","config":{}},
+                   {"key":"gate","type":"condition","config":{"expression":"true"}},
+                   {"key":"yes","type":"notify","config":{"channels":["telegram"],"messageTemplate":"yes"}},
+                   {"key":"no","type":"notify","config":{"channels":["telegram"],"messageTemplate":"no"}}],
+                 "edges":[
+                   {"id":"e1","from":"begin","to":"gate"},
+                   {"id":"e2","from":"gate","to":"yes","sourceHandle":"true"},
+                   {"id":"e3","from":"gate","to":"no","sourceHandle":"false"}]}
+                """;
+        Long version = publishDefinition(definition);
+        WorkflowRun run = newRunningRun(version, "{}");
+
+        localEngine.drive(run);
+
+        WorkflowRun terminal = awaitTerminal(run.getId());
+        assertThat(terminal.getStatus()).as(dumpRun()).isEqualTo("succeeded");
+        assertThat(statusOf(run.getId(), "yes")).as(dumpRun()).isEqualTo("skipped");
+        assertThat(statusOf(run.getId(), "no")).as(dumpRun()).isEqualTo("skipped");
+    }
+
+    @Test
+    @DisplayName("非法 sourceHandle：运行期 fail-closed（发布期另由 DagValidator 拒绝）")
+    void invalidSourceHandleFailsClosedAtRuntime() {
+        String definition = """
+                {"schemaVersion":1,"defaultOnUpstreamFailure":"skip",
+                 "nodes":[
+                   {"key":"begin","type":"start","config":{}},
+                   {"key":"gate","type":"condition","config":{"expression":"true"}},
+                   {"key":"yes","type":"notify","config":{"channels":["telegram"],"messageTemplate":"yes"}},
+                   {"key":"no","type":"notify","config":{"channels":["telegram"],"messageTemplate":"no"}}],
+                 "edges":[
+                   {"id":"e1","from":"begin","to":"gate"},
+                   {"id":"e2","from":"gate","to":"yes","sourceHandle":"maybe"},
+                   {"id":"e3","from":"gate","to":"no","sourceHandle":"false"}]}
+                """;
+        WorkflowRun run = startRun(definition, Map.of());
+        WorkflowRun terminal = awaitTerminal(run.getId());
+
+        assertThat(terminal.getStatus()).as(dumpRun()).isEqualTo("succeeded");
+        assertThat(statusOf(run.getId(), "yes")).as(dumpRun()).isEqualTo("skipped");
+        assertThat(statusOf(run.getId(), "no")).isEqualTo("skipped");
+    }
+
+    @Test
+    @DisplayName("队列泵回不把 queued 算活跃：3 个排队、上限 1 时只启动 1 个，不饿死")
+    void queuedPumpDoesNotCountQueuedAsActive() throws Exception {
+        properties.getEngine().setMaxConcurrentRuns(1);
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        stub(NodeType.SCRIPT_EXEC).behavior = ctx -> {
+            started.countDown();
+            awaitQuietly(release);
+            return NodeOutcome.SUCCEEDED;
+        };
+        String definition = """
+                {"schemaVersion":1,
+                 "nodes":[
+                   {"key":"begin","type":"start","config":{}},
+                   {"key":"work","type":"script-exec","config":{"script":"echo work"}}],
+                 "edges":[{"id":"e1","from":"begin","to":"work"}]}
+                """;
+        Long version = publishDefinition(definition);
+        List<String> queuedIds = new java.util.ArrayList<>();
+        for (int i = 0; i < 3; i++) {
+            WorkflowRun queued = newRunningRun(version, "{}");
+            queued.setStatus("queued");
+            runRepository.saveAndFlush(queued);
+            queuedIds.add(queued.getId());
+        }
+
+        WorkflowPendingWakeupScanner scanner = new WorkflowPendingWakeupScanner(
+                runRepository, engine, auditLogService, properties, transactionManager);
+        scanner.scanOnce();
+
+        assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+        // 只统计本用例创建的三条 run，避开其它异步收尾任务可能的干扰
+        long startedCount = queuedIds.stream()
+                .map(id -> runRepository.findById(id).map(WorkflowRun::getStatus).orElse("missing"))
+                .filter(status -> status.equals("running") || status.equals("waiting"))
+                .count();
+        long stillQueued = queuedIds.stream()
+                .map(id -> runRepository.findById(id).map(WorkflowRun::getStatus).orElse("missing"))
+                .filter("queued"::equals)
+                .count();
+        assertThat(startedCount).isEqualTo(1);
+        assertThat(stillQueued).isEqualTo(2);
+        release.countDown();
+    }
+
+    private WorkflowRun newRunningRun(Long versionId, String inputJson) {
+        WorkflowRun run = new WorkflowRun();
+        run.setId("wfr_rd_" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 12));
+        run.setWorkflowId(workflowId);
+        run.setVersionId(versionId);
+        run.setVersionNo(1);
+        run.setTriggerType("manual");
+        run.setStatus("running");
+        run.setStartedBy(42L);
+        run.setStartedAt(LocalDateTime.now());
+        run.setInputJson(inputJson);
+        return runRepository.saveAndFlush(run);
+    }
+
+    private void saveSucceededNodeRun(String runId, String nodeKey, String nodeType, String outputJson) {
+        WorkflowNodeRun row = new WorkflowNodeRun();
+        row.setId("wnr_rd_" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 16));
+        row.setRunId(runId);
+        row.setNodeKey(nodeKey);
+        row.setNodeType(nodeType);
+        row.setAttempt(1);
+        row.setStatus("succeeded");
+        row.setOutputJson(outputJson);
+        row.setStartedAt(LocalDateTime.now());
+        row.setFinishedAt(LocalDateTime.now());
+        nodeRunRepository.saveAndFlush(row);
     }
 
     @Test

@@ -78,6 +78,7 @@ class TransformNodeExecutorTest {
                 Map.of("name", "usage", "value", "${nodes.up.output.usage}"),
                 Map.of("name", "payload", "value", "${nodes.up.output}"),
                 Map.of("name", "summary", "value", "磁盘 ${nodes.up.output.mount} 使用率 ${nodes.up.output.usage}%"),
+                Map.of("name", "padded", "value", "  ${nodes.up.output.mount}  "),
                 Map.of("name", "literal", "value", "ok")));
 
         VariableStore variables = new VariableStore();
@@ -91,6 +92,8 @@ class TransformNodeExecutorTest {
         assertThat(output.get("usage")).isEqualTo(93.5);
         assertThat(output.get("payload")).isEqualTo(upstream);
         assertThat(output.get("summary")).isEqualTo("磁盘 /data 使用率 93.5%");
+        // 非纯 ${path} 模板保留首尾空白（trim 只用于 exact 判定）
+        assertThat(output.get("padded")).isEqualTo("  /data  ");
         assertThat(output.get("literal")).isEqualTo("ok");
     }
 
