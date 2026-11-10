@@ -288,4 +288,149 @@ describe('useWorkflowEditor', () => {
     expect(result.current.dirty).toBe(false);
     expect(result.current.canUndo).toBe(false);
   });
+
+  it('does not dirty or enter history when a commit is structurally identical', () => {
+    const { result } = setup();
+    const snap = result.current.getSnapshot();
+    act(() => {
+      result.current.commit('select', {
+        ...snap,
+        nodes: snap.nodes.map((node) => ({ ...node, selected: true })),
+      });
+    });
+    expect(result.current.nodes[0].selected).toBe(true);
+    expect(result.current.dirty).toBe(false);
+    expect(result.current.canUndo).toBe(false);
+    expect(saveWorkflowDraft).not.toHaveBeenCalled();
+  });
+
+  it('treats React Flow selection changes as non-dirty / non-history', () => {
+    const { result } = setup();
+    act(() => {
+      result.current.onNodesChange([{ id: 'n1', type: 'select', selected: true }]);
+    });
+    expect(result.current.nodes[0].selected).toBe(true);
+    expect(result.current.dirty).toBe(false);
+    expect(result.current.canUndo).toBe(false);
+  });
+
+  it('resets snapshot, history and baseVersion when workflowId changes', async () => {
+    const onVersionConflict = vi.fn();
+    const nextDraft: WorkflowVersionDetail = {
+      ...draft,
+      id: 11,
+      baseVersion: 9,
+      definition: {
+        ...definition,
+        nodes: [
+          {
+            key: 'n9',
+            type: 'script-exec',
+            name: 'next workflow',
+            position: { x: 10, y: 10 },
+            config: { script: 'pwd' },
+          },
+        ],
+      },
+    };
+    const view = renderHook(
+      (props: { workflowId: number; draft: WorkflowVersionDetail }) =>
+        useWorkflowEditor({ ...props, onVersionConflict }),
+      { initialProps: { workflowId: 7, draft } }
+    );
+
+    act(() => {
+      view.result.current.commit('add-node', nextSnapshot(1));
+    });
+    expect(view.result.current.canUndo).toBe(true);
+    expect(view.result.current.nodes).toHaveLength(2);
+
+    view.rerender({ workflowId: 8, draft: nextDraft });
+    expect(view.result.current.nodes).toHaveLength(1);
+    expect(view.result.current.nodes[0].id).toBe('n9');
+    expect(view.result.current.definition.nodes[0].key).toBe('n9');
+    expect(view.result.current.dirty).toBe(false);
+    expect(view.result.current.canUndo).toBe(false);
+
+    // 新工作流的 baseVersion 必须是 9，而不是上一个工作流的 4
+    act(() => {
+      view.result.current.commit('add-node', nextSnapshot(1));
+    });
+    await act(async () => {
+      await view.result.current.saveNow();
+    });
+    expect(saveWorkflowDraft.mock.calls[0][1].baseVersion).toBe(9);
+  });
+
+  it('keeps dirty for edits made while a save is in flight and schedules a trailing save', async () => {
+    let resolveFirst!: (value: unknown) => void;
+    saveWorkflowDraft.mockImplementationOnce(
+      () => new Promise((resolve) => {
+        resolveFirst = resolve;
+      })
+    );
+    const { result } = setup();
+    act(() => {
+      result.current.commit('add-node', nextSnapshot(1));
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(SAVE_DEBOUNCE_MS);
+    });
+    expect(saveWorkflowDraft).toHaveBeenCalledTimes(1);
+
+    // 请求在飞时继续编辑：generation 变了，旧响应不能清 dirty
+    act(() => {
+      result.current.commit('add-node', nextSnapshot(2));
+    });
+    await act(async () => {
+      resolveFirst({ code: 200, message: 'ok', data: { id: 10, version: 5, baseVersion: 5 } });
+    });
+    expect(result.current.dirty).toBe(true);
+    expect(saveWorkflowDraft).toHaveBeenCalledTimes(1);
+    expect(result.current.localDraft?.definition.nodes).toHaveLength(3);
+
+    // trailing save：带服务端回传的新令牌，且包含保存期间的新编辑
+    await act(async () => {
+      vi.advanceTimersByTime(SAVE_DEBOUNCE_MS);
+    });
+    expect(saveWorkflowDraft).toHaveBeenCalledTimes(2);
+    expect(saveWorkflowDraft.mock.calls[1][1].baseVersion).toBe(5);
+    expect(saveWorkflowDraft.mock.calls[1][1].definition.nodes).toHaveLength(3);
+    expect(result.current.dirty).toBe(false);
+  });
+
+  it('saveNow waits for an in-flight save and then retries with the newest definition', async () => {
+    let resolveFirst!: (value: unknown) => void;
+    saveWorkflowDraft.mockImplementationOnce(
+      () => new Promise((resolve) => {
+        resolveFirst = resolve;
+      })
+    );
+    const { result } = setup();
+    act(() => {
+      result.current.commit('add-node', nextSnapshot(1));
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(SAVE_DEBOUNCE_MS);
+    });
+    expect(saveWorkflowDraft).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      result.current.commit('add-node', nextSnapshot(2));
+    });
+    let retry!: Promise<void>;
+    act(() => {
+      retry = result.current.saveNow();
+    });
+    await act(async () => {
+      resolveFirst({ code: 200, message: 'ok', data: { id: 10, version: 5, baseVersion: 5 } });
+    });
+    await act(async () => {
+      await retry;
+    });
+    expect(saveWorkflowDraft).toHaveBeenCalledTimes(2);
+    expect(saveWorkflowDraft.mock.calls[1][1].baseVersion).toBe(5);
+    expect(saveWorkflowDraft.mock.calls[1][1].definition.nodes).toHaveLength(3);
+    expect(result.current.dirty).toBe(false);
+  });
 });

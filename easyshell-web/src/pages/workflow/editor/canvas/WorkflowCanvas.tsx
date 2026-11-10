@@ -12,8 +12,9 @@ import {
   useReactFlow,
   SelectionMode,
   type Connection,
-  type Edge,
-  type Node,
+  type EdgeMouseHandler,
+  type IsValidConnection,
+  type NodeMouseHandler,
   type OnNodesChange,
   type OnEdgesChange,
 } from '@xyflow/react';
@@ -26,6 +27,10 @@ import {
   ClockCircleOutlined,
   CodeOutlined,
   NotificationOutlined,
+  PlayCircleOutlined,
+  RobotOutlined,
+  StopOutlined,
+  SwapOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { semanticVar } from '../../../../theme/semantics';
@@ -34,8 +39,11 @@ import {
   HANDLE_IN,
   HANDLE_OUT,
   NODE_WIDTH,
+  applyNodeStatuses,
   checkConnection,
+  nodeHasInput,
   nodeHeight,
+  nodeSummaryTextOf,
   sourceHandles,
   type ConnectionContext,
   type WorkflowFlowEdge,
@@ -44,16 +52,21 @@ import {
 } from '../../graph';
 import { CLIPBOARD_MIME, readClipboard, type ClipboardPayload } from './clipboard';
 import { computeAlignment, type AlignmentGuide, type Box } from './alignment';
+import WorkflowEdge from './WorkflowEdge';
 import type { WorkflowNodeType } from '../../types';
 
 /* ── 节点视觉（token-only，禁硬编码 hex） ─────────────────────────── */
 
 const NODE_TYPE_ICON: Record<WorkflowNodeType, React.ReactNode> = {
+  start: <PlayCircleOutlined />,
   'script-exec': <CodeOutlined />,
+  transform: <SwapOutlined />,
   condition: <BranchesOutlined />,
-  notify: <NotificationOutlined />,
+  'ai-analyze': <RobotOutlined />,
   approval: <AuditOutlined />,
+  notify: <NotificationOutlined />,
   wait: <ClockCircleOutlined />,
+  end: <StopOutlined />,
 };
 
 /** 运行态状态色：全部来自 src/theme 语义变量（深/浅色自动切换） */
@@ -87,6 +100,7 @@ const WorkflowNodeCard = React.memo(function WorkflowNodeCard({ data, selected }
   const statusColor = data.status ? STATUS_VAR[data.status] : undefined;
   const handles = sourceHandles(data.nodeType);
   const height = nodeHeight(data.nodeType);
+  const summary = data.summary || nodeSummaryTextOf(data.nodeType, data);
 
   return (
     <div
@@ -100,7 +114,9 @@ const WorkflowNodeCard = React.memo(function WorkflowNodeCard({ data, selected }
         borderColor: selected ? 'var(--es-color-primary)' : statusColor || 'var(--es-color-border)',
       }}
     >
-      <Handle type="target" position={Position.Left} id={HANDLE_IN} style={{ top: '50%' }} />
+      {nodeHasInput(data.nodeType) && (
+        <Handle type="target" position={Position.Left} id={HANDLE_IN} style={{ top: '50%' }} />
+      )}
       <div className="wf-node-head">
         <span className="wf-node-icon" style={{ color: statusColor || 'var(--es-color-primary)' }}>
           {NODE_TYPE_ICON[data.nodeType]}
@@ -120,6 +136,11 @@ const WorkflowNodeCard = React.memo(function WorkflowNodeCard({ data, selected }
           />
         )}
       </div>
+      {summary && (
+        <div className="wf-node-summary" title={summary}>
+          {summary}
+        </div>
+      )}
       <div className="wf-node-foot">
         <span className="wf-node-key">{data.key}</span>
         <span className="wf-node-type">{t(`workflow.node.type.${data.nodeType}`)}</span>
@@ -132,7 +153,9 @@ const WorkflowNodeCard = React.memo(function WorkflowNodeCard({ data, selected }
           id={handleId}
           style={{ top: `${HANDLE_TOP_RATIO[handleId] * 100}%` }}
         >
-          {handleId !== HANDLE_OUT && <span className="wf-handle-label">{handleId === 'true' ? 'T' : 'F'}</span>}
+          {handleId !== HANDLE_OUT && (
+            <span className="wf-handle-label">{handleId === 'true' ? 'IF' : 'ELSE'}</span>
+          )}
         </Handle>
       ))}
     </div>
@@ -140,6 +163,7 @@ const WorkflowNodeCard = React.memo(function WorkflowNodeCard({ data, selected }
 });
 
 const nodeTypes = { workflowNode: WorkflowNodeCard };
+const edgeTypes = { workflowEdge: WorkflowEdge };
 
 /**
  * 提升到模块级的常量：React Flow 的 StoreUpdater 按 props 身份同步这些字段，
@@ -175,7 +199,8 @@ export interface WorkflowCanvasProps {
   onCopyNodes: (nodeKeys: string[]) => void;
   onPasteNodes: (payload: ClipboardPayload) => void;
   onDuplicateNodes: (nodeKeys: string[]) => void;
-  onSelectionChange: (nodeKeys: string[], edgeIds: string[]) => void;
+  /** @deprecated 选中态由 React Flow 的 node.selected 派生；保留仅为运行监控页兼容 */
+  onSelectionChange?: (nodeKeys: string[], edgeIds: string[]) => void;
   onOpenNodeConfig: (key: string) => void;
   onEditEdge: (edgeId: string) => void;
   onUndo: () => void;
@@ -193,7 +218,7 @@ function WorkflowCanvasInner(props: WorkflowCanvasProps) {
   const {
     nodes, edges, onNodesChange, onEdgesChange, onConnect, connectionContext,
     onDropNode, onMoveNodes, onRequestDelete, onCopyNodes, onPasteNodes, onDuplicateNodes,
-    onSelectionChange, onOpenNodeConfig, onEditEdge, onUndo, onRedo, onSave,
+    onOpenNodeConfig, onEditEdge, onUndo, onRedo, onSave,
     readOnly = false, statuses,
   } = props;
   const { t } = useTranslation();
@@ -205,14 +230,8 @@ function WorkflowCanvasInner(props: WorkflowCanvasProps) {
   const selectedNodeKeys = useMemo(() => nodes.filter((n) => n.selected).map((n) => n.id), [nodes]);
   const selectedEdgeIds = useMemo(() => edges.filter((e) => e.selected).map((e) => e.id), [edges]);
 
-  const decoratedNodes = useMemo<WorkflowFlowNode[]>(
-    () =>
-      nodes.map((node) => ({
-        ...node,
-        data: { ...node.data, status: statuses?.[node.id] ?? node.data.status },
-      })),
-    [nodes, statuses]
-  );
+  // 编辑态 statuses 缺省 → 原样返回 nodes（零克隆）；监控态只克隆状态变化的节点
+  const decoratedNodes = useMemo(() => applyNodeStatuses(nodes, statuses), [nodes, statuses]);
 
   const rejectConnection = useCallback(
     (connection: { source: string; target: string; sourceHandle?: string | null }) => {
@@ -274,7 +293,7 @@ function WorkflowCanvasInner(props: WorkflowCanvasProps) {
       const { snapped } = computeAlignment(movingBox, others);
       const dx = snapped.x - movingBox.x;
       const dy = snapped.y - movingBox.y;
-      if (dx === 0 && dy === 0) return;
+      // 无论是否吸附都提交一次：commit 对结构相同的文档 no-op，但未吸附的位移必须落库
       onMoveNodes(
         dragged.map((n) => ({
           id: n.id,
@@ -413,12 +432,29 @@ function WorkflowCanvasInner(props: WorkflowCanvasProps) {
     ]
   );
 
-  const handleSelectionChange = useCallback(
-    (selection: { nodes: Node[]; edges: Edge[] }) => {
-      onSelectionChange(selection.nodes.map((n) => n.id), selection.edges.map((e) => e.id));
-    },
-    [onSelectionChange]
+  const isValidConnection = useCallback<IsValidConnection<WorkflowFlowEdge>>(
+    (connection) =>
+      checkConnection(connectionContext, {
+        source: connection.source,
+        target: connection.target,
+        sourceHandle: connection.sourceHandle,
+      }) === null,
+    [connectionContext]
   );
+
+  const handleNodeDoubleClick = useCallback<NodeMouseHandler<WorkflowFlowNode>>(
+    (_event, node) => onOpenNodeConfig(node.id),
+    [onOpenNodeConfig]
+  );
+
+  const handleEdgeDoubleClick = useCallback<EdgeMouseHandler<WorkflowFlowEdge>>(
+    (_event, edge) => onEditEdge(edge.id),
+    [onEditEdge]
+  );
+
+  const handlePaneClick = useCallback(() => {
+    setGuides([]);
+  }, []);
 
   return (
     <div
@@ -438,6 +474,7 @@ function WorkflowCanvasInner(props: WorkflowCanvasProps) {
         onEdgesChange={readOnly ? undefined : onEdgesChange}
         onConnect={readOnly ? undefined : handleConnect}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         colorMode={isDark ? 'dark' : 'light'}
         fitView
         fitViewOptions={FIT_VIEW_OPTIONS}
@@ -459,22 +496,12 @@ function WorkflowCanvasInner(props: WorkflowCanvasProps) {
         multiSelectionKeyCode="Control"
         // 删除/移动由画布自己的键盘处理器接管（带确认、进撤销栈、可对齐吸附）
         deleteKeyCode={null}
-        isValidConnection={
-          readOnly
-            ? undefined
-            : (connection) =>
-                checkConnection(connectionContext, {
-                  source: connection.source,
-                  target: connection.target,
-                  sourceHandle: connection.sourceHandle,
-                }) === null
-        }
+        isValidConnection={readOnly ? undefined : isValidConnection}
         onNodeDrag={readOnly ? undefined : handleNodeDrag}
         onNodeDragStop={readOnly ? undefined : handleNodeDragStop}
-        onSelectionChange={handleSelectionChange}
-        onNodeDoubleClick={readOnly ? undefined : (_event, node) => onOpenNodeConfig(node.id)}
-        onEdgeDoubleClick={readOnly ? undefined : (_event, edge) => onEditEdge(edge.id)}
-        onPaneClick={() => onSelectionChange([], [])}
+        onNodeDoubleClick={readOnly ? undefined : handleNodeDoubleClick}
+        onEdgeDoubleClick={readOnly ? undefined : handleEdgeDoubleClick}
+        onPaneClick={handlePaneClick}
         ariaLabelConfig={ARIA_LABEL_CONFIG}
       >
         <Background gap={20} size={1} />
@@ -485,7 +512,7 @@ function WorkflowCanvasInner(props: WorkflowCanvasProps) {
           nodeStrokeWidth={3}
           nodeColor={(node) => {
             const status = statuses?.[node.id];
-            return status ? `var(${STATUS_VAR[status] || semanticVar('pending')})` : 'var(--es-color-border)';
+            return status ? STATUS_VAR[status] || semanticVar('pending') : 'var(--es-color-border)';
           }}
         />
         <ViewportPortal>
