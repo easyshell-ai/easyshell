@@ -19,6 +19,7 @@ import com.easyshell.server.repository.WorkflowRepository;
 import com.easyshell.server.repository.WorkflowVersionRepository;
 import com.easyshell.server.security.AuditUsers;
 import com.easyshell.server.service.AuditLogService;
+import com.easyshell.server.workflow.engine.NodeExecutor;
 import com.easyshell.server.workflow.engine.NodeExecutorRegistry;
 import com.easyshell.server.workflow.graph.DagValidator;
 import com.easyshell.server.workflow.graph.ValidationIssue;
@@ -360,16 +361,7 @@ public class WorkflowDefinitionService {
     public WorkflowValidateResultVO validate(JsonNode definitionNode) {
         WorkflowDefinition definition = parseDefinition(definitionNode);
         ValidationIssue.Sink sink = new ValidationIssue.Sink();
-        dagValidator.validate(definition, sink);
-        for (WorkflowNode node : definition.getNodes()) {
-            if (node.nodeType() == null) {
-                continue;   // 类型未知已由 DagValidator 报错
-            }
-            var executor = nodeExecutorRegistry.executorFor(node.nodeType());
-            if (executor != null) {
-                executor.validate(node, definition, sink);
-            }
-        }
+        validateDefinition(definition, sink);
         RiskSummary risk = assessEstimatedRisk(definition);
         return WorkflowValidateResultVO.builder()
                 .valid(!sink.hasError())
@@ -395,16 +387,7 @@ public class WorkflowDefinitionService {
 
         WorkflowDefinition definition = parseDefinitionNode(draft.getDefinitionJson());
         ValidationIssue.Sink sink = new ValidationIssue.Sink();
-        dagValidator.validate(definition, sink);
-        for (WorkflowNode node : definition.getNodes()) {
-            if (node.nodeType() == null) {
-                continue;
-            }
-            var executor = nodeExecutorRegistry.executorFor(node.nodeType());
-            if (executor != null) {
-                executor.validate(node, definition, sink);
-            }
-        }
+        validateDefinition(definition, sink);
         RiskSummary risk = assessEstimatedRisk(definition);
         if (sink.hasError()) {
             throw new WorkflowValidationFailedException(WorkflowValidateResultVO.builder()
@@ -452,11 +435,38 @@ public class WorkflowDefinitionService {
     // 内部
     // ------------------------------------------------------------------
 
+    /**
+     * 统一发布门禁：DagValidator 结构规则 + 每个已知节点类型的执行器校验。
+     *
+     * <p>枚举里存在但注册表没有执行器的类型必须报 {@code NODE_EXECUTOR_MISSING}——
+     * 否则发布能过、运行期才在 {@code runNode} 里变成 NODE_TYPE_UNKNOWN，属于"发布门禁漏检"。</p>
+     */
+    private void validateDefinition(WorkflowDefinition definition, ValidationIssue.Sink sink) {
+        dagValidator.validate(definition, sink);
+        if (definition.getNodes() == null) {
+            return;
+        }
+        for (WorkflowNode node : definition.getNodes()) {
+            if (node.nodeType() == null) {
+                continue;   // 类型未知已由 DagValidator 报错
+            }
+            NodeExecutor executor = nodeExecutorRegistry.executorFor(node.nodeType());
+            if (executor == null) {
+                sink.error("NODE_EXECUTOR_MISSING",
+                        "节点类型 " + node.nodeType().code() + " 没有注册执行器（节点 " + node.getKey() + "）",
+                        node.getKey());
+                continue;
+            }
+            executor.validate(node, definition, sink);
+        }
+    }
+
     /** 插值前风险估算（G-16：estimated_risk = 所有 script-exec 评估值的最大者） */
     private RiskSummary assessEstimatedRisk(WorkflowDefinition definition) {
         RiskLevel max = RiskLevel.LOW;
         Set<String> matches = new LinkedHashSet<>();
-        for (WorkflowNode node : definition.getNodes()) {
+        List<WorkflowNode> nodes = definition.getNodes() == null ? List.of() : definition.getNodes();
+        for (WorkflowNode node : nodes) {
             if (node.nodeType() != NodeType.SCRIPT_EXEC) {
                 continue;
             }
