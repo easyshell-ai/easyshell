@@ -1,4 +1,5 @@
 import request from '../../api/request';
+import type { AxiosRequestConfig } from 'axios';
 import type { ApiResponse, PageResponse } from '../../types';
 import type {
   ApprovalStatus,
@@ -132,8 +133,23 @@ export function issuesOf(data: unknown): ValidationIssue[] {
   return Array.isArray(issues) ? (issues as ValidationIssue[]) : [];
 }
 
-export function validateWorkflow(id: number): Promise<ApiResponse<WorkflowValidationResult>> {
-  return request.post(`/v1/workflow/${id}/validate`);
+/**
+ * 预校验：必须把要校验的 definition 放进请求体。
+ *
+ * <p>服务端 {@code POST /{id}/validate} 只校验请求体里的 definition，空 body 是
+ * 400 WORKFLOW_PARAM_INVALID（历史上漏了 {@code required=false}，空 body 被 Jackson
+ * 抛成 500，而调用方把非 200 一律当成"无 issues"，于是 ERROR 工作流在发布弹窗里
+ * 显示成"校验通过"并放行发布按钮）。</p>
+ *
+ * <p>编辑器传本地草稿（含未保存改动，校验的必须是用户眼前这份）；列表页没有编辑器
+ * 状态，先拉详情取服务端草稿 definition。</p>
+ */
+export function validateWorkflow(
+  id: number,
+  definition: WorkflowDefinition,
+  config?: AxiosRequestConfig
+): Promise<ApiResponse<WorkflowValidationResult>> {
+  return request.post(`/v1/workflow/${id}/validate`, { definition }, config);
 }
 
 export function publishWorkflow(id: number, data: PublishRequest = {}): Promise<ApiResponse<WorkflowVersionSummary>> {

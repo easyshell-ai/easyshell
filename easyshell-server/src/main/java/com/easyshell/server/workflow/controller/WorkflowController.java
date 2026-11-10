@@ -179,9 +179,11 @@ public class WorkflowController {
     @PutMapping("/{id}/versions/draft")
     @PreAuthorize("hasAnyRole('OPERATOR','ADMIN','SUPER_ADMIN')")
     public R<WorkflowVersionDetailVO> saveDraft(@PathVariable Long id,
-                                                @RequestBody WorkflowDraftSaveRequest request,
+                                                @RequestBody(required = false) WorkflowDraftSaveRequest request,
                                                 Authentication auth, HttpServletRequest httpRequest) {
         access.requireWorkflowOwner(id, auth);
+        // 与 validate 同一契约：空 body 由这里给 400（WORKFLOW_PARAM_INVALID），
+        // 否则 Jackson 先抛 HttpMessageNotReadableException → 500，下面的守卫永远轮不到。
         requireBody(request);
         WorkflowVersion draft = definitionService.saveDraft(id, request, (Long) auth.getPrincipal(), auth,
                 httpRequest.getRemoteAddr());
@@ -197,9 +199,13 @@ public class WorkflowController {
     @PostMapping("/{id}/validate")
     @PreAuthorize("hasAnyRole('OPERATOR','ADMIN','SUPER_ADMIN')")
     public R<WorkflowValidateResultVO> validate(@PathVariable Long id,
-                                                @RequestBody WorkflowValidateRequest request,
+                                                @RequestBody(required = false) WorkflowValidateRequest request,
                                                 Authentication auth) {
         access.requireWorkflowOwner(id, auth);
+        // 空 body 走 400（WORKFLOW_PARAM_INVALID），而不是被 Jackson 抛成 500：
+        // 历史上这里没有 required=false，前端调预校验时不发 body，异常先于所有权
+        // 校验被抛出来，前端把 500 当成"无 issues"显示成"校验通过"，ERROR 工作流
+        // 因此被放行到发布按钮（最终仍被 422 拦下，但预校验形同虚设）。
         requireBody(request);
         return R.ok(definitionService.validate(request.getDefinition()));
     }

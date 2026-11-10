@@ -342,12 +342,15 @@ const WorkflowEditorPage: React.FC = () => {
     setPublishLoading(true);
     setPublishOpen(true);
     try {
-      const res = await validateWorkflow(workflowId);
+      // 校验本地草稿（含未保存改动）：预校验要回答的是"用户眼前这份定义能不能发布"。
+      // 空 body 会让服务端返回 400，而这里会把非 200 一律当成"无 issues"——
+      // 那正是 ERROR 工作流被显示成"校验通过"的原因。
+      const res = await validateWorkflow(workflowId, editor.definition);
       setPublishIssues(res.code === 200 ? issuesOf(res.data) : []);
     } finally {
       setPublishLoading(false);
     }
-  }, [workflowId]);
+  }, [workflowId, editor.definition]);
 
   const confirmPublish = useCallback(async () => {
     setPublishLoading(true);
