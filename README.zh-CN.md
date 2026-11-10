@@ -283,7 +283,7 @@ npx mdskills install easyshell
 - **等待**：按秒等待，取消不会被 sleep 卡住。
 - **结束**：声明本次运行的最终输出字段，运行详情直接展示这份结果。
 
-#### 九类节点
+#### 十二类节点
 
 | 节点 | 作用 | 输出（下游可引用） |
 |------|------|------------------|
@@ -291,7 +291,10 @@ npx mdskills install easyshell
 | `script-exec` | 在目标主机执行脚本，落到真实 Task | 脚本 stdout（文本或 JSON），整体引用 |
 | `transform` | 数据映射 / 重命名 / 拼接 | `nodes.<key>.output.<name>` |
 | `condition` | 表达式求值，IF / ELSE 双分支 | `nodes.<key>.output.result`（boolean） |
-| `ai-analyze` | 读上游输出做运维语义分析 | `.text` / `.model` / `.truncated` |
+| `ai-analyze` | 读上游输出做运维语义分析 | `.text` / `.json` / `.structured` / `.truncated` |
+| `llm` | 通用大模型：提示词 → 文本或结构化 JSON | `.text` / `.json` / `.structured` / `.model` |
+| `classifier` | 问题分类器：按模型分类结果路由 | `.class` / `.reason` / `.raw` |
+| `code` | JS / Python 数据变换（隔离沙箱） | 代码返回的 JSON 值 |
 | `approval` | 挂起运行等待人工审批 | `.decision` / `.comment` / `.decidedBy` |
 | `notify` | 推送消息到机器人渠道 | `.delivered` / `.failed` / `.skipped` |
 | `wait` | 等待指定秒数 | `.waitedMs` |
@@ -333,6 +336,12 @@ npx mdskills install easyshell
 `EXPRESSION_REFERENCE_NOT_ANCESTOR`，运行期也读不到。单值上限 8192 UTF-8 字节；超出则存头尾
 preview 并带 `truncated` 与 warning。没有 secret 注入通道：凭据请留在主机自己的凭据管理里。
 
+
+开始节点不是一堆原始 JSON：它用字段编辑器声明 `label`（显示名）、`name`（变量 key）、
+`type`（string / number / boolean / json）、是否必填、默认值、说明；string 字段还可以维护
+`options`，触发弹窗会把它渲染成下拉选择，而不是让用户手输。条件节点也提供
+「变量 + 运算符 + 值」的结构化构建器，复杂表达式再切到高级手写模式。
+
 #### 条件分支：IF / ELSE 是真实的门控
 
 条件节点只有一个表达式，节点求值得到 `true` / `false`，两个出口分别接 `IF` 和 `ELSE`。
@@ -340,15 +349,46 @@ preview 并带 `truncated` 与 warning。没有 secret 注入通道：凭据请�
 （fail-closed），绝不会「条件没求出来就默认放行」。边上的 `IF` / `ELSE` 标签在浅色与深色主题下
 都可读，条件原文在节点配置里编辑。
 
-#### AI 节点：只产出结论，不产出命令
+#### AI 节点：文本、结构化 JSON 与分类路由
 
-`ai-analyze` 复用平台「系统设置 → AI」里的模型配置，不新建第二条 AI 通道。它的输出类型在契约上
-就是分析文本，不是可执行命令；即使分析结果里写了 `rm -rf`，也不会获得任何派发授权。要让 AI
-的结论变成操作，必须由人把它写成脚本，并经过 `approval` 节点与风险门禁。输入会先经过敏感信息
-脱敏与长度截断，输出同样脱敏后才落库。
+- `ai-analyze`：读上游运维输出，产出分析结论；支持 `text` 与结构化 `json` 两种输出模式。
+- `llm`：通用大模型节点，可选 provider / model、系统提示词、用户提示词、温度；支持
+  `text` 与结构化 `json`，JSON Schema 作为提示约束，解析失败会自动重试一次修复。
+- `classifier`：Dify 风格问题分类器，配置 1–10 个 class（名称 + 描述），模型返回
+  `{"class":"...","reason":"..."}`；每个 class 在画布上有一个真实出边把手，另有 `default`
+  兜底。模型返回未知 class 时节点直接失败，绝不静默路由。
 
-明确不做：通用 LLM 节点、AI Agent 自主调工具、AI 生成脚本直接执行。原因不是产品保守，而是
-`CommandRiskEngine` 是模式匹配，语义层面的提示注入不能靠它兜底。
+三类节点都复用平台「系统设置 → AI」的模型配置，不新建 AI 通道；输入/输出都过敏感信息脱敏。
+它们**只产出文本/JSON/分类结果，不具备执行能力**：即使输出里写了 `rm -rf`，也不会获得派发授权。
+要让 AI 的结论变成操作，必须由人写成脚本，并经过 `approval` 节点与风险门禁；LLM/AI 输出也
+禁止直接作为脚本的 `raw` 参数。
+
+<p align="center">
+  <img src="docs/images/workflow-llm-structured.png" alt="LLM 节点的结构化 JSON 输出配置：输出模式、JSON Schema、温度" width="90%" />
+</p>
+
+明确不做：AI Agent 自主调工具、AI 生成脚本直接执行。`CommandRiskEngine` 是模式匹配，语义
+层面的提示注入不能靠它单独兜底。
+
+#### 代码节点：数据变换沙箱，不是主机执行器
+
+`code` 节点支持 JavaScript / Python，用来做字段提取、格式转换、拼接等数据变换：
+
+```javascript
+function main(input) {
+  return { total: Number(input.a) + Number(input.b) };
+}
+```
+
+```python
+def main(input):
+    return {"total": float(input["a"]) + float(input["b"])}
+```
+
+- 输入通过 `inputs` 映射声明，值可以是上游变量；代码在 **GraalVM Polyglot 沙箱**中执行：
+  无宿主对象、无文件/网络/环境变量/进程/线程访问，超时强制关闭上下文。
+- 返回值必须是 JSON 可序列化类型，写入 `nodes.<key>.output`。
+- 它不操作服务器。要在主机上执行命令，仍然使用 `script-exec` + agent。
 
 #### 失败策略
 
@@ -385,7 +425,8 @@ attempt、关联 Task，并对该节点做一次**试运行**（不重跑整条�
 
 #### 当前边界
 
-2.0 交付的是「开始/结束契约 + 九类节点 + 变量选择器 + IF/ELSE 真实门控 + AI 分析 + 运行试运行」。
+2.1 交付的是「开始/结束契约 + 十二类节点 + 变量选择器 + IF/ELSE 真实门控 + LLM/结构化输出 +
+问题分类器 + JS/Python 数据沙箱 + 运行试运行」。
 以下仍**未实现**，规划前请先看：cron / webhook 触发器、HTTP 请求节点、并行 fan-out/fan-in、
 子工作流、循环、artifact 存储、secret 注入、dry-run / replay、跨实例调度。单节点试运行已在运行
 详情页接入，但它只适用于已经存在的 run。

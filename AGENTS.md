@@ -99,14 +99,20 @@ docker logs easyshell-server | grep 'initial admin password'   # 首次启动的
 - **start / end 是真实图节点**：最多各一个；start 不得有入边，end 不得有出边。
   新工作流自动插入；旧工作流可以没有，编辑器用 WARNING/提示引导补全。
 - **节点类型权威列表**：`start` / `script-exec` / `transform` / `condition` /
-  `ai-analyze` / `approval` / `notify` / `wait` / `end`。新增类型必须同时更新：
+  `ai-analyze` / `llm` / `classifier` / `code` / `approval` / `notify` / `wait` / `end`。新增类型必须同时更新：
   `NodeType`、执行器、`WorkflowTestRunService` switch、`DagValidator` 的表达式/结构校验、
   前端 `types.ts` / `graph.ts` / 节点注册表 / 双语文案 / 契约测试。
 - **变量引用只允许拓扑祖先**：模板用 `${path}`，表达式用裸路径；发布期由
   `DagValidator` 校验引用集合 ⊆ 祖先集合，运行期 fail-closed。禁止在前端发明第三套
   引用语法或第二套变量存储。
-- **`ai-analyze` 只产出结论文本，不产出命令**：执行器不得注入 `TaskService` /
-  `DispatchAuthority`，输出必须过 `SensitiveDataFilter`；需要执行时必须由人写脚本并经过
-  `approval` 节点，AI 不是授权来源。
+- **`ai-analyze` / `llm` 只产出结论或数据，不产出命令**：执行器不得注入 `TaskService` /
+  `DispatchAuthority`，输入输出必须过 `SensitiveDataFilter`；`rawParams` 禁止直接引用
+  AI/LLM 输出（`AI_OUTPUT_RAW_FORBIDDEN`）。需要执行时必须由人写脚本并经过 `approval`。
+- **`classifier` 分支 fail-closed**：模型返回的 class 必须命中配置类别，否则节点失败；
+  边 `sourceHandle` 必须等于类别名或 `default`，不允许静默路由到任意分支。
+- **`code` 是数据沙箱，不是主机执行器**：只允许 GraalVM Polyglot（JS/Python）在
+  `HostAccess.NONE` / `IOAccess.NONE` / environment/process/thread 全部关闭的上下文中运行；
+  禁止回退 shell，禁止注入宿主对象；超时必须 `context.close(true)` 取消。主机操作仍然走
+  `script-exec` + agent。
 - **画布选中态只属于 React Flow**：不得把 `selectedKeys`/`selectedEdgeIds` 提升到页面
   state 再回写节点数组；React Flow 回调必须稳定。React #185 的根因就是这条被违反。

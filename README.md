@@ -283,7 +283,7 @@ Start ──> Collect disk usage ──> Normalize ──> Over threshold? ─�
 - **Wait** sleeps for a bounded duration; cancellation is never trapped in the sleep.
 - **End** declares the run's final output fields, shown directly in the run detail.
 
-#### Nine node types
+#### Twelve node types
 
 | Node | Purpose | Output available downstream |
 |---|---|---|
@@ -291,7 +291,10 @@ Start ──> Collect disk usage ──> Normalize ──> Over threshold? ─�
 | `script-exec` | Execute a script on target hosts, as a real Task | stdout (text or JSON), referenced as a whole |
 | `transform` | Map / rename / compose values | `nodes.<key>.output.<name>` |
 | `condition` | Evaluate an expression, IF / ELSE branches | `nodes.<key>.output.result` (boolean) |
-| `ai-analyze` | Analyze upstream output with the configured model | `.text` / `.model` / `.truncated` |
+| `ai-analyze` | Analyze upstream output with the configured model | `.text` / `.json` / `.structured` / `.truncated` |
+| `llm` | Generic LLM: prompt to text or structured JSON | `.text` / `.json` / `.structured` / `.model` |
+| `classifier` | Question classifier: route by model-selected class | `.class` / `.reason` / `.raw` |
+| `code` | JavaScript / Python data transformation (isolated sandbox) | JSON value returned by code |
 | `approval` | Suspend for human approval | `.decision` / `.comment` / `.decidedBy` |
 | `notify` | Push a rendered message to bot channels | `.delivered` / `.failed` / `.skipped` |
 | `wait` | Wait a bounded number of seconds | `.waitedMs` |
@@ -337,6 +340,12 @@ Values are visible only to topological descendants. Referencing a non-ancestor f
 bytes; larger values become a head/tail preview with a warning. There is no secret-injection channel: keep
 credentials in the host's own credential store.
 
+
+Start is not raw JSON: its field editor declares `label`, `name`, `type`
+(string / number / boolean / json), required, default and description. String fields can also declare
+`options`; the trigger dialog renders them as a Select instead of asking for free text. Condition nodes
+also provide a structured "variable + operator + value" builder with an advanced raw-expression escape hatch.
+
 #### Conditions: IF / ELSE are real gates
 
 A Condition node evaluates one expression to `true` / `false`. Its two exits connect to `IF` and `ELSE`.
@@ -344,17 +353,49 @@ The engine reads the upstream node's `result` and only traverses the matching ed
 traversable. If the upstream output is missing, neither edge is traversed (fail-closed). The `IF` / `ELSE`
 pills are readable in both light and dark themes; the expression itself is edited in the node inspector.
 
-#### AI node: conclusions, not commands
+#### AI nodes: text, structured JSON and classification
 
-`ai-analyze` reuses the platform's existing AI configuration under System Settings → AI; it does not create
-a second AI channel. Its contract is analysis text, not executable commands. Even if the model writes
-`rm -rf`, it gains no dispatch authority. Turning a conclusion into an action requires a human to write a
-script and pass through an `approval` node and the risk gate. Input is masked by the sensitive-data filter
-and truncated; output is masked before it is persisted.
+- `ai-analyze`: reads upstream operations output and produces a conclusion; supports `text` and structured
+  `json` modes.
+- `llm`: generic LLM node with provider/model selection, system/user prompts and temperature; supports
+  `text` and structured `json`, with optional JSON Schema guidance and one repair retry on invalid JSON.
+- `classifier`: Dify-style question classifier with 1–10 classes (name + description). The model returns
+  `{"class":"...","reason":"..."}`; each class gets a real source handle on the canvas plus a `default`
+  fallback. An unknown class fails the node closed; it never routes silently.
 
-Explicitly not supported: generic LLM nodes, autonomous AI agents with tools, and AI-generated scripts
-executed directly. `CommandRiskEngine` is pattern-based; semantic prompt injection cannot be safely
-backstopped by it.
+All three reuse the platform's AI configuration under System Settings → AI. Input and output are masked by
+the sensitive-data filter. They **only produce text/JSON/classification results and cannot execute
+anything**: even if the output says `rm -rf`, it gains no dispatch authority. Turning AI output into an
+action requires a human-written script and an `approval` node/risk gate; AI/LLM output is also forbidden
+as a script `raw` parameter.
+
+<p align="center">
+  <img src="docs/images/workflow-llm-structured.png" alt="LLM node structured JSON output: mode, JSON Schema and temperature" width="90%" />
+</p>
+
+Explicitly not supported: autonomous AI agents with tools, and AI-generated scripts executed directly.
+`CommandRiskEngine` is pattern-based; semantic prompt injection cannot be safely backstopped by it alone.
+
+#### Code node: data sandbox, not a host executor
+
+The `code` node supports JavaScript and Python for field extraction, formatting and composition:
+
+```javascript
+function main(input) {
+  return { total: Number(input.a) + Number(input.b) };
+}
+```
+
+```python
+def main(input):
+    return {"total": float(input["a"]) + float(input["b"])}
+```
+
+- Inputs are declared as an `inputs` map and may reference upstream variables. Code runs in a
+  **GraalVM Polyglot sandbox**: no host objects, no file/network/environment/process/thread access, and a
+  hard timeout that closes the context.
+- The return value must be JSON-serializable and is written to `nodes.<key>.output`.
+- It does not operate on servers. Host operations still use `script-exec` + agents.
 
 #### Failure policy
 
@@ -391,10 +432,11 @@ trigger, cancel) are audited synchronously; an audit write failure fails the bus
 
 #### Current boundaries
 
-The 2.0 release covers Start/End contracts, nine node types, the variable picker, real IF/ELSE gating,
-AI analysis and per-node test runs. Still not implemented: cron / webhook triggers, HTTP nodes, parallel
-fan-out/fan-in, sub-workflows, loops, artifact storage, secret injection, dry-run / replay, and cross-instance
-scheduling. Per-node test-run is available in run detail and only applies to an existing run.
+The 2.1 release covers Start/End contracts, twelve node types, the variable picker, real IF/ELSE gating,
+LLM/structured output, a question classifier, a JS/Python data sandbox and per-node test runs. Still not
+implemented: cron / webhook triggers, HTTP nodes, parallel fan-out/fan-in, sub-workflows, loops, artifact
+storage, secret injection, dry-run / replay, and cross-instance scheduling. Per-node test-run is available
+in run detail and only applies to an existing run.
 
 See the [Workflow guide](https://docs.easyshell.ai/guides/workflow/) for a from-zero walkthrough, or open a
 feature request for what is missing.

@@ -41,6 +41,26 @@ web UI and is served by `GET /api/v1/system/version`.
   inputs, outputs, errors and warnings, and can call the existing test-run endpoint
   without rerunning the whole workflow.
 
+### Workflow 2.1 — Dify-style nodes and field UX
+
+- **LLM node** with provider/model selection, system/user prompts, temperature,
+  text or structured JSON output, optional JSON Schema guidance, and one repair
+  retry on invalid JSON.
+- **Question Classifier node** with 1–10 named classes, LLM-based classification,
+  dynamic class handles + `default`, and fail-closed routing.
+- **Code node** for JavaScript and Python data transformation inside a GraalVM
+  Polyglot sandbox (`HostAccess.NONE`, no IO/environment/process/threads, bounded
+  timeout with forced context cancellation). Host operations still go through
+  `script-exec`/agents.
+- **Start fields** gain display labels and string options; trigger forms render a
+  Select when options are declared.
+- **Condition builder** (variable + operator + value) with an advanced raw
+  expression fallback.
+- Fix the unreadable white palette tooltip (removed; inline descriptions remain).
+- Fix inspector Config/Data/Docs panes not scrolling to the bottom.
+- Fix host management dropping the agent hostname from the unified list
+  (`hostName`/`hostname` JavaBean collision).
+
 ## [1.2.0] - 2026-11-09
 
 Feature release: the workflow engine (orchestrate operations as a versioned,
