@@ -14,4 +14,4 @@ RPC_SOCKET=/run/easyshell-code/control-rpc/orchestrator.sock
 # Must be independently enrolled, never auto-discovered/accepted from a socket.
 DAEMON_ID=@TRUSTED_DAEMON_ID@
 TASK_IMAGE=@APPROVED_REPOSITORY@sha256:@64_LOWERCASE_HEX@
-REAPER_SESSION=@READY_SESSION_FROM_THIS_BOOT@
+# service-entry obtains the live session from the protected journal, never a static token.

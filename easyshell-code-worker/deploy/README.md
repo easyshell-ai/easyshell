@@ -16,6 +16,11 @@ reaper 首次启动仍要求新 journal；可信重启可显式使用 `--resume-
 镜像策略变化及真实故障恢复仍需部署验收。不要删除或改名旧 DB 绕过限制，不要用新
 journal 遗忘旧资源；当前 systemd 模板仍保持 BLOCKED。
 
+`service-entry.py` 对 reaper 的既有受保护 journal 自动选择保留恢复，对 orchestrator
+从同一 journal 读取 session，并核验独立 reaper 的 PID/starttime 与近期心跳；拒绝静态
+`--reaper-session` 覆盖。此启动交接已有单测，但 systemd `After=` 不表示应用 ready，
+当前 `Type=simple` 模板仍缺经过验收的 readiness/restart 协调，不能据此解除阻断。
+
 `launcher.c` 是静态程序，拒绝所有额外参数，以固定绝对 JVM 路径、固定 JVM 参数及主类
 调用 `execve`，envp 只有 NULL。不得替换为 shell、Java 包装器或继承环境的 exec。
 scratch 最终层仅复制受信 JRE 基础镜像的完整文件系统，避免继承该镜像的 ENV/ENTRYPOINT/
