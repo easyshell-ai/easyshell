@@ -21,7 +21,154 @@ permissions:
   packages: write
 
 jobs:
+  verify:
+    name: Verify server/web/agent/mcp
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      GRADLE_USER_HOME: ${{ runner.temp }}/gradle-home
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            easyshell-web/package-lock.json
+            easyshell-mcp/package-lock.json
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: easyshell-agent/go.mod
+          cache-dependency-path: easyshell-agent/go.sum
+
+      - name: Install CJK fonts
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+
+      - name: Verify server
+        id: verify-server
+        continue-on-error: true
+        working-directory: easyshell-server
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/easyshell-ci-reports"
+          ./gradlew clean compileJava compileTestJava test \
+            --no-daemon --max-workers=1 --rerun-tasks \
+            2>&1 | tee "$RUNNER_TEMP/easyshell-ci-reports/server.log"
+
+      - name: Verify web
+        id: verify-web
+        continue-on-error: true
+        working-directory: easyshell-web
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/easyshell-ci-reports"
+          {
+            npm ci
+            npm run lint
+            npx tsc --noEmit
+            npm test
+            npm run build
+          } 2>&1 | tee "$RUNNER_TEMP/easyshell-ci-reports/web.log"
+
+      - name: Verify web visual
+        id: verify-web-visual
+        if: steps.verify-web.outcome == 'success'
+        continue-on-error: true
+        working-directory: easyshell-web
+        run: |
+          set -euo pipefail
+          npx --no-install playwright install --with-deps chromium
+          npm run test:visual
+
+      - name: Verify agent
+        id: verify-agent
+        continue-on-error: true
+        working-directory: easyshell-agent
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/easyshell-ci-reports"
+          {
+            go build ./...
+            go vet ./...
+            go test ./...
+          } 2>&1 | tee "$RUNNER_TEMP/easyshell-ci-reports/agent.log"
+
+      - name: Verify mcp
+        id: verify-mcp
+        continue-on-error: true
+        working-directory: easyshell-mcp
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/easyshell-ci-reports"
+          {
+            npm ci
+            npm run lint
+            npm test
+          } 2>&1 | tee "$RUNNER_TEMP/easyshell-ci-reports/mcp.log"
+
+      - name: Archive verification reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-verification-reports
+          path: |
+            ${{ runner.temp }}/easyshell-ci-reports/
+            easyshell-server/build/test-results/test/
+            easyshell-server/build/reports/tests/test/
+            easyshell-web/playwright-report/
+            easyshell-web/test-results/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Fail if any verification gate failed
+        if: always()
+        run: |
+          if [[ "${{ steps.verify-server.outcome }}" != "success" || \
+                "${{ steps.verify-web.outcome }}" != "success" || \
+                "${{ steps.verify-web-visual.outcome }}" != "success" || \
+                "${{ steps.verify-agent.outcome }}" != "success" || \
+                "${{ steps.verify-mcp.outcome }}" != "success" ]]; then
+            echo "At least one release verification gate failed."
+            exit 1
+          fi
+
+  verify-code-worker:
+    name: Verify isolated code worker (no runtime provisioning)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify locked worker and supervisor
+        working-directory: easyshell-code-worker
+        run: |
+          set -euo pipefail
+          ./gradlew clean test installDist --no-daemon --max-workers=1 \
+            --dependency-verification strict -I deploy/locking.init.gradle
+          python3 -B -m unittest discover -s supervisor -t . -p 'test*.py' -q
+          bash deploy/static-verify.sh
+
   build-and-push:
+    needs: [verify, verify-code-worker]
     runs-on: ubuntu-latest
     strategy:
       matrix:
