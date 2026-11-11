@@ -1,5 +1,5 @@
 [Unit]
-Description=EasyShell mTLS control UID17001 (blocked deployment template)
+Description=EasyShell mTLS control UID17001
 Requires=easyshell-code-orchestrator.service
 After=easyshell-code-orchestrator.service
 StartLimitIntervalSec=300
@@ -10,10 +10,10 @@ Type=simple
 User=17001
 Group=17001
 SupplementaryGroups=
-WorkingDirectory=/opt/easyshell-code
+WorkingDirectory=/usr/lib/easyshell-code
 UMask=0077
-ExecStartPre=/bin/bash /opt/easyshell-code/deploy/preflight.sh
-ExecStart=/usr/bin/python3 -I -B /opt/easyshell-code/deploy/service-entry.py control_server --listen-host 127.0.0.1 --listen-port 9443 --cert /etc/easyshell-code/tls/server.crt --key /etc/easyshell-code/tls/server.key --ca /etc/easyshell-code/tls/client-ca.crt --client-dns code-client.example.invalid --rpc-socket /run/easyshell-code/control-rpc/orchestrator.sock --control-uid 17001 --orchestrator-uid 0 --journal /var/lib/easyshell-code/control/control.sqlite
+ExecStartPre=/bin/bash /usr/lib/easyshell-code/deploy/preflight.sh
+ExecStart=/usr/bin/python3 -I -B /usr/lib/easyshell-code/deploy/service-entry.py control_server --listen-host 127.0.0.1 --listen-port 9443 --cert /etc/easyshell-code/tls/server.crt --key /etc/easyshell-code/tls/server.key --ca /etc/easyshell-code/tls/client-ca.crt --client-dns code-client.example.invalid --rpc-socket /run/easyshell-code/control-rpc/orchestrator.sock --control-uid 17001 --orchestrator-uid 0 --journal /var/lib/easyshell-code/control/control.sqlite
 Restart=no
 TimeoutStopSec=30
 NoNewPrivileges=yes

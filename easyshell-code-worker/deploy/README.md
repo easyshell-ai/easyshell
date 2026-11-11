@@ -1,25 +1,27 @@
-# Linux 安全部署材料（默认 BLOCKED，未经真实部署验收）
+# Linux 隔离 code 部署与验收
 
-本目录只提供可审查的构建入口、固定 native launcher、哈希核验及 systemd 模板。
-没有下载安装、运行容器、安装服务或操作 systemctl。静态检查成功不代表可上线。
+本目录提供固定 native launcher、严格依赖构建、受保护发布清单校验及五服务模板。
+2026-11-12 在专用测试运行时完成五服务启动、整链停止再启动和完整 mTLS 验收；
+固定官方 Temurin JRE21镜像同时通过 OOM、SIGKILL回收及取消。静态检查不替代真实验收。
 
-## 必须先解除的阻断项
+## 失败关闭的部署准入
 
 `supervisor/control.py` 的 execution Cmd 现固定为 `[/opt/code-worker/launcher]`，
 严格 Inspect 校验拒绝直接执行 JVM 或附加参数。launcher 在 JVM 启动前以空 envp 调用
 固定绝对路径及主类；refusal/resourceprobe 保留各自固定的受信验收命令。请求不能选择
 入口。此改动不代表以下生产模板、固定 digest 构建和主机重启流程已经验收。
 
-execution 容器的 Inspect 环境严格限定为一个公开固定 PATH，不能包含任何其他环境项；
+execution 与受信 resourceprobe 容器的 Inspect 环境严格限定为一个公开固定 PATH，不能包含任何其他环境项；
 这是兼容 Docker scratch 构建自动 PATH 的显式策略。它不是 JVM 环境：静态 launcher
 在启动 JVM 前用空 envp 替换全部继承环境，合成秘密及额外参数的 chroot 探针已验证。
-refusal/resourceprobe 继续要求空容器环境，不得把此例外推广到其他 profile。
+refusal 继续要求空容器环境。resourceprobe 只运行固定可信内存诊断，不接受用户源码；
+JVM 空环境承诺适用于 execution 的 native launcher，不把诊断入口当作业务执行入口。
 
 reaper 首次启动仍要求新 journal；可信重启可显式使用 `--resume-existing`，要求原文件
 为当前用户所有的 0600 普通文件、路径无符号链接，并持有独占文件锁。恢复只对账和
 清理原记录，不重放执行。该入口已有保留记录、独占和错误路径测试，但跨主机重启、
 镜像策略变化及真实故障恢复仍需部署验收。不要删除或改名旧 DB 绕过限制，不要用新
-journal 遗忘旧资源；当前 systemd 模板仍保持 BLOCKED。
+journal 遗忘旧资源。无法对账的记录仍阻止启动，不能以新 journal 追认旧任务已清理。
 
 `service-entry.py` 对 reaper 的既有受保护 journal 自动选择保留恢复，对 orchestrator
 从同一 journal 读取 session，并核验独立 reaper 的 PID/starttime 与近期心跳；拒绝静态
@@ -37,11 +39,31 @@ VOLUME 配置；它仍需审查文件内容、原生库、JVM 版本和许可证
 JRE21 镜像，JVM 已位于上述路径，不能从本机 JDK 拼装。JRE 全树复制也可能带入无关工具，
 必须对批准镜像做内容/SBOM/秘密审查，不允许把“来自受信仓库”视为无需检查。
 
-所有 unit 的 `ExecStartPre` 调用始终退出 78 的 `preflight.sh`。该文件是显式部署阻断标记，
-不是已经实现的环境验收器。不要通过删掉一行跳过门禁；只有核心接线、保护配置和下述真实
-验收完成后，才能在另一次受审查发布中替换为失败关闭的生产 preflight。模板没有 Install 段。
+所有 unit 的 `ExecStartPre` 调用 `preflight.sh`，要求 `/etc/easyshell-code/release.json`
+为 root 控制、无符号链接、不可被其他用户修改的清单。清单绑定发布目录的脚本SHA256、
+任务镜像配置ID、预登记daemon ID、已执行验收类别及最多31天有效期；缺失、篡改或过期
+返回78。清单是受信部署者的验收声明，不自动发现或创建信任；执行时另核daemon/真实
+cgroup/reaper/mTLS。更换任何文件或镜像后必须重新验收，禁止仅补哈希绕过失败。
 
-## 在受信 CI 构建，不在本次任务执行
+运行时 root 服务需要设置UID和共享挂载视图：containerd私有网络，dockerd通过固定
+`runtime-entry.py`核验containerd MainPID/root executable/config，持namespace文件描述符
+进入同一mount/net namespace。两runtime使用0022 umask且不继承NoNewPrivileges，以免
+runc无法设置UID或overlay根不可遍历；这两个进程本身属于可信特权编排设施。
+上层reaper/orchestrator/control仍NoNewPrivileges，control无capabilities；任务仍非root、
+capdropALL、readonlyroot、none网络及no-new-privileges。不能把runtime例外扩散到任务。
+
+`tmpfiles.conf`重建重启后易失的专属运行目录；`easyshell-code.target`拉起依赖链。
+仅在完成账户/证书/清单/配置和镜像预加载后安装并启用target。该次实际验证是整链
+stop/start，不重启承载其他服务的宿主；不能把它称作物理主机冷启动实测。
+
+## 构建输入与实际验收路径
+
+本次使用官方清单解析的 Linux amd64 Temurin JRE21
+`eclipse-temurin@sha256:d4cbe963bb4f3a769d56473b32db2bfb46b0d4b29797c152815da692d9f9aab5`，
+将完整 JRE 文件系统、严格锁定构建的 worker dist、预提取资源和静态 launcher 组合为任务
+镜像，并按不可变 image config ID 验收。没有用宿主 JDK 拼装此最终镜像。
+下面的全容器多阶段构建是另一种受信 CI 路径；JDK/CC digest 必须独立配置，不能声称
+本次已经运行该多阶段 Dockerfile。两条路径交付同一固定入口/权限契约。
 
 构建上下文是 **干净 worker 源码目录**。Dockerfile 按文件复制源码，不复制本机 build、
 Gradle 缓存、证书或整工作区。为架构/OS 固定一个发布矩阵；三个镜像的 digest、平台、
@@ -114,7 +136,7 @@ PrivateUsers/ProtectProc/ProcSubset/私有 mount/cgroup namespace，使其看到
 root daemon 仍具有宿主级权限，专用路径不等于强主机隔离；高风险工作负载应在专用 VM/主机。
 
 部署维护者预先安装、核验并锁定 Linux/Python/runtime 二进制；模板不安装用户、目录或服务。
-路径使用固定发布前缀 `/opt/easyshell-code`，全部源码/脚本/root-owned，不可被 UID17001 改写。
+路径使用固定发布前缀 `/usr/lib/easyshell-code`，全部源码/脚本/root-owned，不可被 UID17001 改写。
 所有祖先目录不可被不受信用户替换，无 symlink。按以下边界手工受保护地 provision：
 
 | 位置 | 所有者/权限与用途 |
@@ -166,11 +188,16 @@ orchestrator root 的能力限于所需目录穿越/chown，reaper 不持 capabi
    health 会真实创建 probe 容器，只有授权实际验收时调用。日志不记录请求/源码/输入/输出/
    私钥，模板关闭普通服务 stdout/stderr；reaper 仅保留固定 ready/session 元数据。
 
-本次仅可运行的离线检查：
+离线检查：
 
 ```bash
 bash deploy/static-verify.sh
 ```
 
-该命令执行 bash 语法、配置/模板不变量、Python 语法和可用时 C 语法检查，验证 preflight
-退出 78。不调用 Docker、runtime、systemctl 或网络，也不读取真实证书。没有运行真实部署。
+该命令执行 bash 语法、配置/模板不变量、Python 语法和可用时 C 语法检查，不调用 Docker、
+runtime、systemctl 或网络，也不读取真实证书。缺失/篡改/过期清单拒绝由独立单测验证。
+
+当前专用测试部署已经安装五个持久 systemd 单元与 target，整链 stop/start 后真实六组
+mTLS验收通过，目录由 tmpfiles 重建。未重启承载其他服务的整台宿主机；冷启动前需核对
+镜像仍预加载、runtime配置路径、账户、证书有效期、release清单有效期与所有临时目录。
+默认清单最多31天且不会自动续签。更新必须关联重新验收，不能设置永久自信任。

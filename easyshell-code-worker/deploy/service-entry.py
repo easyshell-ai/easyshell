@@ -11,7 +11,7 @@ if not sys.flags.isolated or len(sys.argv) < 2 or sys.argv[1] not in (
     raise SystemExit(64)
 module = "supervisor." + sys.argv.pop(1)
 # Never import from cwd, PYTHONPATH, user site, or a request-selected path.
-sys.path.insert(0, "/opt/easyshell-code")
+sys.path.insert(0, "/usr/lib/easyshell-code")
 
 
 def journal_argument(arguments):

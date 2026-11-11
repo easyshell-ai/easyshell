@@ -1,5 +1,5 @@
 [Unit]
-Description=EasyShell trusted root orchestrator (blocked deployment template)
+Description=EasyShell trusted root orchestrator
 Requires=easyshell-code-dockerd.service easyshell-code-reaper.service
 After=easyshell-code-dockerd.service easyshell-code-reaper.service
 BindsTo=easyshell-code-reaper.service
@@ -7,12 +7,14 @@ StartLimitIntervalSec=300
 StartLimitBurst=3
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
+TimeoutStartSec=30
 User=root
-WorkingDirectory=/opt/easyshell-code
+WorkingDirectory=/usr/lib/easyshell-code
 UMask=0077
-ExecStartPre=/bin/bash /opt/easyshell-code/deploy/preflight.sh
-ExecStart=/usr/bin/python3 -I -B /opt/easyshell-code/deploy/service-entry.py orchestrator_rpc --rpc-socket /run/easyshell-code/control-rpc/orchestrator.sock --control-uid 17001 --owner code-client.example.invalid --metadata /var/lib/easyshell-code/orchestrator/rpc.sqlite --socket /run/easyshell-code/runtime/docker.sock --expected-daemon-id @TRUSTED_DAEMON_ID@ --image @TASK_IMAGE_DIGEST@ --journal /var/lib/easyshell-code/execution/execution.sqlite
+ExecStartPre=/bin/bash /usr/lib/easyshell-code/deploy/preflight.sh
+ExecStart=/usr/bin/python3 -I -B /usr/lib/easyshell-code/deploy/service-entry.py orchestrator_rpc --rpc-socket /run/easyshell-code/control-rpc/orchestrator.sock --control-uid 17001 --owner code-client.example.invalid --metadata /var/lib/easyshell-code/orchestrator/rpc.sqlite --socket /run/easyshell-code/runtime/docker.sock --expected-daemon-id @TRUSTED_DAEMON_ID@ --image @TASK_IMAGE_DIGEST@ --journal /var/lib/easyshell-code/execution/execution.sqlite
 Restart=no
 TimeoutStopSec=30
 NoNewPrivileges=yes

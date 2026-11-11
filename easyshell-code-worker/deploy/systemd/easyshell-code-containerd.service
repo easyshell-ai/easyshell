@@ -1,23 +1,27 @@
 [Unit]
-Description=EasyShell dedicated containerd (blocked deployment template)
+Description=EasyShell dedicated containerd
 StartLimitIntervalSec=300
 StartLimitBurst=3
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
+TimeoutStartSec=60
 User=root
-UMask=0077
-ExecStartPre=/bin/bash /opt/easyshell-code/deploy/preflight.sh
+# Runtime creates container rootfs directories; task UID must traverse them.
+# Dedicated state/socket parent directories remain root-owned 0700.
+UMask=0022
+ExecStartPre=/bin/bash /usr/lib/easyshell-code/deploy/preflight.sh
 ExecStart=/usr/bin/containerd --config /etc/easyshell-code/containerd.toml
 Restart=no
 TimeoutStopSec=30
 KillMode=process
 Delegate=yes
-NoNewPrivileges=yes
-ProtectSystem=strict
-ProtectHome=yes
-PrivateTmp=yes
-ReadWritePaths=/var/lib/easyshell-code/containerd /run/easyshell-code/runtime
+# runc must set the task UID; enforce no-new-privileges on tasks, not the privileged runtime.
+NoNewPrivileges=no
+PrivateTmp=no
+PrivateNetwork=yes
+# Privileged runtime must share mount view with dockerd; guest policy stays restricted.
 RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
 
 # No Install section: review/render/provision and remove blockers before enabling.

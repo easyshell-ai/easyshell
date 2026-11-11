@@ -1,5 +1,5 @@
 [Unit]
-Description=EasyShell independent reaper (blocked deployment template)
+Description=EasyShell independent reaper
 Requires=easyshell-code-dockerd.service
 After=easyshell-code-dockerd.service
 StartLimitIntervalSec=300
@@ -10,10 +10,10 @@ Type=notify
 NotifyAccess=main
 TimeoutStartSec=30
 User=root
-WorkingDirectory=/opt/easyshell-code
+WorkingDirectory=/usr/lib/easyshell-code
 UMask=0077
-ExecStartPre=/bin/bash /opt/easyshell-code/deploy/preflight.sh
-ExecStart=/usr/bin/python3 -I -B /opt/easyshell-code/deploy/service-entry.py reaper --socket /run/easyshell-code/runtime/docker.sock --expected-daemon-id @TRUSTED_DAEMON_ID@ --image @TASK_IMAGE_DIGEST@ --journal /var/lib/easyshell-code/execution/execution.sqlite
+ExecStartPre=/bin/bash /usr/lib/easyshell-code/deploy/preflight.sh
+ExecStart=/usr/bin/python3 -I -B /usr/lib/easyshell-code/deploy/service-entry.py reaper --socket /run/easyshell-code/runtime/docker.sock --expected-daemon-id @TRUSTED_DAEMON_ID@ --image @TASK_IMAGE_DIGEST@ --journal /var/lib/easyshell-code/execution/execution.sqlite
 Restart=no
 TimeoutStopSec=30
 NoNewPrivileges=yes

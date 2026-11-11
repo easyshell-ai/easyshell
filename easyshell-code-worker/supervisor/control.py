@@ -183,7 +183,7 @@ def policy(image, record):
         # Docker scratch builds inject PATH. Execution may carry only this public constant;
         # the static launcher replaces envp with an empty array before starting the JVM.
         "Env": ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"]
-               if record.profile == "execution" else [],
+               if record.profile in ("execution", "resourceprobe") else [],
         "WorkingDir": "/tmp", "Labels": record.labels(), "NetworkDisabled": True,
         "OpenStdin": True, "StdinOnce": True, "Tty": False,
         "AttachStdin": True, "AttachStdout": True, "AttachStderr": True,

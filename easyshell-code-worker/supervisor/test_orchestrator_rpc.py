@@ -285,6 +285,7 @@ class WireTest(unittest.TestCase):
     def test_root_orchestrator_sets_control_owned_private_socket(self):
         server = RPCServer("/rpc/orchestrator.sock", SimpleNamespace(allowed_uid=UID))
         with patch("supervisor.orchestrator_rpc.private_path") as paths, \
+                patch("supervisor.orchestrator_rpc.acquire_endpoint", return_value=123), \
                 patch("os.path.lexists", return_value=False), patch("socket.socket") as sockets, \
                 patch("os.umask"), patch("os.chown") as chown, patch("os.chmod") as chmod:
             sockets.return_value.__enter__.return_value.accept.side_effect = RuntimeError("stop fake listener")
