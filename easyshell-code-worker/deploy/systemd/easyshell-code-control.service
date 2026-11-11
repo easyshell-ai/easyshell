@@ -1,4 +1,5 @@
 [Unit]
+PartOf=easyshell-code.target
 Description=EasyShell mTLS control UID17001
 Requires=easyshell-code-orchestrator.service
 After=easyshell-code-orchestrator.service

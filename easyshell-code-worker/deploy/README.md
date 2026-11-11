@@ -53,6 +53,8 @@ runc无法设置UID或overlay根不可遍历；这两个进程本身属于可信
 capdropALL、readonlyroot、none网络及no-new-privileges。不能把runtime例外扩散到任务。
 
 `tmpfiles.conf`重建重启后易失的专属运行目录；`easyshell-code.target`拉起依赖链。
+五个单元均 `PartOf=easyshell-code.target`，受控运维使用 target 协调整链停止/重启；
+不能只重启 reaper 后继续使用旧 session。target 重启后仍须确认五服务和 mTLS health。
 仅在完成账户/证书/清单/配置和镜像预加载后安装并启用target。该次实际验证是整链
 stop/start，不重启承载其他服务的宿主；不能把它称作物理主机冷启动实测。
 

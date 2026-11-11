@@ -1,4 +1,5 @@
 [Unit]
+PartOf=easyshell-code.target
 Description=EasyShell dedicated containerd
 StartLimitIntervalSec=300
 StartLimitBurst=3

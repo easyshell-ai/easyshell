@@ -1,4 +1,5 @@
 [Unit]
+PartOf=easyshell-code.target
 Description=EasyShell trusted root orchestrator
 Requires=easyshell-code-dockerd.service easyshell-code-reaper.service
 After=easyshell-code-dockerd.service easyshell-code-reaper.service
