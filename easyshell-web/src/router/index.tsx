@@ -13,6 +13,7 @@ import {
   Audit,
   TerminalPage,
   Users,
+  HostPermissions,
   SystemConfig,
   AiConfig,
   BotConfig,
@@ -119,6 +120,10 @@ const router = createBrowserRouter([
       {
         path: 'system/users',
         element: <LazyLoad><Users /></LazyLoad>,
+      },
+      {
+        path: 'system/host-permissions',
+        element: <LazyLoad><HostPermissions /></LazyLoad>,
       },
       {
         path: 'system/config',

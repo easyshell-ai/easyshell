@@ -1,11 +1,23 @@
 import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import i18next from 'i18next';
 import { initReactI18next } from 'react-i18next';
 import zhCN from '../../../i18n/locales/zh-CN.json';
 import enUS from '../../../i18n/locales/en-US.json';
 import NodeFormPanel from './NodeFormPanel';
 import type { WorkflowNode, WorkflowNodeType } from '../types';
+import { getScriptList, getScriptParameters } from '../../../api/script';
+import { getHostList } from '../../../api/host';
+import { getExecuteTargets } from '../../../api/myHostPermissions';
+import { getClusterList } from '../../../api/cluster';
+import { getTagList } from '../../../api/tag';
+import { setToken } from '../../../api/request';
+
+vi.mock('../../../api/script', () => ({ getScriptList: vi.fn(), getScriptParameters: vi.fn() }));
+vi.mock('../../../api/host', () => ({ getHostList: vi.fn() }));
+vi.mock('../../../api/myHostPermissions', () => ({ getExecuteTargets: vi.fn() }));
+vi.mock('../../../api/cluster', () => ({ getClusterList: vi.fn() }));
+vi.mock('../../../api/tag', () => ({ getTagList: vi.fn() }));
 
 /**
  * 节点配置面板的契约闸门（真机缺陷：UI 建不出能发布的工作流）。
@@ -54,7 +66,10 @@ beforeAll(() => {
   }
 });
 
-afterEach(cleanup);
+afterEach(async () => {
+  cleanup();
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+});
 
 function node(type: WorkflowNodeType, config: Record<string, unknown> = {}): WorkflowNode {
   return {
@@ -173,11 +188,187 @@ describe('NodeFormPanel — 每种节点类型的字段契约（服务端口径�
 });
 
 describe('NodeFormPanel — 字段改动写进 definition 的键名与服务端一致', () => {
+  it('locks the context and discards in-flight pages across A→B→A', async () => {
+    let resolveOld!: (value: never) => void;
+    vi.mocked(getHostList).mockResolvedValue({ code: 200, data: [] } as never);
+    vi.mocked(getClusterList).mockResolvedValue({ code: 200, data: [] } as never);
+    vi.mocked(getTagList).mockResolvedValue({ code: 200, data: [] } as never);
+    vi.mocked(getExecuteTargets).mockReset()
+      .mockResolvedValueOnce({ code: 200, data: { agentIds: ['old-first'], nextCursor: 'old-first' } } as never)
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; }))
+      .mockResolvedValue({ code: 200, data: { agentIds: ['fresh'], nextCursor: null } } as never);
+    act(() => setToken('session-a'));
+    render(<NodeFormPanel node={node('script-exec')} open remoteOptions onSave={() => {}} onRequestDelete={() => {}} />);
+    await waitFor(() => expect(getExecuteTargets).toHaveBeenCalledTimes(2));
+    act(() => { setToken('session-b'); setToken('session-a'); });
+    await act(async () => resolveOld({ code: 200, data: { agentIds: ['old-second'], nextCursor: null } } as never));
+    expect(getExecuteTargets).toHaveBeenCalledTimes(2);
+    expect(screen.queryByLabelText('Agent IDs')).toBeNull();
+    expect(screen.queryByTitle('old-first')).toBeNull();
+    expect(screen.queryByTitle('old-second')).toBeNull();
+  });
+
+  it('accepts server ordering without comparing IDs using JavaScript collation', async () => {
+    vi.mocked(getHostList).mockResolvedValue({ code: 200, data: [] } as never);
+    vi.mocked(getExecuteTargets).mockReset()
+      .mockResolvedValueOnce({ code: 200, data: { agentIds: ['z'], nextCursor: 'z' } } as never)
+      .mockResolvedValueOnce({ code: 200, data: { agentIds: ['A'], nextCursor: null } } as never);
+    render(<NodeFormPanel node={node('script-exec')} open remoteOptions onSave={() => {}} onRequestDelete={() => {}} />);
+    await waitFor(() => expect(screen.queryByText(/Checking available host/)).toBeNull());
+    fireEvent.mouseDown(byLabel('Agent IDs'));
+    expect(await screen.findByTitle('A')).toBeTruthy();
+    expect(screen.getByTitle('z')).toBeTruthy();
+  });
+  it('does not submit a form whose session changes during validation', async () => {
+    const { onSave } = renderPanel(node('script-exec', { script: 'echo hi' }));
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: /Save/ }));
+      setToken('changed-session');
+    });
+    await act(async () => { await Promise.resolve(); });
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it('rejects stale and duplicate submissions when the panel context changes', async () => {
+    const onSave = vi.fn();
+    const submitRef: { current: (() => Promise<void>) | null } = { current: null };
+    const first = node('wait');
+    const props = { onSave, onRequestDelete: vi.fn(), submitRef };
+    const view = render(<NodeFormPanel {...props} node={first} open />);
+    const staleSubmit = submitRef.current!;
+    let pending!: Promise<void>;
+    act(() => {
+      pending = staleSubmit();
+      void staleSubmit();
+    });
+    view.rerender(<NodeFormPanel {...props} node={{ ...first, key: 'n2' }} open />);
+    await act(async () => { await pending; });
+    expect(onSave).not.toHaveBeenCalled();
+    view.rerender(<NodeFormPanel {...props} node={first} open={false} />);
+    expect(submitRef.current).toBeNull();
+    await act(async () => { await staleSubmit(); });
+    expect(onSave).not.toHaveBeenCalled();
+    view.unmount();
+    expect(submitRef.current).toBeNull();
+  });
+
+  it('submits only once for concurrent calls', async () => {
+    const onSave = vi.fn();
+    const submitRef: { current: (() => Promise<void>) | null } = { current: null };
+    render(<NodeFormPanel node={node('wait')} open onSave={onSave} onRequestDelete={() => {}} submitRef={submitRef} />);
+    await act(async () => { await Promise.all([submitRef.current!(), submitRef.current!()]); });
+    expect(onSave).toHaveBeenCalledTimes(1);
+  });
+
+  it('locks saved targets on session change instead of submitting them', async () => {
+    vi.mocked(getHostList).mockResolvedValue({ code: 200, data: [] } as never);
+    vi.mocked(getExecuteTargets).mockReset()
+      .mockResolvedValueOnce({ code: 200, data: { agentIds: ['revoked'], nextCursor: null } } as never)
+      .mockRejectedValueOnce(new Error('permission revoked'));
+    const onSave = vi.fn();
+    render(<NodeFormPanel node={node('script-exec', { script: 'echo hi', targets: { mode: 'explicit', agentIds: ['revoked'] } })} open remoteOptions onSave={onSave} onRequestDelete={() => {}} />);
+    await waitFor(() => expect(screen.queryByText(/Checking available host/)).toBeNull());
+    // Revocation alone has no push signal; a new identity forces a refresh.
+    act(() => setToken('new-session'));
+    expect(screen.queryByLabelText('Script')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Save/ })).toBeNull();
+    expect(onSave).not.toHaveBeenCalled();
+  });
+  it('主机请求独立完成，切换节点和重试时忽略旧响应', async () => {
+    let resolveOld!: (value: never) => void;
+    let resolveRetry!: (value: never) => void;
+    vi.mocked(getExecuteTargets).mockReset()
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; }))
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveRetry = resolve; }));
+    vi.mocked(getHostList).mockResolvedValue({ code: 200, data: [{ id: 'new', hostname: 'New', ip: '2' }, { id: 'old', hostname: 'Old', ip: '1' }] } as never);
+    vi.mocked(getClusterList).mockImplementation(() => new Promise(() => {}));
+    vi.mocked(getTagList).mockImplementation(() => new Promise(() => {}));
+    const props = { open: true, remoteOptions: true, onClose: () => {}, onSave: vi.fn(), onRequestDelete: () => {} };
+    const { rerender } = render(<NodeFormPanel {...props} node={node('script-exec')} />);
+    rerender(<NodeFormPanel {...props} node={{ ...node('script-exec'), key: 'n2' }} />);
+    expect(await screen.findByText(/could not be fully checked/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await act(async () => { resolveRetry({ code: 200, data: { agentIds: ['new'], nextCursor: null } } as never); });
+    await waitFor(() => expect(screen.queryByText(/Checking available host/)).toBeNull());
+    await act(async () => { resolveOld({ code: 200, data: { agentIds: ['old'], nextCursor: null } } as never); });
+    fireEvent.mouseDown(byLabel('Agent IDs'));
+    expect(await screen.findByText('New · 2')).toBeTruthy();
+    expect(screen.queryByText('Old · 1')).toBeNull();
+  });
+  it('提供所有分页的执行目标，隐藏无 VIEW 主机元数据并保留失权目标', async () => {
+    vi.mocked(getHostList).mockResolvedValue({ code: 200, data: [{ id: 'yes', hostname: 'Allowed', ip: '1' }, { id: 'no', hostname: 'Denied', ip: '2' }] } as never);
+    vi.mocked(getExecuteTargets).mockReset()
+      .mockResolvedValueOnce({ code: 200, data: { agentIds: ['yes'], nextCursor: 'yes' } } as never)
+      .mockResolvedValueOnce({ code: 200, data: { agentIds: ['execute-only'], nextCursor: null } } as never);
+    vi.mocked(getClusterList).mockResolvedValue({ code: 200, data: [] } as never);
+    vi.mocked(getTagList).mockResolvedValue({ code: 200, data: [] } as never);
+    const onSave = vi.fn();
+    render(<NodeFormPanel node={node('script-exec', { script: 'echo hi', targets: { mode: 'explicit', agentIds: ['no'] } })} open remoteOptions onClose={() => {}} onSave={onSave} onRequestDelete={() => {}} />);
+    await waitFor(() => expect(screen.getByText(/Some saved targets are unavailable/)).toBeTruthy());
+    fireEvent.mouseDown(byLabel('Agent IDs'));
+    expect(await screen.findByText('Allowed · 1')).toBeTruthy();
+    expect(screen.getByTitle('execute-only')).toBeTruthy();
+    expect(screen.queryByText('Denied · 2')).toBeNull();
+    expect(getExecuteTargets).toHaveBeenNthCalledWith(2, 'yes');
+    fireEvent.click(screen.getByTitle('execute-only'));
+    const patch = await submitAndCapture(onSave);
+    expect(patch.config.targets).toEqual({ mode: 'explicit', agentIds: ['no', 'execute-only'] });
+  });
+  it.each([
+    { agentIds: ['partial'], nextCursor: 'partial' },
+    { agentIds: ['partial'], nextCursor: '' },
+    { agentIds: ['partial'], nextCursor: 42 },
+    { agentIds: [], nextCursor: 'other' },
+    { agentIds: ['partial'], nextCursor: 'other' },
+    { agentIds: ['x'.repeat(65)], nextCursor: null },
+    { agentIds: ['partial'], nextCursor: 'x'.repeat(65) },
+  ])('分页异常不暴露部分结果并允许重试 %#', async (badPage) => {
+    vi.mocked(getHostList).mockRejectedValue(new Error('unavailable'));
+    vi.mocked(getExecuteTargets).mockReset()
+      .mockResolvedValueOnce({ code: 200, data: { agentIds: ['partial'], nextCursor: 'partial' } } as never)
+      .mockResolvedValueOnce({ code: 200, data: badPage } as never)
+      .mockResolvedValueOnce({ code: 200, data: { agentIds: ['recovered'], nextCursor: null } } as never);
+    vi.mocked(getClusterList).mockResolvedValue({ code: 200, data: [] } as never);
+    vi.mocked(getTagList).mockResolvedValue({ code: 200, data: [] } as never);
+    render(<NodeFormPanel node={node('script-exec')} open remoteOptions onClose={() => {}} onSave={() => {}} onRequestDelete={() => {}} />);
+    expect(await screen.findByText(/could not be fully checked/)).toBeTruthy();
+    fireEvent.mouseDown(byLabel('Agent IDs'));
+    expect(screen.queryByText('partial')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.queryByText(/could not be fully checked/)).toBeNull());
+    fireEvent.mouseDown(byLabel('Agent IDs'));
+    expect(await screen.findByTitle('recovered')).toBeTruthy();
+  });
+
+  it('后续分页失败不提供部分结果', async () => {
+    vi.mocked(getHostList).mockResolvedValue({ code: 200, data: [] } as never);
+    vi.mocked(getExecuteTargets).mockReset()
+      .mockResolvedValueOnce({ code: 200, data: { agentIds: ['partial'], nextCursor: 'partial' } } as never)
+      .mockRejectedValueOnce(new Error('offline'));
+    render(<NodeFormPanel node={node('script-exec')} open remoteOptions onClose={() => {}} onSave={() => {}} onRequestDelete={() => {}} />);
+    expect(await screen.findByText(/could not be fully checked/)).toBeTruthy();
+    fireEvent.mouseDown(byLabel('Agent IDs'));
+    expect(screen.queryByText('partial')).toBeNull();
+  });
+
+  it('分页超过上限时失败而不是继续请求或显示部分结果', async () => {
+    vi.mocked(getHostList).mockResolvedValue({ code: 200, data: [] } as never);
+    let page = 0;
+    vi.mocked(getExecuteTargets).mockReset().mockImplementation(async () => {
+      const id = `cursor-${page++}`;
+      return { code: 200, data: { agentIds: [id], nextCursor: id } } as never;
+    });
+    render(<NodeFormPanel node={node('script-exec')} open remoteOptions onClose={() => {}} onSave={() => {}} onRequestDelete={() => {}} />);
+    expect(await screen.findByText(/could not be fully checked/)).toBeTruthy();
+    expect(getExecuteTargets).toHaveBeenCalledTimes(1000);
+    fireEvent.mouseDown(byLabel('Agent IDs'));
+    expect(screen.queryByText('partial')).toBeNull();
+  });
   it('script-exec：script + targets.mode=explicit 的 agentIds 落进 config', async () => {
-    const { onSave } = renderPanel(node('script-exec'));
+    const { onSave } = renderPanel(node('script-exec', { targets: { mode: 'explicit', agentIds: ['agent-1', 'agent-2'] } }));
 
     fireEvent.change(byLabel('Script'), { target: { value: 'df -h /' } });
-    fireEvent.change(byLabel('Agent IDs'), { target: { value: 'agent-1, agent-2' } });
 
     const patch = await submitAndCapture(onSave);
     expect(patch.config.script).toBe('df -h /');
@@ -274,7 +465,6 @@ describe('NodeFormPanel — targets mode 切换时字段动态显隐', () => {
   it('换 mode 后提交只写当前 mode 的键（不留上一个 mode 的残留）', async () => {
     const { onSave } = renderPanel(node('script-exec'));
     fireEvent.change(byLabel('Script'), { target: { value: 'echo hi' } });
-    fireEvent.change(byLabel('Agent IDs'), { target: { value: 'agent-1' } });
 
     chooseOption('Target hosts', 'By tag');
     fireEvent.change(byLabel('Tag IDs'), { target: { value: '3, 7' } });
@@ -375,5 +565,83 @@ describe('NodeFormPanel — 旧草稿字段的兼容读取', () => {
     expect(patch.config.script).toBe('df -h /');
     expect(patch.config.targets).toEqual({ mode: 'tag', tagIds: [3, 7] });
     expect(patch.config.parameters).toEqual({ TARGET_DIR: '/var/log' });
+  });
+});
+
+describe('NodeFormPanel — script library snapshots', () => {
+  it('locks the entire form and discards old identity selection responses', async () => {
+    let resolveParameters!: (value: never) => void;
+    vi.mocked(getScriptList).mockReset()
+      .mockResolvedValueOnce({ code: 200, data: [{ id: 7, name: 'old private script', version: 1, content: 'old content', scriptType: 'shell' }] } as never);
+    vi.mocked(getScriptParameters).mockImplementationOnce(() => new Promise((resolve) => { resolveParameters = resolve; }));
+    const original = Object.getOwnPropertyDescriptor(crypto, 'subtle');
+    Object.defineProperty(crypto, 'subtle', { configurable: true, value: { digest: vi.fn().mockResolvedValue(new Uint8Array(32).buffer) } });
+    try {
+      act(() => setToken('library-a'));
+      renderPanel(node('script-exec', { script: 'draft content' }));
+      chooseOption('Script source', 'Script library');
+      await waitFor(() => { fireEvent.mouseDown(selectOf('Library script')); expect(screen.getByTitle('old private script')).toBeTruthy(); });
+      fireEvent.click(screen.getByTitle('old private script'));
+      act(() => setToken('library-b'));
+      await act(async () => { resolveParameters({ code: 200, data: [] } as never); });
+      expect(screen.queryByLabelText('Script')).toBeNull();
+      expect(screen.queryByTitle('old private script')).toBeNull();
+    } finally {
+      if (original) Object.defineProperty(crypto, 'subtle', original);
+      else Reflect.deleteProperty(crypto, 'subtle');
+    }
+  });
+  it('selects a read-only snapshot and maps only safe slots without enabling raw', async () => {
+    const content = 'echo 你好 {{SAFE}} {{lower}} {{RAW:raw}}';
+    vi.mocked(getScriptList).mockResolvedValue({ code: 200, data: [
+      { id: 7, name: 'library test', version: 3, content, scriptType: 'shell' },
+    ] } as never);
+    vi.mocked(getScriptParameters).mockResolvedValue({ code: 200, data: ['SAFE', 'lower'] } as never);
+    const original = Object.getOwnPropertyDescriptor(crypto, 'subtle');
+    Object.defineProperty(crypto, 'subtle', { configurable: true, value: {
+      digest: vi.fn().mockResolvedValue(new Uint8Array(32).fill(10).buffer),
+    } });
+    try {
+      const { onSave } = renderPanel(node('script-exec'));
+      chooseOption('Script source', 'Script library');
+      await waitFor(() => expect(getScriptList).toHaveBeenCalled());
+      await waitFor(() => expect(screen.getByLabelText(/Library script/)).toBeTruthy());
+      await waitFor(() => {
+        fireEvent.mouseDown(selectOf('Library script'));
+        expect(screen.getByTitle('library test')).toBeTruthy();
+      });
+      fireEvent.click(screen.getByTitle('library test'));
+      await waitFor(() => expect((byLabel('Script') as HTMLTextAreaElement).value).toBe(content));
+      expect((byLabel('Script') as HTMLTextAreaElement).readOnly).toBe(true);
+      const patch = await submitAndCapture(onSave);
+      expect(patch.config.scriptSource).toEqual({ kind: 'library-v1', scriptId: 7, version: 3, sha256: '0a'.repeat(32) });
+      expect(patch.config.parameters).toEqual({ SAFE: '', RAW: '' });
+      expect(patch.config.rawParams).toEqual([]);
+      expect(patch.config).not.toHaveProperty('scriptId');
+    } finally {
+      if (original) Object.defineProperty(crypto, 'subtle', original);
+      else Reflect.deleteProperty(crypto, 'subtle');
+    }
+  });
+
+  it('switching to manual removes the source and legacy scriptId', async () => {
+    vi.mocked(getScriptList).mockResolvedValue({ code: 200, data: [] } as never);
+    const { onSave } = renderPanel(node('script-exec', {
+      script: 'echo hi', scriptId: 'old',
+      scriptSource: { kind: 'library-v1', scriptId: 1, version: 1, sha256: 'a'.repeat(64) },
+    }));
+    chooseOption('Script source', 'Manual');
+    const patch = await submitAndCapture(onSave);
+    expect(patch.config).not.toHaveProperty('scriptSource');
+    expect(patch.config).not.toHaveProperty('scriptId');
+    expect(patch.config.script).toBe('echo hi');
+  });
+
+  it('shows a retryable error when the list is unavailable', async () => {
+    vi.mocked(getScriptList).mockRejectedValueOnce(new Error('403'));
+    renderPanel(node('script-exec'));
+    chooseOption('Script source', 'Script library');
+    expect(await screen.findByText(/Unable to load scripts/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
   });
 });

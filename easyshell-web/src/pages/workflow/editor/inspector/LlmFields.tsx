@@ -1,9 +1,41 @@
-import React from 'react';
-import { Alert, Form, Input, InputNumber, Select } from 'antd';
+import React, { useState } from 'react';
+import { Alert, Button, Checkbox, Form, Input, InputNumber, Select, Space } from 'antd';
 import { useTranslation } from 'react-i18next';
 import type { WorkflowVariableGroup } from '../../variables';
 import { VariableInput } from './VariablePicker';
 import { AiProviderModelFields } from './AiProviderModelFields';
+import { editableSchema } from './editableSchema';
+
+export const StructuredSchemaEditor: React.FC<{ value?: string; onChange?: (value: string) => void }> = ({ value = '', onChange }) => {
+  const { t } = useTranslation();
+  const [name, setName] = useState('');
+  const schema = editableSchema(value);
+  const write = (next: NonNullable<typeof schema>) => onChange?.(JSON.stringify({ type: 'object', ...next }, null, 2));
+  return <div>
+    <Alert type="info" showIcon message={t('workflow.structured.serverValidation')} />
+    {!schema ? <Alert type="warning" showIcon message={t('workflow.structured.rawOnly')} /> : <div>
+      {Object.entries(schema.properties).map(([field, spec]) => <Space key={field} wrap>
+        <span>{field}</span>
+        <Select aria-label={`${t('workflow.structured.fieldType')} ${field}`} value={spec.type} style={{ width: 120 }}
+          options={['string', 'number', 'integer', 'boolean'].map((type) => ({ value: type, label: type }))}
+          onChange={(type) => write({ ...schema, properties: { ...schema.properties, [field]: { type } } })} />
+        <Checkbox checked={schema.required.includes(field)} onChange={(e) => write({ ...schema, required: e.target.checked ? [...schema.required, field] : schema.required.filter((v) => v !== field) })}>{t('workflow.structured.required')}</Checkbox>
+        <Button aria-label={`${t('workflow.structured.removeField')} ${field}`} onClick={() => {
+          const properties = { ...schema.properties }; delete properties[field];
+          write({ ...schema, properties, required: schema.required.filter((v) => v !== field) });
+        }}>{t('workflow.structured.removeField')}</Button>
+      </Space>)}
+      <Space wrap>
+        <Input aria-label={t('workflow.structured.fieldName')} value={name} onChange={(e) => setName(e.target.value)} />
+        <Button disabled={!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name) || Object.prototype.hasOwnProperty.call(schema.properties, name)} onClick={() => {
+          write({ ...schema, properties: { ...schema.properties, [name]: { type: 'string' } } }); setName('');
+        }}>{t('workflow.structured.addField')}</Button>
+      </Space>
+      <Checkbox checked={false} disabled>{t('workflow.structured.additionalProperties')}</Checkbox>
+    </div>}
+    <Input.TextArea aria-label={t('workflow.structured.rawSchema')} rows={5} value={value} onChange={(e) => onChange?.(e.target.value)} style={{ fontFamily: 'monospace', fontSize: 12 }} />
+  </div>;
+};
 
 /**
  * 通用 LLM 节点字段：provider/model / systemPrompt / userPrompt / outputMode /
@@ -20,6 +52,8 @@ export const LlmFields: React.FC<LlmFieldsProps> = ({ groups }) => {
   return (
     <div data-testid="llm-fields">
       <Alert type="info" showIcon message={t('workflow.llm.warning')} style={{ marginBottom: 12 }} />
+      <Alert type="warning" showIcon message={t('workflow.ai.externalInputWarning', { defaultValue: '输入会发送给配置的模型，请勿输入敏感数据。' })} style={{ marginBottom: 12 }} />
+      <Alert type="warning" showIcon message={t('workflow.structured.savedProtection', { defaultValue: '严格结构化输出节点保存后，不能删除节点或修改节点标识、类型、输出模式及 Schema；其他配置仍可修改。' })} style={{ marginBottom: 12 }} />
       <AiProviderModelFields providerName="llmProvider" modelName="llmModel" />
       <Form.Item
         name="llmUserPrompt"
@@ -58,12 +92,15 @@ export const LlmFields: React.FC<LlmFieldsProps> = ({ groups }) => {
           options={[
             { value: 'text', label: t('workflow.llm.outputModeText') },
             { value: 'json', label: t('workflow.llm.outputModeJson') },
+            { value: 'json_schema_v1', label: t('workflow.structured.mode') },
           ]}
         />
       </Form.Item>
       <Form.Item noStyle shouldUpdate={(prev, next) => prev.llmOutputMode !== next.llmOutputMode}>
         {({ getFieldValue }) =>
-          getFieldValue('llmOutputMode') === 'json' ? (
+          getFieldValue('llmOutputMode') === 'json_schema_v1' ? (
+            <Form.Item name="llmJsonSchema" label={t('workflow.llm.jsonSchema')}><StructuredSchemaEditor /></Form.Item>
+          ) : getFieldValue('llmOutputMode') === 'json' ? (
             <Form.Item
               name="llmJsonSchema"
               label={t('workflow.llm.jsonSchema')}

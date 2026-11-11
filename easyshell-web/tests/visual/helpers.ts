@@ -30,6 +30,15 @@ async function bootstrapSession(page: Page, theme: 'dark' | 'light'): Promise<vo
 async function stubApi(page: Page): Promise<void> {
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url());
+    if (url.pathname === '/api/v1/host-permissions/me/query' && route.request().method() === 'POST') {
+      const { agentIds } = route.request().postDataJSON() as { agentIds: string[] };
+      await route.fulfill({ json: {
+        code: 200,
+        message: 'ok',
+        data: agentIds.map((agentId) => ({ agentId, generation: 1, view: true, execute: true, terminal: true })),
+      } });
+      return;
+    }
     const file = `${path.join(fixturesRoot, url.pathname.replace('/api/v1', ''))}.json`;
     try {
       const body = JSON.parse(await readFile(file, 'utf8'));

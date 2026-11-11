@@ -1,4 +1,42 @@
 {
+  "hostPermissions": {
+    "title": "主机权限",
+    "independentPermissionsNotice": "三种权限相互独立，授予一项不自动授予其他两项。",
+    "inheritanceNotice": "用户的有效权限是直接授权与其角色授权的并集。移除直接授权不会移除角色授予的权限。",
+    "terminalWarning": "终端权限风险较高，允许在主机上交互式执行命令。请仅授予可信的用户和角色。",
+    "viewerTerminalForbidden": "viewer 角色无法使用终端，即使已获得终端授权。",
+    "invalidGrant": "授权无效，请检查授权对象、主机和权限后重试。",
+    "explicitHostsNotice": "授权仅适用于选定的主机，不会自动覆盖将来新增的主机。",
+    "catalogError": "无法加载用户、角色或主机列表。",
+    "retry": "重试",
+    "principalType": "授权对象类型",
+    "user": "用户",
+    "role": "角色",
+    "principal": "用户或角色",
+    "permission": "权限",
+    "selectPrincipal": "请选择用户或角色",
+    "searchHosts": "搜索主机",
+    "host": "主机",
+    "selectHost": "请选择主机",
+    "grant": "授权",
+    "revoke": "撤销授权",
+    "stale": "主机目录或主机身份代次已变化，请刷新并重新选择主机后再管理权限。",
+    "view": "查看",
+    "execute": "执行",
+    "terminal": "终端",
+    "permissionForHost": "{{host}}的{{permission}}权限",
+    "forbidden": "您无权管理这些主机授权。",
+    "conflict": "权限在加载后已发生变更，请重新加载后再保存。",
+    "loadError": "无法加载主机权限。",
+    "saveError": "无法保存主机权限。",
+    "reload": "重新加载",
+    "saveSuccess": "主机权限已保存。",
+    "save": "保存权限"
+  },
+  "resourceIdentity": {
+    "unavailable": "当前无法验证权限或资源身份，请联系管理员。",
+    "fetchFailed": "无法加载数据，请检查网络连接并重试；如果问题仍然存在，请联系管理员。"
+  },
   "common": {
     "confirm": "确定",
     "cancel": "取消",
@@ -85,6 +123,8 @@
     "switch_to_zh": "切换到中文",
     "theme_light": "切换浅色模式",
     "theme_dark": "切换深色模式",
+    "reset_theme_default": "重置默认主题",
+    "skip_to_content": "跳至主要内容",
     "logout": "退出登录",
     "collapse_sidebar": "收起侧边栏",
     "expand_sidebar": "展开侧边栏",
@@ -657,6 +697,8 @@
     }
   },
   "reports": {
+    "historyUnavailable": "部分历史报告的来源身份无法验证，暂不可用；历史数据未删除。",
+    "detailUnavailable": "报告详情暂不可用，请重试。",
     "title": "巡检报告",
     "fetchError": "获取巡检报告失败",
     "detailError": "获取报告详情失败",
@@ -721,6 +763,8 @@
     }
   },
   "chat": {
+    "stopStreamBeforeDelete": "请先停止正在生成的回复，再删除此对话。",
+    "waitForSessionDelete": "请等待对话删除完成后再发送消息。",
     "prompt1": "检查所有服务器的系统状态",
     "prompt2": "列出最近执行失败的任务",
     "prompt3": "分析服务器资源使用情况",
@@ -967,6 +1011,7 @@
   },
   "dashboard": {
     "title": "仪表盘",
+    "statisticsUnavailable": "统计数据暂不可用",
     "totalHosts": "主机总数",
     "onlineHosts": "在线主机",
     "offlineHosts": "离线主机",
@@ -1005,6 +1050,10 @@
   },
   "host": {
     "title": "主机管理",
+    "credentialListUnavailable": "这里只显示具有查看权限的 Agent；历史凭据归属和主机身份无法验证，因此不会关联到主机。",
+    "credentialOwnershipUnknown": "无法验证历史凭据的归属，不会按 IP 地址关联凭据。",
+    "remoteUninstallUnavailable": "远程卸载暂不可用。删除记录不会卸载远程 Agent。",
+    "deleteDoesNotUninstall": "删除此记录不会卸载远程 Agent。",
     "detail": "主机详情",
     "online": "在线",
     "offline": "离线",
@@ -1029,6 +1078,7 @@
     "lastHeartbeat": "最后心跳",
     "addServer": "添加服务器",
     "deployHistory": "部署历史",
+    "loadingHistory": "正在加载部署历史…",
     "exportCSV": "导出 CSV",
     "startDeploy": "开始部署",
     "sshPort": "SSH 端口",
@@ -1147,6 +1197,8 @@
     "confirmDelete": "确认删除此脚本？",
     "ai": {
       "title": "AI 脚本助手",
+      "externalDataWarningTitle": "外发数据提醒",
+      "externalDataWarningDescription": "提示词和当前脚本将发送给配置的模型。敏感数据过滤无法保证识别所有秘密，请勿输入或包含密码、密钥等敏感数据。",
       "targetOs": "目标操作系统",
       "promptLabel": "描述你需要的脚本功能",
       "promptPlaceholder": "例如：监控磁盘使用率，超过80%时告警",
@@ -1379,6 +1431,11 @@
     }
   },
   "hostDetail": {
+    "terminalPermissionUnknown": "正在确认终端权限。",
+    "terminalPermissionError": "无法确认终端权限，请重试或联系管理员。",
+    "terminalPermissionDenied": "您没有此主机的终端权限。",
+    "terminalPermissionOffline": "主机离线，无法使用终端。",
+    "terminalOffline": "主机离线，无法使用终端。",
     "detectFailed": "检测失败",
     "detectTaskSubmitted": "检测任务已提交",
     "detectTimeout": "检测超时",
@@ -1438,8 +1495,17 @@
     "executionHistory": "执行历史"
   },
   "task": {
+    "historyVisibilityNotice": "身份未核实的历史任务和工作流任务暂不在此列表显示，数据未删除。",
     "title": "任务执行",
+    "hostExecuteDenied": "无执行权限",
+    "hostExecuteUnknown": "执行权限未知",
+    "hostPermissionsLoading": "正在检查主机执行权限…",
+    "hostPermissionsFailed": "无法检查主机权限，请重试后再提交。",
+    "hostPermissionsIncomplete": "部分主机的权限未知，请重试后再选择这些主机。",
+    "dynamicTargetsPermissionHint": "动态目标的成员可能变化，最终以服务端对解析出的所有主机进行的权限校验为准。",
     "create": "新建任务",
+    "runWorkflow": "运行工作流",
+    "detailLoadFailed": "无法加载任务详情",
     "execute": "执行",
     "stop": "停止",
     "fetchError": "获取任务列表失败",
@@ -1526,6 +1592,29 @@
     }
   },
   "workflow": {
+    "scriptSource": {
+      "label": "脚本来源",
+      "manual": "手写",
+      "library": "脚本库",
+      "select": "选择脚本",
+      "snapshotHint": "预览只读。发布时服务端会校验并冻结所选版本；之后脚本库的变化不会改变已发布的快照。",
+      "listError": "脚本列表加载失败，请检查权限后重试。",
+      "selectionError": "无法选择脚本，脚本可能已变更或无权限，请重试。",
+      "retry": "重试"
+    },
+    "structured": {
+      "mode": "严格结构化输出",
+      "savedProtection": "严格结构化输出节点保存后，不能删除节点或修改节点标识、类型、输出模式及 Schema；其他配置仍可修改",
+      "serverValidation": "Schema 和模型输出由服务端校验。",
+      "rawOnly": "此 Schema 无法在可视化表格中无损编辑，请使用原文编辑。",
+      "fieldType": "字段类型",
+      "required": "必填",
+      "removeField": "删除字段",
+      "fieldName": "字段名",
+      "addField": "添加字段",
+      "additionalProperties": "允许额外字段（服务端目前不支持）",
+      "rawSchema": "Schema 原文"
+    },
     "list": {
       "title": "工作流",
       "create": "新建工作流",
@@ -1602,7 +1691,7 @@
         "end": "汇总最终输出，运行结果取这里的映射",
         "llm": "调用大模型生成文本或结构化 JSON，不执行命令",
         "classifier": "按模型分类结果路由到对应 class 分支",
-        "code": "在隔离沙箱里做数据转换，支持 JavaScript / Python"
+        "code": "使用 JavaScript / Python 进行数据转换（目前不可运行或发布）"
       },
       "category": {
         "entry": "入口",
@@ -1753,6 +1842,12 @@
       "scriptIdHint": "留空 = 内联脚本。当前版本仅随定义保存，执行时以 script 为准",
       "scriptIdPlaceholder": "留空则直接写脚本内容",
       "targets": "目标主机寻址",
+      "hostsLoading": "正在检查可用主机权限…",
+      "retryHosts": "重试",
+      "hostsFailed": "无法完整检查主机权限。已保留现有目标。",
+      "hostsEmpty": "没有可执行的主机。",
+      "hostsUnavailable": "部分已保存目标不可用或已无执行权限；在您移除之前会予以保留。",
+      "dynamicTargetsPermissionHint": "目标将在运行时解析并逐台校验权限；选择目标不代表已获授权。",
       "targetsHint": "脚本派发到哪些主机：explicit 指定 agent / cluster 集群 / tag 标签 / variable 上游产出的主机列表",
       "targetsEmpty": "当前 mode 下还没有任何目标，运行时节点会失败（目标 agent 集合为空）",
       "targetsMode": {
@@ -1854,6 +1949,7 @@
     },
     "editor": {
       "dirty": "未保存",
+      "memoryOnlyWarning": "本地持久化和恢复暂不可用。未保存的更改仅存在于当前编辑会话的内存中，刷新或关闭页面可能导致更改丢失。",
       "saved": "已保存",
       "lastSaved": "上次保存 {{time}}",
       "selectedCount": "已选 {{count}} 个节点",
@@ -1868,7 +1964,10 @@
       "localDraftFound": "发现本地草稿（上次保存失败时留下）",
       "localDraftRestore": "恢复本地草稿",
       "localDraftDiscard": "丢弃",
-      "localDraftRestored": "已恢复本地草稿"
+      "localDraftRestored": "已恢复本地草稿",
+      "unsavedNavigationTitle": "工作流有未保存的更改",
+      "unsavedNavigationDesc": "离开编辑器前请保存或处理所有未保存草稿。切换工作流时完整草稿仅保存在内存中，关闭或刷新页面可能丢失。",
+      "returnToMemoryDraft": "返回工作流 #{{id}}"
     },
     "publish": {
       "action": "发布",
@@ -1900,6 +1999,8 @@
       "selectPlaceholder": "请选择"
     },
     "conflict": {
+      "draftId": "目标草稿 ID",
+      "baseVersion": "基础版本",
       "title": "版本冲突（409）",
       "message": "服务端草稿已被其他会话修改（base_version 不匹配）。系统不会自动合并，请选择处理方式：",
       "overwrite": "覆盖保存（记录审计 WORKFLOW_OVERWRITE）",
@@ -1915,6 +2016,8 @@
       "monitor": "监控",
       "empty": "暂无运行记录",
       "fetchFailed": "获取运行列表失败",
+      "detailUnavailable": "运行详情暂不可用，无法确认运行情况。请稍后重试或联系管理员。",
+      "dataUnavailable": "数据不可用，无法确认其内容。",
       "filtered": "仅看工作流 #{{id}}",
       "canvasTitle": "运行图（只读）",
       "nodes": "节点执行",
@@ -1982,6 +2085,8 @@
     "approval": {
       "title": "工作流审批",
       "fetchError": "获取待审批列表失败",
+      "dataUnavailable": "审批数据不可用，无法确认审批内容。请稍后重试或联系管理员。",
+      "restrictedReason": "无权查看审批详情，可以拒绝但不能批准。",
       "empty": "暂无待审批项",
       "approve": "通过",
       "reject": "拒绝",
@@ -2032,6 +2137,8 @@
       "emptyDesc": "选中一个节点查看配置、上游变量与说明。点击节点或按 Enter 打开检查器。",
       "docs": {
         "when": "何时使用",
+        "highRiskApprovalUnavailable": "高危审批绑定尚未实现。审批节点不能授权高危命令，命令仍可能被风险门禁拦截。",
+        "llmExecutionWarning": "LLM 输出不能直接作为脚本 raw 参数；主机执行须通过 script-exec，仍受风险门禁约束。",
         "input": "输入",
         "output": "输出",
         "example": "最小示例",
@@ -2148,6 +2255,7 @@
     },
     "ai": {
       "warning": "AI 分析节点只读取上游输出并产出结论文本，不能执行命令、不能派发任务。",
+      "externalInputWarning": "输入会发送给配置的模型，请勿输入敏感数据",
       "instructions": "分析指令",
       "instructionsHint": "告诉模型要分析什么、输出什么结论。",
       "instructionsRequired": "请输入分析指令",
@@ -2251,20 +2359,35 @@
       "title": "模板库",
       "intro": "模板会替换当前画布（先确认），保存后即可继续调整。",
       "badge": "示例",
+      "simulated": "模拟数据",
+      "realSideEffects": "真实副作用",
       "apply": "应用模板",
       "applied": "已应用模板：{{name}}",
       "replaceTitle": "替换当前画布？",
       "replaceBody": "当前画布已有节点，应用模板会替换整张图（可用撤销恢复）。",
       "replaceConfirm": "替换并应用",
       "disk": {
+        "safeName": "模拟磁盘阈值演示",
+        "safeDesc": "使用固定值演示磁盘阈值判断，不采集磁盘数据，也不发送通知。",
         "name": "磁盘巡检与告警",
         "desc": "开始 → 采集磁盘用量 → 映射使用率 → 超阈值通知 → 结束。"
       },
       "restart": {
+        "safeName": "审批后真实重启",
+        "executionWarning": "此模板可能真实重启服务并产生副作用，不会验证服务健康状态。高危审批绑定尚未实现，审批通过后命令仍可能被风险门禁拦截。",
+        "safeDesc": "审批通过后真实重启服务，会产生副作用；可能发送通知，但不验证服务健康状态。",
         "name": "服务重启审批",
         "desc": "审批通过后重启服务，并把结果通知出去。"
       },
+      "aiReview": {
+        "safeName": "人工输入的 AI 审查",
+        "safeDesc": "使用 AI 审查人工输入的观察信息。结果仅供参考，需人工复核；不会执行主机命令或发送通知。",
+        "realAiCall": "真实外部 AI 调用",
+        "externalInputWarning": "运行前请配置默认 AI 服务商和模型。输入会发送至配置的外部 AI 模型，请仅输入非敏感信息。"
+      },
       "health": {
+        "safeName": "模拟数量条件",
+        "safeDesc": "使用固定值演示数量条件，并非真实健康检查，也不发送通知。",
         "name": "批量健康检查",
         "desc": "对目标主机批量探活，任一输出即通知，否则短暂等待。"
       }
@@ -2311,7 +2434,23 @@
       "outputHint": "输出 { class, reason, raw }；画布会显示 {{count}} 个 class 把手 + default。"
     },
     "code": {
+      "unavailableNotice": "运行需要已配置的隔离执行服务；服务未就绪时会拒绝执行，且不会在服务器本地执行代码。",
       "warning": "代码节点只在服务端隔离数据沙箱里做数据转换，没有主机文件/网络/命令访问权限。",
+      "previewNoExecution": "单节点测试运行仅为预演，不会执行这段代码。",
+      "sampleIsolationUnavailable": "隔离执行服务尚未就绪，无法运行样例。",
+      "workflowMemoryRisk": "运行需要已配置的隔离执行服务；服务未就绪时会拒绝执行，且不会在服务器本地执行代码。",
+      "sampleTitle": "样例运行",
+      "sampleWarning": "样例将在真实数据沙箱中运行，不会派发主机任务或推进工作流。请勿输入敏感值。",
+      "sampleInput": "样例输入（JSON 对象）",
+      "sampleRun": "运行样例",
+      "sampleInvalid": "请输入有效的 JSON 对象，不能是数组、标量或 null。",
+      "sampleTimeoutInvalid": "请选择 1 到 5 秒之间的整数超时。",
+      "sampleServiceUnavailable": "隔离执行服务尚未就绪，请在服务可用后重试。",
+      "sampleFailed": "样例运行失败。",
+      "sampleError": "样例运行出错。",
+      "sampleOutput": "样例输出",
+      "sampleElapsed": "耗时 {{ms}} 毫秒",
+      "previewOnly": "单节点测试运行仅为预演，不会执行这段代码。运行工作流时才会在数据沙箱中执行。",
       "language": "语言",
       "languageHint": "javascript 需定义 main(input)；python 需定义 def main(input)。",
       "languageJavascript": "JavaScript",
@@ -2322,12 +2461,15 @@
       "insertSkeleton": "插入 main 骨架",
       "inputs": "输入映射",
       "inputsHint": "名称 → 上游变量模板，会作为 main(input) 的输入对象。",
+      "inputContract": "输入名称会成为传入 main(input) 的对象属性。请使用上游变量模板；名称须以字母或下划线开头，且只能包含字母、数字或下划线，最多 64 个字符。",
       "addInput": "添加输入",
       "inputsEmpty": "还没有输入；main(input) 会收到空对象。",
       "inputNamePlaceholder": "例如 a",
       "timeoutSec": "超时（秒）",
-      "timeoutSecHint": "1..15 秒；超时会关闭沙箱上下文并取消执行。",
-      "outputHint": "输出 = main 的返回值（对象 / 数组 / 标量），按 JSON 保存。",
+      "timeoutSecHint": "1..5 秒；超时会取消执行。",
+      "outputHint": "输出为 main 的 JSON 返回值，上限 8 KiB；数组和标量会放在 result 字段下。",
+      "outputTitle": "输出",
+      "outputContract": "返回值须为兼容 JSON 的对象、数组或标量。返回对象可暴露具名字段；输出字段取决于返回值，目前尚不支持输出 schema 校验。",
       "inputName": "输入名",
       "inputValue": "输入值"
     },

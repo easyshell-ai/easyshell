@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Alert,
@@ -32,16 +32,17 @@ import {
   createWorkflow,
   issuesOf,
   getWorkflowDetail,
+  getWorkflowVersion,
   getWorkflowPage,
   publishWorkflow,
   saveWorkflowDraft,
   triggerWorkflowRun,
   validateWorkflow,
   type WorkflowPageResult,
+  type PublishRequest,
 } from './api';
 import type { ValidationIssue, WorkflowDefinition, WorkflowSummary } from './types';
 import { TriggerModal } from './editor/modals';
-import { PublishModal } from './editor/modals';
 import { createStartAndEndNodes } from './graph';
 import { templateById, WORKFLOW_TEMPLATES } from './editor/templates';
 import { formatDateTime } from '../../utils/format';
@@ -53,6 +54,7 @@ const { Text } = Typography;
 interface PublishTarget {
   id: number;
   name: string;
+  token?: PublishRequest;
 }
 
 const WorkflowListPage: React.FC = () => {
@@ -76,11 +78,21 @@ const WorkflowListPage: React.FC = () => {
     template?: string;
   }>();
 
-  const [triggerTarget, setTriggerTarget] = useState<{ id: number; name: string; definition: WorkflowDefinition } | null>(null);
+  const [triggerTarget, setTriggerTarget] = useState<{ id: number; name: string; versionId: number; version: number; definition: WorkflowDefinition } | null>(null);
   const [triggerLoading, setTriggerLoading] = useState(false);
   const [publishTarget, setPublishTarget] = useState<PublishTarget | null>(null);
   const [publishIssues, setPublishIssues] = useState<ValidationIssue[]>([]);
   const [publishLoading, setPublishLoading] = useState(false);
+  const publishGeneration = useRef(0);
+
+  useEffect(() => () => { publishGeneration.current += 1; }, []);
+
+  const closePublish = useCallback(() => {
+    publishGeneration.current += 1;
+    setPublishTarget(null);
+    setPublishIssues([]);
+    setPublishLoading(false);
+  }, []);
 
   const fetchPage = useCallback(async (current = 0, search = keyword, status = statusFilter) => {
     setLoading(true);
@@ -132,7 +144,7 @@ const WorkflowListPage: React.FC = () => {
               edges: [],
             };
         try {
-          const seeded = await saveWorkflowDraft(workflow.id, { definition, baseVersion: 0 });
+          const seeded = await saveWorkflowDraft(workflow.id, { definition, expectedAbsent: true, baseVersion: 0 });
           if (seeded.code !== 200) message.warning(t('workflow.list.seedFailed'));
         } catch {
           message.warning(t('workflow.list.seedFailed'));
@@ -151,25 +163,28 @@ const WorkflowListPage: React.FC = () => {
 
   const openTrigger = useCallback(
     async (workflow: WorkflowSummary) => {
-      const res = await getWorkflowDetail(workflow.id);
-      if (res.code !== 200 || !res.data) {
-        message.error(res.message || t('workflow.list.fetchFailed'));
-        return;
+      try {
+        const res = await getWorkflowDetail(workflow.id);
+        if (res.code !== 200 || !res.data) {
+          message.error(res.message || t('workflow.list.fetchFailed'));
+          return;
+        }
+        const versionId = res.data.workflow.currentVersionId;
+        if (!versionId) {
+          message.warning(t('workflow.trigger.notPublished'));
+          return;
+        }
+        const versionRes = await getWorkflowVersion(workflow.id, versionId);
+        if (versionRes.code !== 200 || !versionRes.data?.definition || versionRes.data.id !== versionId) {
+          message.error(versionRes.message || t('workflow.list.fetchFailed'));
+          return;
+        }
+        setTriggerTarget({ id: workflow.id, name: workflow.name, versionId, version: versionRes.data.version, definition: versionRes.data.definition });
+      } catch {
+        message.error(t('workflow.list.fetchFailed'));
       }
-      setTriggerTarget({
-        id: workflow.id,
-        name: workflow.name,
-        definition: res.data.draft?.definition || {
-          schemaVersion: 1,
-          defaultOnUpstreamFailure: 'skip',
-          onRejection: 'abort',
-          variables: {},
-          nodes: [],
-          edges: [],
-        },
-      });
     },
-    []
+    [t]
   );
 
   const handleTrigger = useCallback(
@@ -177,7 +192,7 @@ const WorkflowListPage: React.FC = () => {
       if (!triggerTarget) return;
       setTriggerLoading(true);
       try {
-        const res = await triggerWorkflowRun(triggerTarget.id, { input: inputs, idempotencyKey });
+        const res = await triggerWorkflowRun(triggerTarget.id, { input: inputs, idempotencyKey, versionId: triggerTarget.versionId });
         if (res.code === 200 && res.data) {
           message.success(t('workflow.trigger.success'));
           setTriggerTarget(null);
@@ -197,39 +212,59 @@ const WorkflowListPage: React.FC = () => {
   );
 
   const openPublish = useCallback(async (workflow: WorkflowSummary) => {
+    const generation = ++publishGeneration.current;
     setPublishTarget({ id: workflow.id, name: workflow.name });
+    setPublishIssues([]);
     setPublishLoading(true);
     try {
       // 列表页没有编辑器状态，先拉详情取服务端草稿 definition——预校验的请求体
       // 不能为空（服务端对空 body 返回 400，而不是当成"无 issues"放行）。
       const detailRes = await getWorkflowDetail(workflow.id);
+      if (generation !== publishGeneration.current) return;
       if (detailRes.code !== 200 || !detailRes.data) {
         message.error(detailRes.message || t('workflow.list.fetchFailed'));
         setPublishIssues([]);
         return;
       }
       const definition = detailRes.data.draft?.definition;
-      if (!definition) {
+      const draft = detailRes.data.draft;
+      if (!definition || !draft?.definitionSha256) {
         // 没有草稿行：发布本身会以 400「没有可发布的草稿」收场，这里不预置
         // "校验通过"来误导用户。
-        setPublishIssues([]);
+        message.error(t('workflow.publish.failed'));
+        setPublishTarget(null);
         return;
       }
       const res = await validateWorkflow(workflow.id, definition);
-      setPublishIssues(res.code === 200 ? issuesOf(res.data) : []);
+      if (generation !== publishGeneration.current) return;
+      if (res.code !== 200 || !res.data) {
+        message.error(res.message || t('workflow.publish.failed'));
+        setPublishTarget(null);
+        return;
+      }
+      setPublishIssues(issuesOf(res.data));
+      if (res.data.valid) setPublishTarget({ id: workflow.id, name: workflow.name, token: {
+        draftId: draft.id, baseVersion: draft.baseVersion, definitionSha256: draft.definitionSha256,
+      } });
+    } catch {
+      if (generation !== publishGeneration.current) return;
+      message.error(t('workflow.publish.failed'));
+      setPublishTarget(null);
     } finally {
-      setPublishLoading(false);
+      if (generation === publishGeneration.current) setPublishLoading(false);
     }
   }, [t]);
 
   const confirmPublish = useCallback(async () => {
-    if (!publishTarget) return;
+    if (!publishTarget?.token) return;
+    const generation = publishGeneration.current;
     setPublishLoading(true);
     try {
-      const res = await publishWorkflow(publishTarget.id, {});
+      const res = await publishWorkflow(publishTarget.id, publishTarget.token);
+      if (generation !== publishGeneration.current) return;
       if (res.code === 200) {
         message.success(t('workflow.publish.success'));
-        setPublishTarget(null);
+        closePublish();
         void fetchPage(page.number, keyword);
       } else if (res.code === 422) {
         setPublishIssues(issuesOf(res.data));
@@ -237,11 +272,16 @@ const WorkflowListPage: React.FC = () => {
         message.warning(t('workflow.publish.riskBlocked'));
       } else {
         message.error(res.message || t('workflow.publish.failed'));
+        setPublishTarget({ id: publishTarget.id, name: publishTarget.name });
       }
+    } catch {
+      if (generation !== publishGeneration.current) return;
+      message.error(t('workflow.publish.failed'));
+      setPublishTarget({ id: publishTarget.id, name: publishTarget.name });
     } finally {
-      setPublishLoading(false);
+      if (generation === publishGeneration.current) setPublishLoading(false);
     }
-  }, [publishTarget, fetchPage, page.number, keyword]);
+  }, [publishTarget, fetchPage, page.number, keyword, closePublish, t]);
 
   const columns: ColumnsType<WorkflowSummary> = useMemo(
     () => [
@@ -466,6 +506,7 @@ const WorkflowListPage: React.FC = () => {
           open={!!triggerTarget}
           definition={triggerTarget.definition}
           workflowName={triggerTarget.name}
+          version={triggerTarget.version}
           loading={triggerLoading}
           onCancel={() => setTriggerTarget(null)}
           onSubmit={(inputs, key) => void handleTrigger(inputs, key)}
@@ -473,14 +514,33 @@ const WorkflowListPage: React.FC = () => {
       )}
 
       {publishTarget && (
-        <PublishModal
+        <Modal
           open={!!publishTarget}
-          issues={publishIssues}
-          loading={publishLoading}
-          onCancel={() => setPublishTarget(null)}
-          onConfirm={() => void confirmPublish()}
-          onRevalidate={() => void openPublish({ id: publishTarget.id, name: publishTarget.name } as WorkflowSummary)}
-        />
+          title={t('workflow.publish.title')}
+          onCancel={closePublish}
+          width={640}
+          footer={<Space>
+            <Button onClick={closePublish}>{t('common.cancel')}</Button>
+            <Button icon={<ReloadOutlined />} onClick={() => void openPublish({ id: publishTarget.id, name: publishTarget.name } as WorkflowSummary)} loading={publishLoading}>{t('workflow.publish.revalidate')}</Button>
+            <Button type="primary" danger={publishIssues.some((issue) => issue.severity === 'ERROR')} onClick={() => void confirmPublish()} loading={publishLoading} disabled={!publishTarget.token || publishIssues.some((issue) => issue.severity === 'ERROR')}>
+              {t(publishIssues.some((issue) => issue.severity === 'ERROR') ? 'workflow.publish.blocked' : 'workflow.publish.confirm')}
+            </Button>
+          </Space>}
+        >
+          <Space direction="vertical" size={12} style={{ width: '100%' }}>
+            <Text>{t('workflow.list.col.name')}: <Text strong>{publishTarget.name}</Text></Text>
+            {publishTarget.token && publishIssues.length === 0 && <Alert type="success" showIcon message={t('workflow.publish.noIssues')} />}
+            {publishIssues.some((issue) => issue.severity === 'ERROR') && <Alert type="error" showIcon message={t('workflow.publish.errorCount', { count: publishIssues.filter((issue) => issue.severity === 'ERROR').length })} description={<Text type="secondary">{t('workflow.publish.errorHint')}</Text>} />}
+            <div className="wf-issue-list">
+              {[...publishIssues.filter((issue) => issue.severity === 'ERROR'), ...publishIssues.filter((issue) => issue.severity === 'WARNING')].map((issue, index) => (
+                <div key={`${issue.code}-${issue.nodeKey || 'definition'}-${index}`} className={`wf-issue wf-issue-${issue.severity.toLowerCase()}`}>
+                  <Space size={8} wrap><Tag color={issue.severity === 'ERROR' ? 'red' : 'orange'}>{issue.severity}</Tag><Text code>{issue.code}</Text>{issue.nodeKey && <Tag>{issue.nodeKey}</Tag>}</Space>
+                  <div>{issue.message}</div>
+                </div>
+              ))}
+            </div>
+          </Space>
+        </Modal>
       )}
 
       {page.content.length === 0 && !loading && (

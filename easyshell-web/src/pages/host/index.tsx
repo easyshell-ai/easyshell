@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import {
   Tag, Progress, Space, Button, message, theme, Steps, Alert,
   Modal, Form, Input, InputNumber, Drawer, Badge, Popconfirm, Typography, Empty,
-  Radio, Checkbox, Tooltip, Upload,
+  Radio, Checkbox, Tooltip, Upload, Spin,
 } from 'antd';
 import type { UploadFile } from 'antd';
 import {
@@ -15,12 +15,12 @@ import {
 import { ProTable } from '@ant-design/pro-components';
 import type { ProColumns, ActionType } from '@ant-design/pro-components';
 import dayjs from 'dayjs';
-import { getAgentTags, deleteHost, deleteCredential } from '../../api/host';
+import { getAgentTags, getHostList, deleteHost, deleteCredential } from '../../api/host';
+import { getMe } from '../../api/auth';
 import { getSystemConfigList } from '../../api/system';
 import {
   provisionHost, getProvisionList, getProvisionById, deleteProvision, retryProvision,
-  reinstallAgent, batchReinstallAgents, uninstallAgent,
-  getUnifiedHostList, batchDeploy, importCsv, downloadTemplate, reinstallByCredentialId,
+  batchDeploy, importCsv, downloadTemplate, reinstallByCredentialId,
 } from '../../api/provision';
 import { hostStatusMap, provisionStatusMap, getProvisionStep, provisionStepItems, getResourceColor, uninstallStepItems, getUninstallStep } from '../../utils/status';
 import { formatBytes } from '../../utils/format';
@@ -97,11 +97,20 @@ const Host: React.FC = () => {
   const [agentTags, setAgentTags] = useState<Record<string, TagVO[]>>({});
   const [dataSource, setDataSource] = useState<HostCredentialVO[]>([]);
   const [serverUrlConfigured, setServerUrlConfigured] = useState(true);
+  const [role, setRole] = useState('');
+  const isSuperAdmin = role === 'super_admin';
+  const canViewHistory = isSuperAdmin || role === 'admin';
+
+  useEffect(() => {
+    getMe().then((res) => { if (res.code === 200) setRole(res.data.role); }).catch(() => {});
+  }, []);
 
   // Provision states
   const [addModalVisible, setAddModalVisible] = useState(false);
   const [historyDrawerVisible, setHistoryDrawerVisible] = useState(false);
   const [provisionRecords, setProvisionRecords] = useState<HostCredentialVO[]>([]);
+  const [historyState, setHistoryState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const historyRequest = useRef(0);
   const [submitting, setSubmitting] = useState(false);
   const pollingTimers = useRef<Record<number, ReturnType<typeof setInterval>>>({});
   const [form] = Form.useForm();
@@ -136,6 +145,7 @@ const Host: React.FC = () => {
 
   useEffect(() => {
     return () => {
+      historyRequest.current += 1;
       Object.values(pollingTimers.current).forEach(clearInterval);
     };
   }, []);
@@ -182,19 +192,29 @@ const Host: React.FC = () => {
   }, []);
 
   const loadProvisionHistory = useCallback(async () => {
+    const request = ++historyRequest.current;
+    setHistoryState('loading');
+    setProvisionRecords([]);
     try {
       const res = await getProvisionList();
+      if (request !== historyRequest.current) return;
       if (res.code === 200) {
         setProvisionRecords(res.data || []);
+        setHistoryState('success');
         (res.data || []).forEach((r) => {
           const s = r.provisionStatus;
           if (s !== 'SUCCESS' && s !== 'FAILED' && r.id && !pollingTimers.current[r.id]) {
             pollStatus(r.id);
           }
         });
+      } else {
+        setProvisionRecords([]);
+        setHistoryState('error');
       }
     } catch {
-      message.error(t('host.loadHistoryFailed'));
+      if (request !== historyRequest.current) return;
+      setProvisionRecords([]);
+      setHistoryState('error');
     }
   }, [pollStatus]);
 
@@ -271,27 +291,6 @@ const Host: React.FC = () => {
     }
   }, [t]);
 
-  const handleReinstall = useCallback(async (agentId: string) => {
-    try {
-      const res = await reinstallAgent(agentId);
-      if (res.code === 200 && res.data) {
-        message.success(t('host.reinstallSubmitted'));
-        setProvisionRecords((prev) => {
-          const exists = prev.find((r) => r.id === res.data.id);
-          if (exists) return prev.map((r) => (r.id === res.data.id ? res.data : r));
-          return [res.data, ...prev];
-        });
-        if (res.data.id) pollStatus(res.data.id);
-        setHistoryDrawerVisible(true);
-        loadProvisionHistory();
-      } else {
-        message.error(res.message || t('host.reinstallFailed'));
-      }
-    } catch {
-      message.error(t('host.reinstallFailed'));
-    }
-  }, [pollStatus, loadProvisionHistory, t]);
-
   const handleReinstallByCredential = useCallback(async (credentialId: number) => {
     try {
       const res = await reinstallByCredentialId(credentialId);
@@ -314,49 +313,6 @@ const Host: React.FC = () => {
     }
   }, [pollStatus, loadProvisionHistory, t]);
 
-  const handleBatchReinstall = useCallback(async () => {
-    // Filter to only agent-based rows (keys starting with 'a-')
-    const agentIds = selectedRowKeys
-      .filter((k) => String(k).startsWith('a-'))
-      .map((k) => String(k).slice(2));
-    if (agentIds.length === 0) return;
-    try {
-      const res = await batchReinstallAgents(agentIds);
-      if (res.code === 200 && res.data) {
-        message.success(t('host.batchReinstallSubmitted', { count: res.data.length }));
-        setSelectedRowKeys([]);
-        res.data.forEach((vo) => { if (vo.id) pollStatus(vo.id); });
-        setHistoryDrawerVisible(true);
-        loadProvisionHistory();
-      } else {
-        message.error(res.message || t('host.batchReinstallFailed'));
-      }
-    } catch {
-      message.error(t('host.batchReinstallFailed'));
-    }
-  }, [selectedRowKeys, pollStatus, loadProvisionHistory, t]);
-
-
-  const handleUninstall = useCallback(async (agentId: string) => {
-    try {
-      const res = await uninstallAgent(agentId);
-      if (res.code === 200 && res.data) {
-        message.success(t('host.uninstallSubmitted'));
-        setProvisionRecords((prev) => {
-          const exists = prev.find((r) => r.id === res.data.id);
-          if (exists) return prev.map((r) => (r.id === res.data.id ? res.data : r));
-          return [res.data, ...prev];
-        });
-        if (res.data.id) pollStatus(res.data.id);
-        setHistoryDrawerVisible(true);
-        loadProvisionHistory();
-      } else {
-        message.error(res.message || t('host.uninstallFailed'));
-      }
-    } catch {
-      message.error(t('host.uninstallFailed'));
-    }
-  }, [pollStatus, loadProvisionHistory, t]);
 
   const handleDeleteHost = useCallback(async (agentId: string) => {
     try {
@@ -443,14 +399,6 @@ const Host: React.FC = () => {
     const record = dataSource.find((r) => r.id === id);
     return record && (record.provisionStatus === 'PENDING' || record.provisionStatus === 'FAILED' || record.provisionStatus === 'UNINSTALLED');
   }).length;
-
-  // Count agent-based selected for batch reinstall
-  const agentSelectedCount = selectedRowKeys.filter((k) => String(k).startsWith('a-') || (() => {
-    if (!String(k).startsWith('c-')) return false;
-    const id = Number(String(k).slice(2));
-    const record = dataSource.find((r) => r.id === id);
-    return record && record.agentId;
-  })()).length;
 
   const isDeployingStatus = (status: string) =>
     ['CONNECTING', 'UPLOADING', 'INSTALLING', 'STARTING', 'UNINSTALLING'].includes(status);
@@ -648,15 +596,12 @@ const Host: React.FC = () => {
             <Space size={4} wrap>
               <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => navigate(`/host/${record.agentId}`)}>{t('common.detail')}</Button>
               <Button type="link" size="small" icon={<CodeOutlined />} onClick={() => navigate(`/terminal/${record.agentId}`)} disabled={record.agentStatus !== 1}>{t('host.terminal')}</Button>
-              <Popconfirm title={t('host.confirmReinstall')} description={t('host.reinstallDescription')} onConfirm={() => handleReinstall(record.agentId!)} okText={t('common.confirm')} cancelText={t('common.cancel')}>
-                <Button type="link" size="small" icon={<ReloadOutlined />}>{t('host.reinstall')}</Button>
-              </Popconfirm>
-              <Popconfirm title={t('host.confirmUninstall')} description={t('host.uninstallDescription')} onConfirm={() => handleUninstall(record.agentId!)} okText={t('common.confirm')} cancelText={t('common.cancel')} okButtonProps={{ danger: true }}>
-                <Button type="link" size="small" danger icon={<DisconnectOutlined />}>{t('host.uninstall')}</Button>
-              </Popconfirm>
-              <Popconfirm title={t('host.confirmDeleteHost')} description={t('host.deleteHostDescription')} onConfirm={() => handleDeleteHost(record.agentId!)} okText={t('common.confirm')} cancelText={t('common.cancel')} okButtonProps={{ danger: true }}>
+              <Tooltip title={t('host.remoteUninstallUnavailable', { defaultValue: 'Remote uninstall is temporarily unavailable. Deleting a record does not uninstall the remote agent.' })}>
+                <span><Button type="link" size="small" danger disabled icon={<DisconnectOutlined />}>{t('host.uninstall')}</Button></span>
+              </Tooltip>
+              {isSuperAdmin && <Popconfirm title={t('host.confirmDeleteHost')} description={t('host.deleteDoesNotUninstall', { defaultValue: 'Deleting this record does not uninstall the remote agent.' })} onConfirm={() => handleDeleteHost(record.agentId!)} okText={t('common.confirm')} cancelText={t('common.cancel')} okButtonProps={{ danger: true }}>
                 <Button type="link" size="small" danger icon={<DeleteOutlined />}>{t('host.deleteHost')}</Button>
-              </Popconfirm>
+              </Popconfirm>}
             </Space>
           );
         }
@@ -672,7 +617,7 @@ const Host: React.FC = () => {
             <Space size={4} wrap>
               <Button type="link" size="small" icon={<RocketOutlined />}
                 onClick={() => handleReinstallByCredential(record.id!)}>{t('host.reinstall')}</Button>
-              <Popconfirm title={t('host.confirmDeleteCredential')}
+              <Popconfirm title={t('host.confirmDeleteCredential')} description={t('host.deleteDoesNotUninstall', { defaultValue: 'Deleting this record does not uninstall the remote agent.' })}
                 onConfirm={() => handleDeleteCredential(record.id!)} okText={t('common.confirm')} cancelText={t('common.cancel')}>
                 <Button type="link" size="small" danger icon={<DeleteOutlined />}>{t('host.deleteCredential')}</Button>
               </Popconfirm>
@@ -688,7 +633,7 @@ const Host: React.FC = () => {
                 <Button type="link" size="small" icon={<RocketOutlined />} onClick={() => handleRetry(record.id!)}>{t('host.deploy')}</Button>
               )}
               {record.id && (
-                <Popconfirm title={t('host.confirmDeleteCredential')} onConfirm={() => handleDeleteCredential(record.id!)} okText={t('common.confirm')} cancelText={t('common.cancel')}>
+                <Popconfirm title={t('host.confirmDeleteCredential')} description={t('host.deleteDoesNotUninstall', { defaultValue: 'Deleting this record does not uninstall the remote agent.' })} onConfirm={() => handleDeleteCredential(record.id!)} okText={t('common.confirm')} cancelText={t('common.cancel')}>
                   <Button type="link" size="small" danger icon={<DeleteOutlined />}>{t('host.deleteCredential')}</Button>
                 </Popconfirm>
               )}
@@ -701,7 +646,7 @@ const Host: React.FC = () => {
           return (
             <Space size={4} wrap>
               <Button type="link" size="small" icon={<RocketOutlined />} onClick={() => handleRetry(record.id!)}>{t('host.reinstall')}</Button>
-              <Popconfirm title={t('host.confirmDeleteCredential')} onConfirm={() => handleDeleteCredential(record.id!)} okText={t('common.confirm')} cancelText={t('common.cancel')}>
+              <Popconfirm title={t('host.confirmDeleteCredential')} description={t('host.deleteDoesNotUninstall', { defaultValue: 'Deleting this record does not uninstall the remote agent.' })} onConfirm={() => handleDeleteCredential(record.id!)} okText={t('common.confirm')} cancelText={t('common.cancel')}>
                 <Button type="link" size="small" danger icon={<DeleteOutlined />}>{t('host.deleteCredential')}</Button>
               </Popconfirm>
             </Space>
@@ -713,10 +658,14 @@ const Host: React.FC = () => {
     },
   ];
 
-  const fetchHostData = useCallback(async () => {
-    const res = await getUnifiedHostList();
+  const fetchHostData = useCallback(async (params: { current?: number; pageSize?: number }) => {
+    const res = await getHostList();
     if (res.code === 200) {
-      const entries = res.data || [];
+      const entries: HostCredentialVO[] = (res.data || []).map((agent) => ({
+        ...agent, id: null, agentId: agent.id, agentStatus: agent.status,
+        sshPort: 0, sshUsername: '', authType: '', hostName: null,
+        provisionStatus: '', provisionLog: '', errorMessage: null,
+      }));
       setDataSource(entries);
       // Fetch tags for entries that have agents
       entries.forEach((entry) => {
@@ -725,11 +674,11 @@ const Host: React.FC = () => {
             if (tagRes.code === 200) {
               setAgentTags((prev) => ({ ...prev, [entry.agentId!]: tagRes.data || [] }));
             }
-          });
+          }).catch(() => {});
         }
       });
       return {
-        data: entries,
+        data: entries.slice(((params.current || 1) - 1) * (params.pageSize || 20), (params.current || 1) * (params.pageSize || 20)),
         success: true,
         total: entries.length,
       };
@@ -739,6 +688,7 @@ const Host: React.FC = () => {
 
   return (
     <>
+      <Alert type="info" showIcon style={{ marginBottom: 16 }} message={t('host.credentialListUnavailable', { defaultValue: 'Only authorized agents are shown. Historical credentials cannot be associated with hosts because their ownership and identity cannot be verified.' })} />
       {!serverUrlConfigured && (
         <Alert
           message={t('host.serverUrlNotConfiguredTitle')}
@@ -780,7 +730,7 @@ const Host: React.FC = () => {
         reload: true,
       }}
       toolBarRender={() => [
-          pendingSelectedCount > 0 && (
+          isSuperAdmin && pendingSelectedCount > 0 && (
             <Popconfirm
               key="batchDeploy"
               title={t('host.confirmBatchDeploy', { count: pendingSelectedCount })}
@@ -793,20 +743,7 @@ const Host: React.FC = () => {
               </Button>
             </Popconfirm>
           ),
-          agentSelectedCount > 0 && (
-            <Popconfirm
-              key="batchReinstall"
-              title={t('host.confirmBatchReinstall', { count: agentSelectedCount })}
-              onConfirm={handleBatchReinstall}
-              okText={t('common.confirm')}
-              cancelText={t('common.cancel')}
-            >
-              <Button icon={<ReloadOutlined />}>
-                {t('host.batchReinstall')} ({agentSelectedCount})
-              </Button>
-            </Popconfirm>
-          ),
-          <Button
+          isSuperAdmin && <Button
             key="add"
             type="primary"
             icon={<PlusOutlined />}
@@ -814,14 +751,14 @@ const Host: React.FC = () => {
           >
             {t('host.addServer')}
           </Button>,
-          <Button
+          isSuperAdmin && <Button
             key="import"
             icon={<ImportOutlined />}
             onClick={() => setImportModalVisible(true)}
           >
             {t('host.importCSV')}
           </Button>,
-          <Button
+          canViewHistory && <Button
             key="history"
             icon={<HistoryOutlined />}
             onClick={() => {
@@ -987,9 +924,14 @@ const Host: React.FC = () => {
           </Button>
         }
       >
-        {provisionRecords.length === 0 ? (
+        <Alert type="warning" showIcon style={{ marginBottom: 16 }} message={t('host.credentialOwnershipUnknown', { defaultValue: 'Credential ownership and host identity cannot be verified. Records are not linked to agents; verify independently before taking action.' })} />
+        {historyState === 'loading' ? (
+          <Spin tip={t('host.loadingHistory', { defaultValue: 'Loading deployment history...' })}><div style={{ minHeight: 80 }} /></Spin>
+        ) : historyState === 'error' ? (
+          <Alert type="error" showIcon message={t('host.loadHistoryFailed')} action={<Button size="small" onClick={loadProvisionHistory}>{t('common.retry')}</Button>} />
+        ) : historyState === 'success' && provisionRecords.length === 0 ? (
           <Empty description={t('host.noDeployRecords')} />
-        ) : (
+        ) : historyState === 'success' ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             {provisionRecords.map((record) => {
               const statusInfo = provisionStatusMap[record.provisionStatus] || provisionStatusMap.PENDING;
@@ -1064,7 +1006,7 @@ const Host: React.FC = () => {
                       {record.createdAt}
                     </Text>
                     <Space size={8}>
-                      {record.provisionStatus === 'FAILED' && record.id && (
+                      {isSuperAdmin && record.provisionStatus === 'FAILED' && record.id && (
                         <Button
                           type="link"
                           size="small"
@@ -1074,9 +1016,10 @@ const Host: React.FC = () => {
                           {t('common.retry')}
                         </Button>
                       )}
-                      {record.id && (
+                      {isSuperAdmin && record.id && (
                         <Popconfirm
                           title={t('host.confirmDeleteRecord')}
+                          description={t('host.deleteDoesNotUninstall', { defaultValue: 'Deleting this record does not uninstall the remote agent.' })}
                           onConfirm={() => handleDelete(record.id!)}
                           okText={t('common.confirm')}
                           cancelText={t('common.cancel')}
@@ -1092,7 +1035,7 @@ const Host: React.FC = () => {
               );
             })}
           </div>
-        )}
+        ) : null}
       </Drawer>
     </>
   );

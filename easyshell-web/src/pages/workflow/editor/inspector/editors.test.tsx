@@ -8,6 +8,12 @@ import NodeFormPanel from '../NodeFormPanel';
 import type { WorkflowDefinition, WorkflowNode, WorkflowNodeType } from '../../types';
 import { invalidVariableNames, rowsToVariables } from './startVariablesModel';
 
+vi.mock('@uiw/react-codemirror', () => ({
+  default: ({ value, onChange, id, 'aria-label': label }: {
+    value: string; onChange: (value: string) => void; id?: string; 'aria-label': string;
+  }) => <textarea id={id} aria-label={label} value={value} onChange={(event) => onChange(event.target.value)} />,
+}));
+
 // LLM / classifier 表单会拉 AI 配置；测试里固定返回，避免真实 XHR 在 jsdom 拆环境后回调
 vi.mock('../../../../api/ai', () => ({
   getAiConfig: vi.fn(async () => ({
@@ -466,7 +472,9 @@ describe('Code node fields', () => {
     render(<NodeFormPanel node={target} definition={definitionFor(target)} onSave={onSave} onRequestDelete={() => {}} />);
 
     expect(screen.getByTestId('code-fields')).toBeTruthy();
-    expect(screen.getByText(/isolated data sandbox/)).toBeTruthy();
+    expect(screen.getByText('Running code requires a configured isolated execution service. If the service is not ready, execution is refused; code never runs locally on the server.')).toBeTruthy();
+    expect(screen.getByText('The sample runs in a real data sandbox. It does not dispatch host tasks or advance the workflow. Do not enter sensitive values.')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Run sample' }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: /Insert main skeleton/ }));
     const code = screen.getByLabelText('Code') as HTMLTextAreaElement;
     expect(code.value).toContain('function main(input)');
@@ -474,22 +482,26 @@ describe('Code node fields', () => {
     fireEvent.click(screen.getByRole('button', { name: /Add input/ }));
     fireEvent.change(screen.getByLabelText('Input name'), { target: { value: 'a' } });
     fireEvent.change(screen.getByLabelText('Input value'), { target: { value: '${nodes.n1.output.count}' } });
-    fireEvent.change(screen.getByLabelText('Timeout (s)'), { target: { value: '9' } });
+    fireEvent.change(screen.getByLabelText('Timeout (s)'), { target: { value: '4' } });
 
     const patch = await submit(onSave);
     expect(patch.config.language).toBe('javascript');
     expect(patch.config.code).toContain('function main(input)');
     expect(patch.config.inputs).toEqual({ a: '${nodes.n1.output.count}' });
-    expect(patch.config.timeoutSec).toBe(9);
+    expect(patch.config.timeoutSec).toBe(4);
   });
 
-  it('switches to Python and inserts the Python skeleton', () => {
+  it('switches to Python and inserts the Python skeleton', async () => {
+    const onSave = vi.fn();
     const target = node('code', {});
-    render(<NodeFormPanel node={target} definition={definitionFor(target)} onSave={() => {}} onRequestDelete={() => {}} />);
+    render(<NodeFormPanel node={target} definition={definitionFor(target)} onSave={onSave} onRequestDelete={() => {}} />);
 
     fireEvent.mouseDown(screen.getByLabelText('Language').closest('.ant-select') as HTMLElement);
     fireEvent.click(screen.getByTitle('Python'));
     fireEvent.click(screen.getByRole('button', { name: /Insert main skeleton/ }));
     expect((screen.getByLabelText('Code') as HTMLTextAreaElement).value).toContain('def main(input):');
+    const patch = await submit(onSave);
+    expect(patch.config.language).toBe('python');
+    expect(patch.config.code).toContain('def main(input):');
   });
 });

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import {
   Alert,
@@ -33,7 +33,7 @@ import '../workflow.css';
 
 const { Title, Text } = Typography;
 
-const TERMINAL = ['succeeded', 'failed', 'cancelled', 'timeout'];
+const TERMINAL = ['succeeded', 'failed', 'cancelled', 'timeout', 'interrupted'];
 
 /**
  * 运行详情（V0 只读画布）：复用 DagPlanView 的只读渲染范式 + 同一套分层 depth 算法，
@@ -46,6 +46,7 @@ const WorkflowRunMonitorPage: React.FC = () => {
 
   const [detail, setDetail] = useState<WorkflowRunDetail | null>(null);
   const [definition, setDefinition] = useState<WorkflowDefinition | null>(null);
+  const [definitionUnavailable, setDefinitionUnavailable] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState('');
@@ -54,41 +55,57 @@ const WorkflowRunMonitorPage: React.FC = () => {
   const [testRunning, setTestRunning] = useState(false);
   const [testResult, setTestResult] = useState<WorkflowTestRun | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
+  const generation = useRef(0);
 
   const load = useCallback(async () => {
     if (!runId) return;
+    const requestGeneration = ++generation.current;
     setLoading(true);
     setError(null);
     try {
       const res = await getWorkflowRun(runId);
+      if (requestGeneration !== generation.current) return;
       if (res.code === 200 && res.data) {
         setDetail(res.data);
-      } else if (res.code === 404) {
-        setError('404');
-      } else if (res.code === 403) {
-        setError('403');
       } else {
-        setError(res.message || 'error');
+        setDetail(null);
+        setDefinition(null);
+        setSelectedNodeKey(null);
+        setTestResult(null);
+        setTestError(null);
+        setError(res.code === 404 ? '404' : res.code === 403 ? '403' : 'unavailable');
       }
     } catch {
-      setError('error');
+      if (requestGeneration !== generation.current) return;
+      setDetail(null);
+      setDefinition(null);
+      setSelectedNodeKey(null);
+      setTestResult(null);
+      setTestError(null);
+      setError('unavailable');
     } finally {
-      setLoading(false);
+      if (requestGeneration === generation.current) setLoading(false);
     }
   }, [runId]);
 
   useEffect(() => {
     void load();
+    return () => { generation.current++; };
   }, [load]);
 
   // 画布要画边，需要不可变版本的 definition：run.workflowId + run.versionId 反查
   useEffect(() => {
     const run = detail?.run;
+    setDefinition(null);
+    setDefinitionUnavailable(false);
     if (!run?.workflowId || !run?.versionId) return;
     let cancelled = false;
     getWorkflowVersion(run.workflowId, run.versionId).then((res) => {
-      if (!cancelled && res.code === 200 && res.data) setDefinition(res.data.definition);
-    });
+      if (!cancelled) {
+        if (res.code === 200 && res.data) setDefinition(res.data.definition);
+        else setDefinitionUnavailable(true);
+      }
+    }).catch(() => { if (!cancelled) setDefinitionUnavailable(true); });
     return () => {
       cancelled = true;
     };
@@ -146,15 +163,17 @@ const WorkflowRunMonitorPage: React.FC = () => {
     setTestRunning(true);
     setTestError(null);
     setTestResult(null);
+    const requestGeneration = generation.current;
     try {
       const res = await testRunNode(detail.run.id, selectedNodeRun.nodeKey);
+      if (requestGeneration !== generation.current) return;
       if (res.code === 200 && res.data) {
         setTestResult(res.data);
       } else {
-        setTestError(res.message || t('workflow.run.testRunFailed'));
+        setTestError(res.code === 403 ? t('workflow.run.detailUnavailable') : (res.message || t('workflow.run.testRunFailed')));
       }
     } catch {
-      setTestError(t('workflow.run.testRunFailed'));
+      if (requestGeneration === generation.current) setTestError(t('workflow.run.testRunFailed'));
     } finally {
       setTestRunning(false);
     }
@@ -217,7 +236,7 @@ const WorkflowRunMonitorPage: React.FC = () => {
     [t]
   );
 
-  if (loading && !detail) {
+  if ((loading && !detail) || (detail && detail.run.id !== runId)) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 160 }}>
         <Spin size="large" />
@@ -233,7 +252,7 @@ const WorkflowRunMonitorPage: React.FC = () => {
         ) : error === '404' ? (
           <Alert type="error" showIcon message={t('workflow.error.run404')} description={t('workflow.error.404Desc')} />
         ) : (
-          <Alert type="error" showIcon message={t('workflow.error.generic')} description={error} />
+          <Alert type="error" showIcon message={t('workflow.run.detailUnavailable')} />
         )}
       </div>
     );
@@ -319,6 +338,8 @@ const WorkflowRunMonitorPage: React.FC = () => {
                 readOnly
                 statuses={statuses}
               />
+            ) : definitionUnavailable ? (
+              <Alert type="warning" showIcon message={t('workflow.run.detailUnavailable')} />
             ) : (
               <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 120 }}>
                 <Spin />
@@ -380,17 +401,17 @@ const WorkflowRunMonitorPage: React.FC = () => {
                   {t(`workflow.run.trigger.${run.triggerType}`)}
                 </Descriptions.Item>
                 <Descriptions.Item label={t('workflow.run.input')}>
-                  <pre className="wf-inline-json">{JSON.stringify(run.input || {}, null, 2)}</pre>
+                  {run.input == null ? t('workflow.run.dataUnavailable') : <pre className="wf-inline-json">{JSON.stringify(run.input, null, 2)}</pre>}
                 </Descriptions.Item>
                 <Descriptions.Item label={t('workflow.run.variables')}>
                   {run.variablesTruncated && <Tag color="orange">{t('workflow.run.variablesTruncated')}</Tag>}
-                  <pre className="wf-inline-json">{JSON.stringify(run.variables || {}, null, 2)}</pre>
+                  {run.variables == null ? t('workflow.run.dataUnavailable') : <pre className="wf-inline-json">{JSON.stringify(run.variables, null, 2)}</pre>}
                 </Descriptions.Item>
                 <Descriptions.Item label={t('workflow.run.output')}>
                   {run.output ? (
                     <pre className="wf-inline-json">{JSON.stringify(run.output, null, 2)}</pre>
                   ) : (
-                    '-'
+                    t('workflow.run.dataUnavailable')
                   )}
                 </Descriptions.Item>
                 {run.errorMessage && (
@@ -437,10 +458,10 @@ const WorkflowRunMonitorPage: React.FC = () => {
                 )}
               </Descriptions.Item>
               <Descriptions.Item label={t('workflow.run.inspector.input')}>
-                <pre className="wf-inline-json">{JSON.stringify(selectedNodeRun.input || {}, null, 2)}</pre>
+                {selectedNodeRun.input == null ? t('workflow.run.dataUnavailable') : <pre className="wf-inline-json">{JSON.stringify(selectedNodeRun.input, null, 2)}</pre>}
               </Descriptions.Item>
               <Descriptions.Item label={t('workflow.run.inspector.output')}>
-                <pre className="wf-inline-json">{JSON.stringify(selectedNodeRun.output || {}, null, 2)}</pre>
+                {selectedNodeRun.output == null ? t('workflow.run.dataUnavailable') : <pre className="wf-inline-json">{JSON.stringify(selectedNodeRun.output, null, 2)}</pre>}
               </Descriptions.Item>
               <Descriptions.Item label={t('workflow.run.col.error')}>
                 {selectedNodeRun.errorMessage ? <Text type="danger">{selectedNodeRun.errorMessage}</Text> : '-'}

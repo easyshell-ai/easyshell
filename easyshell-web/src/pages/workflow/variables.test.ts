@@ -77,6 +77,27 @@ describe('ancestorKeysOf', () => {
 });
 
 describe('known output schema', () => {
+  it.each(['llm', 'ai-analyze'] as WorkflowNodeType[])('only expands strict JSON schema for %s node and alias', (type) => {
+    const schema = JSON.stringify({ type: 'object', properties: { verdict: { type: 'string' } } });
+    const nodes = ['json', 'json_schema_v1'].map((mode, index) => node(`ai${index}`, type, {
+      outputVar: `alias${index}`, config: { outputMode: mode, jsonSchema: schema },
+    }));
+    const refs = workflowVariablesOf(definition({ nodes })).flatMap((group) => group.refs.map((ref) => ref.path));
+    expect(refs).toContain('nodes.ai0.output.json');
+    expect(refs).toContain('alias0.json');
+    expect(refs).not.toContain('nodes.ai0.output.json.verdict');
+    expect(refs).not.toContain('alias0.json.verdict');
+    expect(refs).toContain('nodes.ai1.output.json.verdict');
+    expect(refs).toContain('alias1.json.verdict');
+  });
+  it('discovers addressable JSON fields only from ancestor AI nodes', () => {
+    const schema = JSON.stringify({ type: 'object', properties: { verdict: { type: 'string' }, count: { type: 'integer' }, 'bad.name': { type: 'string' } } });
+    const d = definition({ nodes: [node('ai', 'llm', { config: { outputMode: 'json_schema_v1', jsonSchema: schema } }), node('other', 'llm', { config: { outputMode: 'json', jsonSchema: schema } }), node('next')], edges: [{ id: 'e', from: 'ai', to: 'next' }] });
+    const refs = availableVariablesForNode(d, 'next').flatMap((g) => g.refs);
+    expect(refs).toContainEqual(expect.objectContaining({ path: 'nodes.ai.output.json.verdict', type: 'string' }));
+    expect(refs).toContainEqual(expect.objectContaining({ path: 'nodes.ai.output.json.count', type: 'number' }));
+    expect(refs.some((r) => r.path.includes('bad.name') || r.path.includes('nodes.other.'))).toBe(false);
+  });
   it('exposes ai-analyze structured JSON outputs and localizes every description key', () => {
     const ai = knownOutputFieldsOf(node('ai', 'ai-analyze'));
     expect(ai.map((field) => field.name)).toEqual(['text', 'json', 'structured', 'model', 'truncated']);
@@ -176,8 +197,7 @@ describe('availableVariablesForNode', () => {
 
   it('returns only workflow inputs for the start node', () => {
     const groups = availableVariablesForNode(def(), 'start');
-    expect(groups).toHaveLength(2); // run.input + start outputs
+    expect(groups).toHaveLength(1); // start is not its own ancestor
     expect(groups[0].kind).toBe('input');
-    expect(groups[1].kind).toBe('start');
   });
 });

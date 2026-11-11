@@ -150,6 +150,10 @@
   min-height: 560px;
   height: calc(100vh - 230px);
 }
+/* 未保存提示占用编辑器顶部空间，不能把检查器底栏挤出视口。 */
+.wf-editor-page:has(> .wf-unsaved-notice) .wf-editor-main {
+  height: calc(100vh - 320px);
+}
 .wf-editor-palette {
   width: 240px;
   flex: 0 0 240px;

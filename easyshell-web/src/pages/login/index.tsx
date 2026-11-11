@@ -5,7 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useResponsive } from '../../hooks/useResponsive';
 import { login } from '../../api/auth';
-import { setToken } from '../../api/request';
+import { getSessionEpoch, setToken } from '../../api/request';
 import type { LoginRequest } from '../../types';
 
 const Login: React.FC = () => {
@@ -16,9 +16,11 @@ const Login: React.FC = () => {
   const { isMobile } = useResponsive();
 
   const onFinish = async (values: LoginRequest) => {
+    const epoch = getSessionEpoch();
     setLoading(true);
     try {
       const res = await login(values);
+      if (epoch !== getSessionEpoch()) return;
       if (res.code === 200 && res.data) {
         // Access token only: kept in sessionStorage so it dies with the tab, and the
         // refresh token is never persisted in the browser (see api/request.ts).
@@ -29,6 +31,7 @@ const Login: React.FC = () => {
         message.error(res.message || t('login.failed'));
       }
     } catch (error) {
+      if (epoch !== getSessionEpoch()) return;
       // The API now answers with a real 401/403/429, so surface the reason instead of a
       // generic "check your input" message.
       const status = (error as { response?: { status?: number; data?: { message?: string } } })?.response;

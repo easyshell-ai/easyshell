@@ -11,6 +11,7 @@ const Cluster = lazy(() => import('../pages/cluster'));
 const Audit = lazy(() => import('../pages/audit'));
 const TerminalPage = lazy(() => import('../pages/terminal'));
 const Users = lazy(() => import('../pages/system/users'));
+const HostPermissions = lazy(() => import('../pages/system/HostPermissions'));
 const SystemConfig = lazy(() => import('../pages/system/config'));
 const AiConfig = lazy(() => import('../pages/system/ai'));
 const BotConfig = lazy(() => import('../pages/system/bot'));
@@ -40,6 +41,7 @@ export {
   Audit,
   TerminalPage,
   Users,
+  HostPermissions,
   SystemConfig,
   AiConfig,
   BotConfig,

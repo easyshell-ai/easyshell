@@ -238,6 +238,16 @@ export interface WorkflowCanvasProps {
 const KEY_MOVE = 20;
 const KEY_MOVE_FINE = 4;
 
+// Exported for focused identity regression tests; this pure helper has no refresh state.
+// eslint-disable-next-line react-refresh/only-export-components
+export function reuseUnchangedGuides(previous: AlignmentGuide[], next: AlignmentGuide[]): AlignmentGuide[] {
+  return previous.length === next.length && previous.every((guide, index) => {
+    const other = next[index];
+    return guide.orientation === other.orientation && guide.position === other.position
+      && guide.start === other.start && guide.end === other.end;
+  }) ? previous : next;
+}
+
 function WorkflowCanvasInner(props: WorkflowCanvasProps) {
   const {
     nodes, edges, onNodesChange, onEdgesChange, onConnect, connectionContext,
@@ -256,6 +266,11 @@ function WorkflowCanvasInner(props: WorkflowCanvasProps) {
 
   // 编辑态 statuses 缺省 → 原样返回 nodes（零克隆）；监控态只克隆状态变化的节点
   const decoratedNodes = useMemo(() => applyNodeStatuses(nodes, statuses), [nodes, statuses]);
+
+  const miniMapNodeColor = useCallback((node: { id: string }) => {
+    const status = statuses?.[node.id];
+    return status ? STATUS_VAR[status] || semanticVar('pending') : 'var(--es-color-border)';
+  }, [statuses]);
 
   const rejectConnection = useCallback(
     (connection: { source: string; target: string; sourceHandle?: string | null }) => {
@@ -310,14 +325,15 @@ function WorkflowCanvasInner(props: WorkflowCanvasProps) {
   const handleNodeDrag = useCallback(
     (_event: unknown, node: WorkflowFlowNode, dragged: WorkflowFlowNode[]) => {
       const { movingBox, others } = alignmentInputs(node, dragged);
-      setGuides(computeAlignment(movingBox, others).guides);
+      const nextGuides = computeAlignment(movingBox, others).guides;
+      setGuides((previous) => reuseUnchangedGuides(previous, nextGuides));
     },
     [alignmentInputs]
   );
 
   const handleNodeDragStop = useCallback(
     (_event: unknown, node: WorkflowFlowNode, dragged: WorkflowFlowNode[]) => {
-      setGuides([]);
+      setGuides((previous) => reuseUnchangedGuides(previous, []));
       const { movingBox, others } = alignmentInputs(node, dragged);
       const { snapped } = computeAlignment(movingBox, others);
       const dx = snapped.x - movingBox.x;
@@ -482,7 +498,7 @@ function WorkflowCanvasInner(props: WorkflowCanvasProps) {
   );
 
   const handlePaneClick = useCallback(() => {
-    setGuides([]);
+    setGuides((previous) => reuseUnchangedGuides(previous, []));
   }, []);
 
   return (
@@ -539,10 +555,7 @@ function WorkflowCanvasInner(props: WorkflowCanvasProps) {
           pannable
           zoomable
           nodeStrokeWidth={3}
-          nodeColor={(node) => {
-            const status = statuses?.[node.id];
-            return status ? STATUS_VAR[status] || semanticVar('pending') : 'var(--es-color-border)';
-          }}
+          nodeColor={miniMapNodeColor}
         />
         <ViewportPortal>
           <svg className="wf-alignment-layer" aria-hidden="true">

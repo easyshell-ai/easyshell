@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Card,
   Button,
@@ -9,8 +9,8 @@ import {
   Spin,
   Tooltip,
   Space,
-  message,
   theme,
+  Alert,
 } from 'antd';
 import {
   EyeOutlined,
@@ -29,6 +29,8 @@ const AiReports: React.FC = () => {
   const { token } = theme.useToken();
   const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
+  const [listError, setListError] = useState<'identity' | 'fetch' | null>(null);
+  const requestRef = useRef(0);
   const [reports, setReports] = useState<AiInspectReport[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
@@ -36,40 +38,66 @@ const AiReports: React.FC = () => {
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detail, setDetail] = useState<AiInspectReport | null>(null);
+  const [detailId, setDetailId] = useState<number | null>(null);
+  const [detailError, setDetailError] = useState(false);
+  const detailRequestRef = useRef(0);
+
+  useEffect(() => () => { ++detailRequestRef.current; }, []);
 
   const fetchReports = useCallback(() => {
+    const requestId = ++requestRef.current;
     setLoading(true);
+    setListError(null);
     getInspectReports(page, pageSize)
       .then((res) => {
+        if (requestId !== requestRef.current) return;
         if (res.code === 200 && res.data) {
           setReports(res.data.content);
           setTotal(res.data.totalElements);
-        }
+        } else setListError(res.code === 503 ? 'identity' : 'fetch');
       })
-      .catch(() => message.error(t('reports.fetchError')))
-      .finally(() => setLoading(false));
+      .catch((error: unknown) => {
+        if (requestId !== requestRef.current) return;
+        const code = (error as { response?: { data?: { code?: number } } })?.response?.data?.code;
+        setListError(code === 503 ? 'identity' : 'fetch');
+      })
+      .finally(() => { if (requestId === requestRef.current) setLoading(false); });
   }, [page, pageSize]);
 
   useEffect(() => {
     fetchReports();
+    return () => { ++requestRef.current; };
   }, [fetchReports]);
 
   const handleViewDetail = async (id: number) => {
+    const requestId = ++detailRequestRef.current;
     setDrawerVisible(true);
+    setDetailId(id);
     setDetailLoading(true);
     setDetail(null);
+    setDetailError(false);
     try {
       const res = await getInspectReport(id);
+      if (requestId !== detailRequestRef.current) return;
       if (res.code === 200 && res.data) {
         setDetail(res.data);
       } else {
-        message.error(res.message || t('reports.detailError'));
+        setDetailError(true);
       }
     } catch {
-      message.error(t('reports.detailError'));
+      if (requestId === detailRequestRef.current) setDetailError(true);
     } finally {
-      setDetailLoading(false);
+      if (requestId === detailRequestRef.current) setDetailLoading(false);
     }
+  };
+
+  const handleCloseDetail = () => {
+    ++detailRequestRef.current;
+    setDrawerVisible(false);
+    setDetail(null);
+    setDetailId(null);
+    setDetailError(false);
+    setDetailLoading(false);
   };
 
   const columns = [
@@ -133,7 +161,7 @@ const AiReports: React.FC = () => {
     },
   ];
 
-  if (loading && reports.length === 0) {
+  if (loading) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 120 }}>
         <Spin size="large" />
@@ -153,7 +181,15 @@ const AiReports: React.FC = () => {
       </div>
 
       <Card styles={{ body: { padding: 0 } }}>
-        <Table
+        <Alert
+          type="info"
+          showIcon
+          message={t('reports.historyUnavailable')}
+          style={{ margin: 16, marginBottom: 0 }}
+        />
+        {listError ? <Alert type="error" showIcon message={listError === 'identity'
+          ? t('resourceIdentity.unavailable', { defaultValue: 'Permissions or resource identity cannot currently be verified. Please contact an administrator.' })
+          : t('resourceIdentity.fetchFailed', { defaultValue: 'Unable to load data. Check your connection and retry; contact an administrator if the problem persists.' })} /> : <Table
           dataSource={reports}
           columns={columns}
           rowKey="id"
@@ -170,19 +206,28 @@ const AiReports: React.FC = () => {
               setPageSize(ps);
             },
           }}
-        />
+        />}
       </Card>
 
       <Drawer
         title={t('reports.detailTitle')}
         open={drawerVisible}
-        onClose={() => setDrawerVisible(false)}
+        onClose={handleCloseDetail}
         width={700}
       >
         {detailLoading ? (
           <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 80 }}>
             <Spin size="large" />
           </div>
+        ) : detailError ? (
+          <Alert
+            type="error"
+            showIcon
+            message={t('reports.detailUnavailable', { defaultValue: 'Report details are unavailable. Please retry.' })}
+            action={<Button onClick={() => { if (detailId !== null) void handleViewDetail(detailId); }}>
+              {t('common.retry', { defaultValue: 'Retry' })}
+            </Button>}
+          />
         ) : detail ? (
           <div>
             <div style={{ marginBottom: 20 }}>

@@ -80,7 +80,7 @@ export const HelpDrawer: React.FC<HelpDrawerProps> = ({ open, onClose }) => {
                   <Typography.Text strong>{t(`workflow.node.type.${entry.type}`)}</Typography.Text>
                   {entry.fixed && <Tag>{t('workflow.node.fixed')}</Tag>}
                 </Space>
-                <div className="wf-help-node-desc">{t(`workflow.node.desc.${entry.type}`)}</div>
+                <div className="wf-help-node-desc">{entry.type === 'code' ? t('workflow.code.unavailableNotice') : t(`workflow.node.desc.${entry.type}`)}</div>
               </div>
             </div>
           ))}
@@ -99,7 +99,7 @@ export const HelpDrawer: React.FC<HelpDrawerProps> = ({ open, onClose }) => {
                 </span>
                 <Typography.Text strong>{t(`workflow.node.type.${type}`)}</Typography.Text>
               </Space>
-              <div className="wf-help-node-desc">{t(`workflow.help.aiNodes.${type}.desc`)}</div>
+              <div className="wf-help-node-desc">{type === 'code' ? t('workflow.code.unavailableNotice') : t(`workflow.help.aiNodes.${type}.desc`)}</div>
               <pre className="wf-inline-json">{t(`workflow.help.aiNodes.${type}.example`)}</pre>
             </div>
           ))}
@@ -124,7 +124,7 @@ export const HelpDrawer: React.FC<HelpDrawerProps> = ({ open, onClose }) => {
           <Alert type="warning" showIcon message={t('workflow.help.security.ai')} />
           <Alert type="info" showIcon message={t('workflow.help.security.approval')} />
           <Alert type="info" showIcon message={t('workflow.help.security.script')} />
-          <Alert type="info" showIcon message={t('workflow.help.security.code')} />
+          <Alert type="warning" showIcon message={t('workflow.code.unavailableNotice')} />
           <Alert type="info" showIcon message={t('workflow.help.security.host')} />
         </Space>
       </div>

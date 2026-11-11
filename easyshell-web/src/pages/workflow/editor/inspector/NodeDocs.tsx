@@ -26,7 +26,7 @@ export const NodeDocs: React.FC<NodeDocsProps> = ({ type }) => {
         </Typography.Title>
         <Tag>{t(`workflow.node.category.${nodeRegistryEntry(type).category}`)}</Tag>
       </div>
-      <Typography.Paragraph>{t(`${base}.purpose`)}</Typography.Paragraph>
+      <Typography.Paragraph>{type === 'code' ? t('workflow.code.unavailableNotice') : t(`${base}.purpose`)}</Typography.Paragraph>
       <Typography.Text strong>{t('workflow.inspector.docs.when')}</Typography.Text>
       <Typography.Paragraph type="secondary">{t(`${base}.when`)}</Typography.Paragraph>
       <Space direction="vertical" size={4} style={{ width: '100%' }}>
@@ -49,8 +49,14 @@ export const NodeDocs: React.FC<NodeDocsProps> = ({ type }) => {
           </>
         )}
       </div>
-      {SECURITY_TYPES.includes(type) && (
+      {SECURITY_TYPES.includes(type) && type !== 'approval' && type !== 'script-exec' && type !== 'llm' && type !== 'code' && (
         <Alert type="warning" showIcon message={t(`workflow.inspector.docs.security.${type}`)} />
+      )}
+      {type === 'llm' && (
+        <Alert type="warning" showIcon message={t('workflow.inspector.docs.llmExecutionWarning', { defaultValue: 'LLM output cannot be raw script parameters; host execution uses script-exec and remains subject to the risk gate.' })} />
+      )}
+      {(type === 'approval' || type === 'script-exec' || type === 'llm') && (
+        <Alert type="warning" showIcon message={t('workflow.inspector.docs.highRiskApprovalUnavailable', { defaultValue: 'High-risk approval binding is not implemented. An approval node does not authorize a high-risk command, which may still be blocked.' })} />
       )}
     </div>
   );

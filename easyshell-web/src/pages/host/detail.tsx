@@ -17,6 +17,7 @@ import {
   triggerDetection, parseDetection, getHostSoftware, getDockerContainers,
 } from '../../api/host';
 import type { Agent, TagVO, Job, MetricSnapshot, HostSoftwareInventory } from '../../types';
+import { queryMyHostPermissions } from '../../api/myHostPermissions';
 
 const statusMap: Record<number, { color: string; text: string }> = {
   0: { color: 'red', text: 'offline' },
@@ -85,6 +86,7 @@ const HostDetail: React.FC = () => {
   const [metricsRange, setMetricsRange] = useState('1h');
   const [metrics, setMetrics] = useState<MetricSnapshot[]>([]);
   const [metricsLoading, setMetricsLoading] = useState(false);
+  const [terminalPermission, setTerminalPermission] = useState<{ agentId: string; state: 'unknown' | 'denied' | 'allowed' | 'error' } | null>(null);
 
   // Software inventory state
   const [software, setSoftware] = useState<HostSoftwareInventory[]>([]);
@@ -187,6 +189,30 @@ const HostDetail: React.FC = () => {
   }, [fetchData]);
 
   useEffect(() => {
+    if (!agentId) return;
+    let active = true;
+    let sequence = 0;
+    const refresh = () => {
+      const current = ++sequence;
+      setTerminalPermission({ agentId, state: 'unknown' });
+      queryMyHostPermissions([agentId]).then((res) => {
+        if (!active || current !== sequence) return;
+        if (res.code !== 200 || !Array.isArray(res.data)) {
+          setTerminalPermission({ agentId, state: 'error' });
+          return;
+        }
+        const permission = res.data.find((item) => item.agentId === agentId);
+        setTerminalPermission({ agentId, state: permission?.view === true && permission.terminal === true ? 'allowed' : 'denied' });
+      }).catch(() => {
+        if (active && current === sequence) setTerminalPermission({ agentId, state: 'error' });
+      });
+    };
+    refresh();
+    const timer = setInterval(refresh, 10000);
+    return () => { active = false; clearInterval(timer); };
+  }, [agentId]);
+
+  useEffect(() => {
     fetchMetrics(metricsRange);
   }, [fetchMetrics, metricsRange]);
 
@@ -209,6 +235,12 @@ const HostDetail: React.FC = () => {
   }
 
   const s = statusMap[agent.status] || statusMap[0];
+  const permissionState = terminalPermission && terminalPermission.agentId === agentId ? terminalPermission.state : 'unknown';
+  const terminalEnabled = agent.id === agentId && agent.status === 1 && permissionState === 'allowed';
+  const terminalHint = permissionState === 'unknown' ? t('hostDetail.terminalPermissionUnknown')
+    : permissionState === 'error' ? t('hostDetail.terminalPermissionError')
+      : permissionState === 'denied' ? t('hostDetail.terminalPermissionDenied')
+        : agent.status !== 1 ? t('hostDetail.terminalOffline') : undefined;
 
   const jobColumns: ColumnsType<Job> = [
     { title: t('hostDetail.taskId'), dataIndex: 'taskId', key: 'taskId', width: 200, ellipsis: true },
@@ -304,9 +336,10 @@ const HostDetail: React.FC = () => {
     <div>
       <Space style={{ marginBottom: 16 }}>
         <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/host')}>{t('common.back')}</Button>
-        <Button type="primary" icon={<CodeOutlined />} onClick={() => navigate(`/terminal/${agentId}`)} disabled={agent.status !== 1}>
+        <Button type="primary" icon={<CodeOutlined />} onClick={() => navigate(`/terminal/${agentId}`)} disabled={!terminalEnabled} title={terminalHint}>
           {t('hostDetail.webTerminal')}
         </Button>
+        {terminalHint && <Typography.Text type="secondary">{terminalHint}</Typography.Text>}
         <Typography.Title level={4} style={{ margin: 0 }}>
           <DesktopOutlined style={{ marginRight: 8 }} />
           {agent.hostname}

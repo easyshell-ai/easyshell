@@ -3,7 +3,7 @@ import {
   BaseEdge,
   EdgeLabelRenderer,
   getBezierPath,
-  useInternalNode,
+  useStore,
   type EdgeProps,
 } from '@xyflow/react';
 import { conditionBadgeTitle, edgePillOf } from './edgeStyle';
@@ -34,8 +34,10 @@ export default function WorkflowEdge(props: EdgeProps<WorkflowFlowEdge>) {
   } = props;
 
   const [hovered, setHovered] = useState(false);
-  const sourceNode = useInternalNode<WorkflowFlowNode>(source);
-  const sourceType = sourceNode?.data?.nodeType ?? data?.sourceType;
+  const sourceNodeType = useStore(
+    (state) => (state.nodeLookup.get(source)?.data as WorkflowFlowNode['data'] | undefined)?.nodeType,
+  );
+  const sourceType = sourceNodeType ?? data?.sourceType;
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
     sourceY,
