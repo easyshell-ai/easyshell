@@ -6,7 +6,8 @@ int main(int argc, char **argv) {
     (void)argv;
     if (argc != 1) return 64;
     char *const args[] = {
-        "/opt/java/openjdk/bin/java", "-Xmx256m", "-Duser.home=/tmp",
+        "/opt/java/openjdk/bin/java", "-Xms16m", "-Xmx256m",
+        "-XX:+UseSerialGC", "-XX:ActiveProcessorCount=2", "-Duser.home=/tmp",
         "-Djava.io.tmpdir=/tmp", "-Dtruffle.UseFallbackRuntime=true",
         "-Dpolyglot.engine.WarnInterpreterOnly=false",
         "-Dpolyglot.engine.resourcePath=/opt/code-worker/resources",

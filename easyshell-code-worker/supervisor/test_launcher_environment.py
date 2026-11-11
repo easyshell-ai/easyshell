@@ -25,9 +25,9 @@ class LauncherEnvironmentTest(unittest.TestCase):
 extern char **environ;
 int main(int argc, char **argv) {
     if (environ[0] != 0) return 81;
-    if (argc != 10) return 82;
+    if (argc != 13) return 82;
     if (strcmp(argv[0], "/opt/java/openjdk/bin/java")) return 83;
-    if (strcmp(argv[9], "com.easyshell.codeworker.IsolationWorker")) return 84;
+    if (strcmp(argv[12], "com.easyshell.codeworker.IsolationWorker")) return 84;
     return 0;
 }
 ''')
