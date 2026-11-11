@@ -160,20 +160,22 @@ const Dashboard: React.FC = () => {
   const ok = token.colorSuccess;
   const bad = token.colorError;
   const warn = token.colorWarning;
+  const unavailable = t('dashboard.statisticsUnavailable');
+  const taskValue = (value: number | null | undefined) => stats?.tasksAvailable === true && value != null ? value : unavailable;
 
   const statCards = [
     { title: t('dashboard.totalHosts'), value: stats?.totalAgents ?? 0, icon: <DesktopOutlined />, color: accent },
     { title: t('dashboard.onlineHosts'), value: stats?.onlineAgents ?? 0, icon: <CheckCircleOutlined />, color: ok },
     { title: t('dashboard.offlineHosts'), value: stats?.offlineAgents ?? 0, icon: <CloseCircleOutlined />, color: bad },
     { title: t('dashboard.unstable'), value: stats?.unstableAgents ?? 0, icon: <WarningOutlined />, color: warn },
-    { title: t('dashboard.totalScripts'), value: stats?.totalScripts ?? 0, icon: <CodeOutlined />, color: accent },
-    { title: t('dashboard.totalTasks'), value: stats?.totalTasks ?? 0, icon: <PlayCircleOutlined />, color: accent },
+    { title: t('dashboard.totalScripts'), value: stats?.scriptsAvailable === true && stats.totalScripts != null ? stats.totalScripts : unavailable, icon: <CodeOutlined />, color: accent },
+    { title: t('dashboard.totalTasks'), value: taskValue(stats?.totalTasks), icon: <PlayCircleOutlined />, color: accent },
   ];
 
   const todayCards = [
-    { title: t('dashboard.todayTasks'), value: stats?.todayTasks ?? 0, icon: <CalendarOutlined />, color: accent },
-    { title: t('dashboard.todaySuccess'), value: stats?.todaySuccessTasks ?? 0, icon: <CheckSquareOutlined />, color: ok },
-    { title: t('dashboard.todayFailed'), value: stats?.todayFailedTasks ?? 0, icon: <CloseSquareOutlined />, color: bad },
+    { title: t('dashboard.todayTasks'), value: taskValue(stats?.todayTasks), icon: <CalendarOutlined />, color: accent },
+    { title: t('dashboard.todaySuccess'), value: taskValue(stats?.todaySuccessTasks), icon: <CheckSquareOutlined />, color: ok },
+    { title: t('dashboard.todayFailed'), value: taskValue(stats?.todayFailedTasks), icon: <CloseSquareOutlined />, color: bad },
   ];
 
   const alertCount = (stats?.highCpuAgents ?? 0) + (stats?.highMemAgents ?? 0) + (stats?.highDiskAgents ?? 0);
@@ -203,8 +205,8 @@ const Dashboard: React.FC = () => {
         <Col xs={12} sm={8} lg={6}>
           <StatTile
             title={t('dashboard.taskSuccessRate')}
-            value={stats?.taskSuccessRate != null ? Number(stats.taskSuccessRate).toFixed(1) : '-'}
-            suffix={stats?.taskSuccessRate != null ? '%' : undefined}
+            value={stats?.tasksAvailable === true && stats.taskSuccessRate != null ? Number(stats.taskSuccessRate).toFixed(1) : unavailable}
+            suffix={stats?.tasksAvailable === true && stats.taskSuccessRate != null ? '%' : undefined}
             icon={<TrophyOutlined />}
             accent={accent}
           />
@@ -281,15 +283,15 @@ const Dashboard: React.FC = () => {
         size="small"
         data-testid="recent-tasks-card"
         title={<span style={{ color: token.colorText }}>{t('dashboard.recentTasks')}</span>}
-        extra={<Typography.Text style={{ fontSize: 12, color: token.colorTextSecondary }}>{t('dashboard.last10')}</Typography.Text>}
+        extra={stats?.tasksAvailable === true && stats.recentTasks != null ? <Typography.Text style={{ fontSize: 12, color: token.colorTextSecondary }}>{t('dashboard.last10')}</Typography.Text> : null}
       >
-        <Table<Task>
+        {stats?.tasksAvailable === true && stats.recentTasks != null ? <Table<Task>
           columns={recentTaskColumns}
-          dataSource={stats?.recentTasks || []}
+          dataSource={stats.recentTasks}
           rowKey="id"
           size="small"
           pagination={false}
-        />
+        /> : <Typography.Text>{unavailable}</Typography.Text>}
       </Card>
     </div>
   );

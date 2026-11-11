@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Button,
@@ -23,48 +23,77 @@ import PageShell from '../../layouts/PageShell';
 import './workflow.css';
 
 const { Text } = Typography;
+type ApprovalItem = WorkflowApproval & { canApprove?: boolean; canReject?: boolean };
+const isRestricted = (item: ApprovalItem) => item.canApprove === false || !item.title || !item.nodeType || !item.runId;
 
 /** 工作流审批中心（仿 pages/ai/approval.tsx：待我审批 + 通过/拒绝） */
 const WorkflowApprovalsPage: React.FC = () => {
   const { t } = useTranslation();
   const { token } = theme.useToken();
   const [loading, setLoading] = useState(false);
-  const [approvals, setApprovals] = useState<WorkflowApproval[]>([]);
-  const [detail, setDetail] = useState<WorkflowApproval | null>(null);
+  const [approvals, setApprovals] = useState<ApprovalItem[]>([]);
+  const [detail, setDetail] = useState<ApprovalItem | null>(null);
+  const [unavailable, setUnavailable] = useState(false);
+  const generation = useRef(0);
 
   const fetchApprovals = useCallback(() => {
+    const current = ++generation.current;
     setLoading(true);
     getPendingWorkflowApprovals()
       .then((res) => {
-        if (res.code === 200 && res.data) setApprovals(res.data);
-        else message.error(res.message || t('workflow.approval.fetchError'));
+        if (current !== generation.current) return;
+        if (res.code === 200 && res.data) {
+          const items = res.data;
+          setApprovals(items);
+          setDetail((previous) => previous ? items.find((item) => item.id === previous.id) ?? null : null);
+          setUnavailable(false);
+        } else {
+          setApprovals([]);
+          setDetail(null);
+          setUnavailable(true);
+        }
       })
-      .catch(() => message.error(t('workflow.approval.fetchError')))
-      .finally(() => setLoading(false));
+      .catch(() => { if (current === generation.current) { setApprovals([]); setDetail(null); setUnavailable(true); } })
+      .finally(() => { if (current === generation.current) setLoading(false); });
   }, [t]);
 
   useEffect(() => {
     fetchApprovals();
     const timer = window.setInterval(fetchApprovals, 15000);
-    return () => window.clearInterval(timer);
+    return () => { generation.current++; window.clearInterval(timer); };
   }, [fetchApprovals]);
 
   const decide = useCallback(
-    async (approval: WorkflowApproval, decision: 'approved' | 'rejected') => {
+    async (approval: ApprovalItem, decision: 'approved' | 'rejected') => {
+      if (decision === 'approved' && isRestricted(approval) || decision === 'rejected' && approval.canReject === false) return;
+      try {
       const res = await decideWorkflowApproval(approval.id, { decision });
       if (res.code === 200) {
         message.success(decision === 'approved' ? t('workflow.approval.approveSuccess') : t('workflow.approval.rejectSuccess'));
         fetchApprovals();
       } else if (res.code === 409) {
         message.warning(t('workflow.approval.decided'));
+      } else if (res.code === 403) {
+        generation.current++;
+        setLoading(false);
+        setApprovals([]);
+        setDetail(null);
+        setUnavailable(true);
       } else {
         message.error(res.message || t('workflow.approval.decideFailed'));
+      }
+      } catch {
+        generation.current++;
+        setLoading(false);
+        setApprovals([]);
+        setDetail(null);
+        setUnavailable(true);
       }
     },
     [fetchApprovals, t]
   );
 
-  const columns: ColumnsType<WorkflowApproval> = [
+  const columns: ColumnsType<ApprovalItem> = [
     {
       title: t('workflow.approval.col.title'),
       dataIndex: 'title',
@@ -72,10 +101,12 @@ const WorkflowApprovalsPage: React.FC = () => {
       ellipsis: true,
       render: (title: string, record) => (
         <Space direction="vertical" size={0}>
+          {isRestricted(record) ? <Text>{t('workflow.approval.restrictedReason')}</Text> : <>
           <Text strong style={{ color: token.colorText }}>{title}</Text>
           <Text type="secondary" style={{ fontSize: 12 }}>
             {record.workflowName || `#${record.workflowId ?? '-'}`} · {record.nodeKey}
           </Text>
+          </>}
         </Space>
       ),
     },
@@ -84,15 +115,15 @@ const WorkflowApprovalsPage: React.FC = () => {
       dataIndex: 'nodeType',
       key: 'nodeType',
       width: 110,
-      render: (type: string) => t(`workflow.node.type.${type}`, type),
+      render: (type: string, record) => isRestricted(record) ? '-' : t(`workflow.node.type.${type}`, type),
     },
     {
       title: t('workflow.approval.col.risk'),
       dataIndex: 'riskLevel',
       key: 'riskLevel',
       width: 110,
-      render: (level: string | null) =>
-        level ? (
+      render: (level: string | null, record) =>
+        !isRestricted(record) && level ? (
           <Tag color={level === 'BANNED' ? 'purple' : level === 'HIGH' ? 'red' : level === 'MEDIUM' ? 'orange' : 'green'}>
             {level}
           </Tag>
@@ -127,21 +158,23 @@ const WorkflowApprovalsPage: React.FC = () => {
       width: 200,
       render: (_, record) => (
         <Space>
-          <Button type="link" size="small" onClick={() => setDetail(record)}>
+          <Button type="link" size="small" disabled={isRestricted(record)} onClick={() => setDetail(record)}>
             {t('common.detail')}
           </Button>
           <Popconfirm
+            disabled={isRestricted(record)}
             title={t('workflow.approval.confirmApprove')}
             description={t('workflow.approval.confirmApproveDesc')}
             okText={t('common.confirm')}
             cancelText={t('common.cancel')}
             onConfirm={() => void decide(record, 'approved')}
           >
-            <Button type="primary" size="small" icon={<CheckCircleOutlined />}>
+            <Button type="primary" size="small" disabled={isRestricted(record)} icon={<CheckCircleOutlined />}>
               {t('workflow.approval.approve')}
             </Button>
           </Popconfirm>
           <Popconfirm
+            disabled={record.canReject === false}
             title={t('workflow.approval.confirmReject')}
             description={t('workflow.approval.confirmRejectDesc')}
             okText={t('common.confirm')}
@@ -149,7 +182,7 @@ const WorkflowApprovalsPage: React.FC = () => {
             okButtonProps={{ danger: true }}
             onConfirm={() => void decide(record, 'rejected')}
           >
-            <Button danger size="small" icon={<CloseCircleOutlined />}>
+            <Button danger size="small" disabled={record.canReject === false} icon={<CloseCircleOutlined />}>
               {t('workflow.approval.reject')}
             </Button>
           </Popconfirm>
@@ -168,8 +201,9 @@ const WorkflowApprovalsPage: React.FC = () => {
         </Button>
       }
     >
+      {unavailable && <Alert type="warning" showIcon message={t('workflow.approval.dataUnavailable')} />}
       <Card styles={{ body: { padding: 0 } }}>
-        <Table<WorkflowApproval>
+        <Table<ApprovalItem>
           columns={columns}
           dataSource={approvals}
           rowKey="id"
@@ -182,12 +216,12 @@ const WorkflowApprovalsPage: React.FC = () => {
 
       <Modal
         title={t('workflow.approval.detailTitle')}
-        open={!!detail}
+        open={!!detail && !isRestricted(detail)}
         onCancel={() => setDetail(null)}
         footer={null}
         width={640}
       >
-        {detail && (
+        {detail && !isRestricted(detail) && (
           <Descriptions size="small" column={1}>
             <Descriptions.Item label={t('workflow.approval.col.title')}>{detail.title}</Descriptions.Item>
             <Descriptions.Item label={t('workflow.run.col.nodeKey')}>{detail.nodeKey}</Descriptions.Item>
@@ -200,7 +234,7 @@ const WorkflowApprovalsPage: React.FC = () => {
               {detail.detail ? (
                 <pre className="wf-inline-json">{JSON.stringify(detail.detail, null, 2)}</pre>
               ) : (
-                '-'
+                t('workflow.approval.dataUnavailable')
               )}
             </Descriptions.Item>
             {detail.status === 'pending' && (
@@ -215,7 +249,7 @@ const WorkflowApprovalsPage: React.FC = () => {
                   <Button type="primary" onClick={() => { void decide(detail, 'approved'); setDetail(null); }}>
                     {t('workflow.approval.approve')}
                   </Button>
-                  <Button danger onClick={() => { void decide(detail, 'rejected'); setDetail(null); }}>
+                  <Button danger disabled={detail.canReject === false} onClick={() => { void decide(detail, 'rejected'); setDetail(null); }}>
                     {t('workflow.approval.reject')}
                   </Button>
                 </Space>

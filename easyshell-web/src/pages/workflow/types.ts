@@ -61,10 +61,11 @@ export interface TargetsConfig {
 }
 
 export interface ScriptExecConfig {
-  /** 脚本文本（未渲染，含 {{NAME}} 槽位）；与 scriptId 二选一 */
+  /** 预校验文本；库来源发布时由服务端核对并快照。 */
   script?: string;
-  /** 可选：脚本库引用（1.3.0 语义，当前服务端不读，仅随定义保存） */
+  /** 旧草稿字段，不用于启用脚本库来源。 */
   scriptId?: string;
+  scriptSource?: ScriptLibrarySource;
   /** 槽位取值：字面量或 ${path} 表达式 */
   parameters?: Record<string, string>;
   /** 声明为 `{{NAME:raw}}` 的参数名（必须同时 riskPolicy >= allow_medium） */
@@ -77,6 +78,13 @@ export interface ScriptExecConfig {
   riskPolicy?: 'block' | 'allow_medium' | 'strict';
   /** task 派发超时秒（节点级 timeoutSec 之外的第二口径，见执行器 :328） */
   timeoutSeconds?: number;
+}
+
+export interface ScriptLibrarySource {
+  kind: 'library-v1';
+  scriptId: number;
+  version: number;
+  sha256: string;
 }
 
 export interface NotifyConfig {
@@ -136,7 +144,7 @@ export interface TransformConfig {
   mappings?: TransformMapping[];
 }
 
-export type AiOutputMode = 'text' | 'json';
+export type AiOutputMode = 'text' | 'json' | 'json_schema_v1' | (string & {});
 
 export interface AiAnalyzeConfig {
   instructions?: string;
@@ -146,7 +154,7 @@ export interface AiAnalyzeConfig {
   maxInputChars?: number;
   /** text(默认) / json：json 模式要求模型返回结构化 JSON */
   outputMode?: AiOutputMode;
-  /** json 模式的 schema 提示（仅作为提示词指导，不参与本地 schema 校验） */
+  /** 旧 json 模式为提示词；json_schema_v1 由服务端校验。 */
   jsonSchema?: string;
 }
 
@@ -190,7 +198,7 @@ export interface CodeConfig {
   language?: CodeLanguage;
   code?: string;
   inputs?: Record<string, string>;
-  /** 1..15 */
+  /** Guest execution budget: 1..5 seconds; isolated startup has a separate bounded allowance. */
   timeoutSec?: number;
 }
 
@@ -277,6 +285,7 @@ export interface WorkflowVersionSummary {
   id: number;
   version: number;
   baseVersion: number;
+  definitionSha256?: string | null;
   changelog?: string | null;
   isValid: boolean;
   estimatedRisk?: string | null;
@@ -334,24 +343,29 @@ export type NodeRunStatus =
   | 'cancelled'
   | 'timeout';
 
-export interface WorkflowRun {
+/** 列表、触发和取消只返回控制字段，不包含运行快照。 */
+export interface WorkflowRunControlSummary {
   id: string;
   workflowId: number;
   versionId: number;
   versionNo: number;
   triggerType: 'manual' | 'scheduled' | 'replay';
   status: RunStatus;
-  input: Record<string, unknown>;
+  cancelRequested: boolean;
+  startedBy: number;
+  createdAt: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  durationMs?: number | null;
+}
+
+export interface WorkflowRun extends WorkflowRunControlSummary {
+  input?: Record<string, unknown> | null;
   output?: Record<string, unknown> | null;
   errorMessage?: string | null;
   variables?: Record<string, unknown> | null;
   variablesTruncated?: boolean;
   currentNodes?: string[] | null;
-  cancelRequested?: boolean;
-  startedBy: number;
-  createdAt: string;
-  updatedAt?: string | null;
-  finishedAt?: string | null;
 }
 
 export interface WorkflowNodeRun {

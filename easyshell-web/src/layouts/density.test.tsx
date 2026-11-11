@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeAll } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { afterEach, describe, it, expect, beforeAll } from 'vitest';
+import { cleanup, render, screen } from '@testing-library/react';
 import { ConfigProvider, Table } from 'antd';
 import DensityScope from './density';
 import {
@@ -13,6 +13,8 @@ import {
   ICON_BUTTON_SIZE,
 } from './layoutConstants';
 import { darkTheme } from '../theme/themeConfig';
+
+afterEach(cleanup);
 
 /**
  * jsdom 没有 matchMedia，而 antd 的 Grid（Row/Col）一挂载就订阅断点。

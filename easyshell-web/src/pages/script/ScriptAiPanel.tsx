@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Button, Select, Input, Space, Typography, message, theme, Tabs, Tag, Tooltip } from 'antd';
+import { Alert, Button, Select, Input, Space, Typography, message, theme, Tabs, Tag, Tooltip } from 'antd';
 import {
   RobotOutlined, ThunderboltOutlined, CheckOutlined, StopOutlined,
   CodeOutlined, DiffOutlined, FileTextOutlined, LoadingOutlined,
@@ -508,6 +508,13 @@ const ScriptAiPanel: React.FC<ScriptAiPanelProps> = ({ scriptType, currentScript
           </Tooltip>
         )}
       </div>
+
+      <Alert
+        type="warning"
+        showIcon
+        title={t('script.ai.externalDataWarningTitle')}
+        description={t('script.ai.externalDataWarningDescription')}
+      />
 
       {/* OS Selector */}
       <div>

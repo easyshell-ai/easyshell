@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { matchPath, useBlocker, useNavigate, useParams } from 'react-router-dom';
 import {
   Alert,
   Button,
@@ -38,6 +38,7 @@ import {
   triggerWorkflowRun,
   validateWorkflow,
 } from '../api';
+import type { DraftToken, PublishRequest } from '../api';
 import type {
   ValidationIssue,
   WorkflowDefinition,
@@ -45,6 +46,7 @@ import type {
   WorkflowNode,
   WorkflowNodeType,
   WorkflowVersionDetail,
+  WorkflowVersionSummary,
   VariableSpec,
 } from '../types';
 import {
@@ -70,6 +72,7 @@ import { HelpDrawer } from './inspector/HelpDrawer';
 import { TemplateGallery } from './templates/TemplateGallery';
 import type { WorkflowTemplateId } from './templates';
 import '../workflow.css';
+import { getSessionEpoch, subscribeSessionEpoch } from '../../../api/request';
 
 const { Title, Text } = Typography;
 
@@ -93,6 +96,10 @@ const EMPTY_DRAFT: WorkflowVersionDetail = {
 
 const FIXED_TYPES: WorkflowNodeType[] = ['start', 'end'];
 
+function validWorkflowId(id: string | undefined): boolean {
+  return !!id && /^[1-9]\d*$/.test(id) && Number.isSafeInteger(Number(id));
+}
+
 function isFixedNode(node: WorkflowNode): boolean {
   return FIXED_TYPES.includes(node.type);
 }
@@ -108,7 +115,7 @@ function useNarrowLayout(): boolean {
   return narrow;
 }
 
-const WorkflowEditorPage: React.FC = () => {
+const WorkflowEditorPageContent: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const workflowId = Number(id);
   const navigate = useNavigate();
@@ -125,28 +132,51 @@ const WorkflowEditorPage: React.FC = () => {
   const [publishOpen, setPublishOpen] = useState(false);
   const [publishIssues, setPublishIssues] = useState<ValidationIssue[]>([]);
   const [publishLoading, setPublishLoading] = useState(false);
-  const [triggerOpen, setTriggerOpen] = useState(false);
+  const [publishToken, setPublishToken] = useState<PublishRequest | null>(null);
+  const publishSnapshot = useRef<string | null>(null);
+  const savedDraft = useRef<WorkflowVersionSummary | null>(null);
+  const [triggerVersion, setTriggerVersion] = useState<WorkflowVersionDetail | null>(null);
+  const triggerOpen = triggerVersion !== null;
   const [triggerLoading, setTriggerLoading] = useState(false);
+  const [emptyGuideDismissed, setEmptyGuideDismissed] = useState(false);
   const [conflictOpen, setConflictOpen] = useState(false);
+  const [conflictTarget, setConflictTarget] = useState<DraftToken | null>(null);
   const [conflictBusy, setConflictBusy] = useState(false);
+  const discardInFlight = useRef(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [validateOpen, setValidateOpen] = useState(false);
   const [validateIssues, setValidateIssues] = useState<ValidationIssue[]>([]);
   const [validateLoading, setValidateLoading] = useState(false);
+  const detailGeneration = useRef(0);
+  const activeWorkflow = useRef(workflowId);
+  useLayoutEffect(() => {
+    activeWorkflow.current = workflowId;
+    return () => { detailGeneration.current += 1; };
+  }, [workflowId]);
 
   const loadDetail = useCallback(async () => {
+    const generation = ++detailGeneration.current;
+    const epoch = getSessionEpoch();
+    const current = () => epoch === getSessionEpoch() && activeWorkflow.current === workflowId && detailGeneration.current === generation;
+    setConflictBusy(false);
+    setConflictOpen(false);
+    setConflictTarget(null);
     setLoading(true);
     setLoadError(null);
     try {
       const res = await getWorkflowDetail(workflowId);
+      if (!current()) return;
       if (res.code === 200 && res.data) {
         setDetail(res.data);
         if (res.data.draft) {
+          savedDraft.current = res.data.draft;
           setDraft(res.data.draft);
         } else if (res.data.workflow.currentVersionId) {
+          savedDraft.current = null;
           // 已发布但没有草稿：先展示当前发布版本，用户下一次保存会由服务端新建草稿行。
           const versionRes = await getWorkflowVersion(workflowId, res.data.workflow.currentVersionId);
+          if (!current()) return;
           if (versionRes.code === 200 && versionRes.data) {
             setDraft({
               ...versionRes.data,
@@ -161,6 +191,7 @@ const WorkflowEditorPage: React.FC = () => {
             setDraft(EMPTY_DRAFT);
           }
         } else {
+          savedDraft.current = null;
           setDraft(EMPTY_DRAFT);
         }
       } else if (res.code === 404) {
@@ -171,26 +202,47 @@ const WorkflowEditorPage: React.FC = () => {
         setLoadError(res.message || 'error');
       }
     } catch {
-      setLoadError('error');
+      if (current()) setLoadError('error');
     } finally {
-      setLoading(false);
+      if (current()) setLoading(false);
     }
   }, [workflowId]);
 
   useEffect(() => {
-    if (!Number.isFinite(workflowId) || workflowId <= 0) {
+    if (!validWorkflowId(id)) {
       setLoadError('404');
       setLoading(false);
       return;
     }
     void loadDetail();
-  }, [workflowId, loadDetail]);
+    return () => { detailGeneration.current += 1; };
+  }, [id, workflowId, loadDetail]);
 
   const editor = useWorkflowEditor({
     workflowId,
     draft,
-    onVersionConflict: () => setConflictOpen(true),
+    onSaved: (saved) => { savedDraft.current = saved; },
+    onVersionConflict: ({ target }) => { setConflictTarget(target); setConflictOpen(true); },
   });
+
+  const { hasUnsavedChanges, memoryDraftIds } = editor;
+  const blocker = useBlocker(useCallback(({ nextLocation }: { nextLocation: { pathname: string } }) => {
+    if (!hasUnsavedChanges()) return false;
+    const match = matchPath({ path: '/workflow/editor/:id', end: true }, nextLocation.pathname);
+    return !match || !validWorkflowId(match.params.id);
+  }, [hasUnsavedChanges]));
+  useEffect(() => {
+    if (blocker.state === 'blocked') blocker.reset();
+  }, [blocker]);
+  useLayoutEffect(() => {
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (!hasUnsavedChanges()) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', beforeUnload);
+    return () => window.removeEventListener('beforeunload', beforeUnload);
+  }, [hasUnsavedChanges]);
 
   // 解构出稳定引用：回调依赖只列真正用到的函数/值，不把整个 editor 对象塞进 deps
   const {
@@ -203,7 +255,9 @@ const WorkflowEditorPage: React.FC = () => {
     redo,
     overwriteDraft,
     saveDraftAsCopy,
-    reloadFromServer,
+    beginDiscard,
+    endDiscard,
+    discardAndReload,
     getSnapshot,
     exportDefinition,
   } = editor;
@@ -529,46 +583,90 @@ const WorkflowEditorPage: React.FC = () => {
   /* ── 发布 / 触发 / 校验 ───────────────────────────────────────── */
 
   const openPublish = useCallback(async () => {
+    setPublishToken(null);
+    publishSnapshot.current = null;
     setPublishLoading(true);
     setPublishOpen(true);
     try {
-      await saveNow();
-      const res = await validateWorkflow(workflowId, exportDefinition());
-      setPublishIssues(res.code === 200 ? issuesOf(res.data) : []);
+      if (!(await saveNow())) {
+        message.error(t('workflow.editor.saveFailed'));
+        setPublishOpen(false);
+        return;
+      }
+      const snapshot = JSON.stringify(exportDefinition());
+      const saved = savedDraft.current;
+      const detailRes = await getWorkflowDetail(workflowId);
+      const current = detailRes.data?.draft;
+      if (detailRes.code !== 200 || !saved || !current || !current.definitionSha256
+          || saved.id !== current.id || saved.baseVersion !== current.baseVersion
+          || saved.definitionSha256 !== current.definitionSha256 || snapshot !== JSON.stringify(exportDefinition())) {
+        message.error(t('workflow.publish.failed'));
+        setPublishOpen(false);
+        return;
+      }
+      const res = await validateWorkflow(workflowId, current.definition);
+      if (res.code !== 200 || !res.data || !res.data.valid || snapshot !== JSON.stringify(exportDefinition())) {
+        if (res.code === 200 && res.data && snapshot === JSON.stringify(exportDefinition())) {
+          setPublishIssues(issuesOf(res.data));
+        } else {
+          message.error(t('workflow.publish.failed'));
+          setPublishOpen(false);
+        }
+        return;
+      }
+      setPublishIssues(issuesOf(res.data));
+      publishSnapshot.current = snapshot;
+      setPublishToken({ draftId: current.id, baseVersion: current.baseVersion, definitionSha256: current.definitionSha256 });
+    } catch {
+      message.error(t('workflow.publish.failed'));
+      setPublishOpen(false);
     } finally {
       setPublishLoading(false);
     }
-  }, [workflowId, saveNow, exportDefinition]);
+  }, [workflowId, saveNow, exportDefinition, t]);
 
   const confirmPublish = useCallback(async () => {
+    if (!publishToken || publishSnapshot.current !== JSON.stringify(exportDefinition())) {
+      message.error(t('workflow.publish.failed'));
+      return;
+    }
     setPublishLoading(true);
     try {
-      await saveNow();
-      const res = await publishWorkflow(workflowId, {});
+      if (!(await saveNow()) || publishSnapshot.current !== JSON.stringify(exportDefinition())) {
+        message.error(t('workflow.editor.saveFailed'));
+        setPublishToken(null);
+        return;
+      }
+      const res = await publishWorkflow(workflowId, publishToken);
       if (res.code === 200) {
         message.success(t('workflow.publish.success'));
         setPublishOpen(false);
-        await loadDetail();
+        setPublishToken(null);
+        void loadDetail();
       } else if (res.code === 422) {
         setPublishIssues(issuesOf(res.data));
-      } else if (res.code === 449) {
-        message.warning(t('workflow.publish.riskBlocked'));
+        setPublishToken(null);
       } else {
         message.error(res.message || t('workflow.publish.failed'));
+        setPublishToken(null);
       }
+    } catch {
+      message.error(t('workflow.publish.failed'));
+      setPublishToken(null);
     } finally {
       setPublishLoading(false);
     }
-  }, [workflowId, loadDetail, saveNow, t]);
+  }, [workflowId, publishToken, saveNow, exportDefinition, loadDetail, t]);
 
   const handleTrigger = useCallback(
     async (inputs: Record<string, unknown>, idempotencyKey: string) => {
+      if (!triggerVersion) return;
       setTriggerLoading(true);
       try {
-        const res = await triggerWorkflowRun(workflowId, { input: inputs, idempotencyKey });
+        const res = await triggerWorkflowRun(workflowId, { input: inputs, idempotencyKey, versionId: triggerVersion.id });
         if (res.code === 200 && res.data) {
           message.success(t('workflow.trigger.success'));
-          setTriggerOpen(false);
+          setTriggerVersion(null);
           navigate(`/workflow/run/${res.data.id}`);
         } else if (res.code === 409) {
           message.warning(t('workflow.trigger.notPublished'));
@@ -581,13 +679,31 @@ const WorkflowEditorPage: React.FC = () => {
         setTriggerLoading(false);
       }
     },
-    [workflowId, navigate, t]
+    [workflowId, navigate, t, triggerVersion]
   );
 
   const openTrigger = useCallback(async () => {
-    await saveNow();
-    setTriggerOpen(true);
-  }, [saveNow]);
+    try {
+      const res = await getWorkflowDetail(workflowId);
+      if (res.code !== 200 || !res.data) {
+        message.error(res.message || t('workflow.list.fetchFailed'));
+        return;
+      }
+      const versionId = res.data.workflow.currentVersionId;
+      if (!versionId) {
+        message.warning(t('workflow.trigger.notPublished'));
+        return;
+      }
+      const versionRes = await getWorkflowVersion(workflowId, versionId);
+      if (versionRes.code !== 200 || !versionRes.data?.definition || versionRes.data.id !== versionId) {
+        message.error(versionRes.message || t('workflow.list.fetchFailed'));
+        return;
+      }
+      setTriggerVersion(versionRes.data);
+    } catch {
+      message.error(t('workflow.list.fetchFailed'));
+    }
+  }, [workflowId, t]);
 
   const runValidate = useCallback(async () => {
     setValidateOpen(true);
@@ -614,21 +730,22 @@ const WorkflowEditorPage: React.FC = () => {
   /* ── 409 三选一 ────────────────────────────────────────────────── */
 
   const handleOverwrite = useCallback(async () => {
+    if (!conflictTarget) return;
     setConflictBusy(true);
     try {
-      await overwriteDraft();
+      if (!(await overwriteDraft(conflictTarget))) return;
       setConflictOpen(false);
       message.success(t('workflow.conflict.overwriteDone'));
     } finally {
       setConflictBusy(false);
     }
-  }, [overwriteDraft, t]);
+  }, [overwriteDraft, conflictTarget, t]);
 
   const handleSaveCopy = useCallback(async () => {
     setConflictBusy(true);
     try {
       // 另存副本 = 服务端新建一条草稿行（onConflict=copy），不是新建一个工作流
-      await saveDraftAsCopy();
+      if (!(await saveDraftAsCopy())) return;
       setConflictOpen(false);
       message.success(t('workflow.conflict.copyCreated'));
       await loadDetail();
@@ -638,20 +755,46 @@ const WorkflowEditorPage: React.FC = () => {
   }, [saveDraftAsCopy, loadDetail, t]);
 
   const handleDiscard = useCallback(async () => {
+    if (discardInFlight.current) return;
+    discardInFlight.current = true;
+    const generation = ++detailGeneration.current;
     setConflictBusy(true);
+    let checkpoint: Awaited<ReturnType<typeof beginDiscard>> = null;
     try {
+      checkpoint = await beginDiscard();
+      if (!checkpoint || activeWorkflow.current !== workflowId || detailGeneration.current !== generation) return;
       const res = await getWorkflowDetail(workflowId);
-      if (res.code === 200 && res.data?.draft) {
-        // 重载同时把乐观锁令牌换回服务端当前值，否则下一次保存还会撞 409
-        reloadFromServer(res.data.draft);
+      if (activeWorkflow.current !== workflowId || detailGeneration.current !== generation) return;
+      if (res.code === 200 && res.data) {
+        let replacement = res.data.draft ?? EMPTY_DRAFT;
+        if (!res.data.draft && res.data.workflow.currentVersionId) {
+          const version = await getWorkflowVersion(workflowId, res.data.workflow.currentVersionId);
+          if (activeWorkflow.current !== workflowId || detailGeneration.current !== generation) return;
+          if (version.code !== 200 || !version.data) {
+            message.error(t('workflow.list.fetchFailed'));
+            return;
+          }
+          replacement = { ...version.data, id: -1, version: 0, baseVersion: 0, isValid: true };
+        }
+        if (!discardAndReload(replacement, checkpoint)) return;
+        savedDraft.current = res.data.draft ?? null;
+        setDraft(replacement);
         setDetail(res.data);
         setConflictOpen(false);
         message.info(t('workflow.conflict.discarded'));
+      } else {
+        message.error(t('workflow.list.fetchFailed'));
+      }
+    } catch {
+      if (activeWorkflow.current === workflowId && detailGeneration.current === generation) {
+        message.error(t('workflow.list.fetchFailed'));
       }
     } finally {
-      setConflictBusy(false);
+      if (checkpoint) endDiscard(checkpoint);
+      discardInFlight.current = false;
+      if (activeWorkflow.current === workflowId && detailGeneration.current === generation) setConflictBusy(false);
     }
-  }, [workflowId, reloadFromServer, t]);
+  }, [workflowId, beginDiscard, endDiscard, discardAndReload, t]);
 
   /* ── 渲染 ──────────────────────────────────────────────────────── */
 
@@ -697,6 +840,7 @@ const WorkflowEditorPage: React.FC = () => {
   const inspector = activeNode ? (
     <NodeInspector
       node={activeNode}
+      workflowId={workflowId}
       definition={definition}
       onSave={updateNode}
       onSaveMeta={handleSaveStartVariables}
@@ -705,10 +849,29 @@ const WorkflowEditorPage: React.FC = () => {
     />
   ) : null;
 
+  const unsavedNotice = (editor.dirty || memoryDraftIds.length > 0) && (
+    <Alert
+      className="wf-unsaved-notice"
+      type="warning"
+      showIcon
+      message={t('workflow.editor.unsavedNavigationTitle')}
+      description={<Space direction="vertical" size={0}>
+        <span>{t('workflow.editor.unsavedNavigationDesc')}</span>
+        <span>{t('workflow.editor.memoryOnlyWarning', { defaultValue: 'Local persistence and recovery are currently unavailable. Unsaved changes exist only in the current editing session’s memory and may be lost if you refresh or close the page.' })}</span>
+      </Space>}
+      action={memoryDraftIds.length > 0 ? <Space wrap>{memoryDraftIds.map((draftId) => (
+        <Button key={draftId} onClick={() => navigate(`/workflow/editor/${draftId}`)}>
+          {t('workflow.editor.returnToMemoryDraft', { id: draftId })}
+        </Button>
+      ))}</Space> : undefined}
+    />
+  );
+
   if (loading) {
     return (
-      <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 160 }}>
-        <Spin size="large" />
+      <div style={{ padding: 16 }}>
+        {unsavedNotice}
+        <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 160 }}><Spin size="large" /></div>
       </div>
     );
   }
@@ -716,6 +879,7 @@ const WorkflowEditorPage: React.FC = () => {
   if (loadError) {
     return (
       <div style={{ padding: 16 }}>
+        {unsavedNotice}
         {loadError === '403' ? (
           <Alert type="error" showIcon message={t('workflow.error.403')} description={t('workflow.error.403Desc')} />
         ) : loadError === '404' ? (
@@ -732,6 +896,7 @@ const WorkflowEditorPage: React.FC = () => {
 
   return (
     <div className="wf-editor-page" style={{ padding: 16 }}>
+      {unsavedNotice}
       <Card size="small" className="wf-editor-toolbar" styles={{ body: { padding: '10px 16px' } }}>
         <Row gutter={[12, 12]} align="middle">
           <Col flex="auto">
@@ -838,7 +1003,7 @@ const WorkflowEditorPage: React.FC = () => {
             onRedo={redo}
             onSave={handleSaveDraft}
           />
-          {canvasEmpty && (
+          {canvasEmpty && !emptyGuideDismissed && (
             <div className="wf-canvas-empty" data-testid="canvas-empty-state">
               <div className="wf-canvas-empty-card">
                 <Title level={5} style={{ marginTop: 0 }}>
@@ -851,6 +1016,7 @@ const WorkflowEditorPage: React.FC = () => {
                   <li>{t('workflow.canvas.empty.step4')}</li>
                 </ol>
                 <Space>
+                  <Button size="small" onClick={() => setEmptyGuideDismissed(true)}>{t('common.close')}</Button>
                   <Button type="primary" size="small" onClick={() => setTemplatesOpen(true)}>
                     {t('workflow.canvas.empty.useTemplate')}
                   </Button>
@@ -890,22 +1056,25 @@ const WorkflowEditorPage: React.FC = () => {
         open={publishOpen}
         issues={publishIssues}
         loading={publishLoading}
+        ready={!!publishToken && !editor.dirty}
         onCancel={() => setPublishOpen(false)}
         onConfirm={() => void confirmPublish()}
         onRevalidate={() => void openPublish()}
       />
 
-      <TriggerModal
-        open={triggerOpen}
-        definition={definition}
+      {triggerVersion && <TriggerModal
+        open
+        definition={triggerVersion.definition}
         workflowName={detail?.workflow.name || ''}
+        version={triggerVersion.version}
         loading={triggerLoading}
-        onCancel={() => setTriggerOpen(false)}
+        onCancel={() => setTriggerVersion(null)}
         onSubmit={(inputs, key) => void handleTrigger(inputs, key)}
-      />
+      />}
 
       <VersionConflictModal
         open={conflictOpen}
+        target={conflictTarget}
         busy={conflictBusy}
         onCancel={() => setConflictOpen(false)}
         onOverwrite={() => void handleOverwrite()}
@@ -1025,6 +1194,16 @@ const WorkflowEditorPage: React.FC = () => {
       )}
     </div>
   );
+};
+
+const WorkflowEditorPage: React.FC = () => {
+  const epoch = useSyncExternalStore(subscribeSessionEpoch, getSessionEpoch, getSessionEpoch);
+  const [initialEpoch] = useState(epoch);
+  const { t } = useTranslation();
+  if (epoch !== initialEpoch) {
+    return <Alert type="error" showIcon message={t('workflow.editor.saveFailed')} />;
+  }
+  return <WorkflowEditorPageContent />;
 };
 
 export default WorkflowEditorPage;

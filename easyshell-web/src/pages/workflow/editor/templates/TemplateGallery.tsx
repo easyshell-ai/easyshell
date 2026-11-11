@@ -5,7 +5,7 @@ import type { WorkflowDefinition } from '../../types';
 import { WORKFLOW_TEMPLATES, type WorkflowTemplateId } from './index';
 
 /**
- * 模板库（设计 §3.4）：3 个可一键替换当前图定义的模板。
+ * 模板库（设计 §3.4）：可一键替换当前图定义的模板。
  * 当前图有 start/end 之外的节点时先确认（不可撤销的替换必须二次确认）。
  */
 export interface TemplateGalleryProps {
@@ -45,8 +45,13 @@ export const TemplateGallery: React.FC<TemplateGalleryProps> = ({ open, definiti
               className="wf-template-card"
               title={
                 <Space>
-                  <span>{t(`workflow.template.${template.id}.name`)}</span>
+                  <span>{template.id === 'aiReview' ? t('workflow.template.aiReview.safeName', { defaultValue: 'Manual AI review' }) : t(`workflow.template.${template.id}.safeName`)}</span>
                   <Tag color="blue">{t('workflow.template.badge')}</Tag>
+                  <Tag color={template.id === 'restart' ? 'red' : template.id === 'aiReview' ? 'purple' : 'orange'}>
+                    {template.id === 'aiReview'
+                      ? t('workflow.template.aiReview.realAiCall', { defaultValue: 'Real AI call' })
+                      : t(template.id === 'restart' ? 'workflow.template.realSideEffects' : 'workflow.template.simulated')}
+                  </Tag>
                 </Space>
               }
               actions={[
@@ -61,8 +66,16 @@ export const TemplateGallery: React.FC<TemplateGalleryProps> = ({ open, definiti
               ]}
             >
               <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-                {t(`workflow.template.${template.id}.desc`)}
+                {template.id === 'aiReview'
+                  ? t('workflow.template.aiReview.safeDesc', { defaultValue: 'Review a manually supplied observation with AI. The result is advisory and requires human review; no host commands or notifications are issued.' })
+                  : t(`workflow.template.${template.id}.safeDesc`)}
               </Typography.Paragraph>
+              {template.id === 'restart' && (
+                <Alert type="warning" showIcon message={t('workflow.template.restart.executionWarning', { defaultValue: 'This template can restart a real service and has side effects. Service health is not verified. High-risk approval binding is not implemented, so the command may still be blocked even after approval.' })} />
+              )}
+              {template.id === 'aiReview' && (
+                <Alert type="warning" showIcon message={t('workflow.template.aiReview.externalInputWarning', { defaultValue: 'Configure the default AI provider and model before running. Input is sent to the configured AI provider; do not enter sensitive information.' })} />
+              )}
             </Card>
           ))}
         </div>

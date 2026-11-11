@@ -115,7 +115,25 @@ function namedConfigEntries(value: unknown): string[] {
  */
 export function knownOutputFieldsOf(node: WorkflowNode): KnownField[] {
   const fields = KNOWN_OUTPUT_FIELDS[node.type];
-  if (fields) return fields;
+  if (fields) {
+    if ((node.type === 'llm' || node.type === 'ai-analyze') &&
+        node.config?.outputMode === 'json_schema_v1' &&
+        typeof node.config?.jsonSchema === 'string') {
+      try {
+        const schema = JSON.parse(node.config.jsonSchema);
+        if (schema && schema.type === 'object' && schema.properties && typeof schema.properties === 'object' && !Array.isArray(schema.properties)) {
+          const discovered: KnownField[] = Object.entries(schema.properties)
+            .filter(([name, value]) => /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name) && value != null && typeof value === 'object' && !Array.isArray(value))
+            .map(([name, value]) => {
+              const type = (value as { type?: unknown }).type;
+              return { name: `json.${name}`, type: type === 'string' || type === 'boolean' ? type : type === 'number' || type === 'integer' ? 'number' : 'json' };
+            });
+          return [...fields, ...discovered];
+        }
+      } catch { /* 原文不可解析时不推测字段 */ }
+    }
+    return fields;
+  }
   if (node.type === 'transform') {
     return namedConfigEntries(node.config?.mappings).map((name) => ({ name, type: 'json' as const }));
   }
@@ -221,7 +239,7 @@ function buildGroups(
 
   for (const node of definition.nodes || []) {
     // start 的输出就是工作流入参：即使过滤的是 start 自身，也保留该分组
-    if (node.type !== 'start') continue;
+    if (node.type !== 'start' || !allowed(node)) continue;
     const refs = startRefs(node, variables);
     if (refs.length > 0) {
       groups.push({

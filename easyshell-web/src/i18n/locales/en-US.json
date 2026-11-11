@@ -1,4 +1,42 @@
 {
+  "hostPermissions": {
+    "title": "Host permissions",
+    "independentPermissionsNotice": "The three permissions are independent; granting one does not automatically grant the other two.",
+    "inheritanceNotice": "A user's effective permissions are the union of direct grants and grants from their roles. Removing a direct grant does not remove permissions granted by a role.",
+    "terminalWarning": "Terminal access is high risk: it permits interactive commands on the host. Grant it only to trusted users and roles.",
+    "viewerTerminalForbidden": "The viewer role cannot use the terminal, even if terminal permission is granted.",
+    "invalidGrant": "Invalid grant. Check the principal, host, and permission and try again.",
+    "explicitHostsNotice": "Grants apply only to the selected hosts; they do not automatically include hosts added in the future.",
+    "catalogError": "Unable to load users, roles, or hosts.",
+    "retry": "Retry",
+    "principalType": "Principal type",
+    "user": "User",
+    "role": "Role",
+    "principal": "User or role",
+    "permission": "Permission",
+    "selectPrincipal": "Select a user or role",
+    "searchHosts": "Search hosts",
+    "host": "Host",
+    "selectHost": "Select a host",
+    "grant": "Grant",
+    "revoke": "Revoke",
+    "stale": "The host catalog or identity generation has changed. Refresh and select the host again before managing permissions.",
+    "view": "View",
+    "execute": "Execute",
+    "terminal": "Terminal",
+    "permissionForHost": "{{permission}} permission for {{host}}",
+    "forbidden": "You do not have permission to manage these host grants.",
+    "conflict": "Permissions changed since they were loaded. Reload before saving again.",
+    "loadError": "Unable to load host permissions.",
+    "saveError": "Unable to save host permissions.",
+    "reload": "Reload",
+    "saveSuccess": "Host permissions saved.",
+    "save": "Save permissions"
+  },
+  "resourceIdentity": {
+    "unavailable": "Permissions or resource identity cannot currently be verified. Please contact an administrator.",
+    "fetchFailed": "Unable to load data. Check your connection and retry; contact an administrator if the problem persists."
+  },
   "common": {
     "confirm": "Confirm",
     "cancel": "Cancel",
@@ -85,6 +123,8 @@
     "switch_to_zh": "切换到中文",
     "theme_light": "Switch to light mode",
     "theme_dark": "Switch to dark mode",
+    "reset_theme_default": "Reset theme to default",
+    "skip_to_content": "Skip to content",
     "logout": "Sign Out",
     "collapse_sidebar": "Collapse sidebar",
     "expand_sidebar": "Expand sidebar",
@@ -657,6 +697,8 @@
     }
   },
   "reports": {
+    "historyUnavailable": "Some historical reports are unavailable because their source identities cannot be verified. Historical data has not been deleted.",
+    "detailUnavailable": "Report details are unavailable. Please retry.",
     "title": "Inspection Reports",
     "fetchError": "Failed to fetch inspection reports",
     "detailError": "Failed to fetch report details",
@@ -721,6 +763,8 @@
     }
   },
   "chat": {
+    "stopStreamBeforeDelete": "Stop the active response before deleting this conversation.",
+    "waitForSessionDelete": "Wait for the conversation deletion to finish before sending a message.",
     "prompt1": "Check system status on all servers",
     "prompt2": "List recently failed tasks",
     "prompt3": "Analyze server resource usage",
@@ -967,6 +1011,7 @@
   },
   "dashboard": {
     "title": "Dashboard",
+    "statisticsUnavailable": "Statistics unavailable",
     "totalHosts": "Total Hosts",
     "onlineHosts": "Online Hosts",
     "offlineHosts": "Offline Hosts",
@@ -1005,6 +1050,10 @@
   },
   "host": {
     "title": "Host Management",
+    "credentialListUnavailable": "Only agents you can view are shown; historical credentials are not associated because their ownership and host identity cannot be verified.",
+    "credentialOwnershipUnknown": "Ownership of historical credentials cannot be verified; credentials will not be associated by IP address.",
+    "remoteUninstallUnavailable": "Remote uninstall is temporarily unavailable. Deleting a record does not uninstall the remote agent.",
+    "deleteDoesNotUninstall": "Deleting this record does not uninstall the remote agent.",
     "detail": "Host Details",
     "online": "Online",
     "offline": "Offline",
@@ -1029,6 +1078,7 @@
     "lastHeartbeat": "Last Heartbeat",
     "addServer": "Add Server",
     "deployHistory": "Deploy History",
+    "loadingHistory": "Loading deployment history...",
     "exportCSV": "Export CSV",
     "startDeploy": "Start Deploy",
     "sshPort": "SSH Port",
@@ -1147,6 +1197,8 @@
     "confirmDelete": "Confirm delete this script?",
     "ai": {
       "title": "AI Script Assistant",
+      "externalDataWarningTitle": "External data warning",
+      "externalDataWarningDescription": "Your prompt and current script will be sent to the configured model. Sensitive data filtering cannot identify every secret. Do not enter or include passwords, keys, or other sensitive data.",
       "targetOs": "Target OS",
       "promptLabel": "Describe what you need",
       "promptPlaceholder": "e.g. Monitor disk usage and alert when above 80%",
@@ -1379,6 +1431,11 @@
     }
   },
   "hostDetail": {
+    "terminalPermissionUnknown": "Checking terminal permission.",
+    "terminalPermissionError": "Unable to verify terminal permission. Retry or contact an administrator.",
+    "terminalPermissionDenied": "You do not have terminal permission for this host.",
+    "terminalPermissionOffline": "The host is offline; terminal access is unavailable.",
+    "terminalOffline": "The host is offline; terminal access is unavailable.",
     "detectFailed": "Detection failed",
     "detectTaskSubmitted": "Detection task submitted",
     "detectTimeout": "Detection timeout",
@@ -1438,8 +1495,17 @@
     "executionHistory": "Execution History"
   },
   "task": {
+    "historyVisibilityNotice": "Historical tasks whose identity cannot be verified and workflow tasks are temporarily not shown here. The data has not been deleted.",
     "title": "Task Execution",
+    "hostExecuteDenied": "No execute permission",
+    "hostExecuteUnknown": "Execute permission unknown",
+    "hostPermissionsLoading": "Checking host execute permissions…",
+    "hostPermissionsFailed": "Host permissions could not be checked. Retry before submitting.",
+    "hostPermissionsIncomplete": "Some host permissions are unknown. Retry before selecting those hosts.",
+    "dynamicTargetsPermissionHint": "Dynamic target membership can change. The server performs the final permission check for all resolved hosts.",
     "create": "New Task",
+    "runWorkflow": "Run workflow",
+    "detailLoadFailed": "Failed to load task details",
     "execute": "Execute",
     "stop": "Stop",
     "fetchError": "Failed to fetch task list",
@@ -1526,6 +1592,29 @@
     }
   },
   "workflow": {
+    "scriptSource": {
+      "label": "Script source",
+      "manual": "Manual",
+      "library": "Script library",
+      "select": "Library script",
+      "snapshotHint": "The preview is read-only. On publication, the server verifies and freezes the selected version; later changes to the script library do not alter the published snapshot.",
+      "listError": "Unable to load scripts. Check your access and try again.",
+      "selectionError": "Unable to select the script. It may have changed or access was denied; try again.",
+      "retry": "Retry"
+    },
+    "structured": {
+      "mode": "Strict structured output",
+      "savedProtection": "Once saved, strict output nodes cannot be deleted or have their ID, type, output mode, or schema changed; other settings remain editable.",
+      "serverValidation": "The schema and model output are validated by the server.",
+      "rawOnly": "This schema cannot be edited losslessly in the visual table. Edit the raw schema instead.",
+      "fieldType": "Field type",
+      "required": "Required",
+      "removeField": "Remove field",
+      "fieldName": "Field name",
+      "addField": "Add field",
+      "additionalProperties": "Allow additional properties (not currently supported by the server)",
+      "rawSchema": "Raw schema"
+    },
     "list": {
       "title": "Workflows",
       "create": "New workflow",
@@ -1602,7 +1691,7 @@
         "end": "Aggregate final outputs; the run result comes from here",
         "llm": "Generate text or structured JSON with a model; never executes commands",
         "classifier": "Route to a class branch based on the model classification",
-        "code": "Transform data in an isolated sandbox with JavaScript or Python"
+        "code": "Transform data with JavaScript or Python (currently unavailable to run or publish)"
       },
       "category": {
         "entry": "Entry",
@@ -1753,6 +1842,12 @@
       "scriptIdHint": "Leave empty to write the script inline. Stored with the definition only; execution uses script",
       "scriptIdPlaceholder": "Leave empty to write the script inline",
       "targets": "Target hosts",
+      "hostsLoading": "Checking available host permissions…",
+      "retryHosts": "Retry",
+      "hostsFailed": "Host permissions could not be fully checked. Existing targets are preserved.",
+      "hostsEmpty": "No executable hosts are available.",
+      "hostsUnavailable": "Some saved targets are unavailable or no longer executable. They are preserved until you remove them.",
+      "dynamicTargetsPermissionHint": "Targets are resolved and permissions checked for each host at runtime; selection does not grant access.",
       "targetsHint": "Where the script runs: explicit agents / a cluster / a tag / a host list produced upstream",
       "targetsEmpty": "No targets in this mode yet — the node fails at runtime with an empty agent set",
       "targetsMode": {
@@ -1854,6 +1949,7 @@
     },
     "editor": {
       "dirty": "Unsaved",
+      "memoryOnlyWarning": "Local persistence and recovery are currently unavailable. Unsaved changes exist only in the current editing session’s memory and may be lost if you refresh or close the page.",
       "saved": "Saved",
       "lastSaved": "Saved at {{time}}",
       "selectedCount": "{{count}} node(s) selected",
@@ -1868,7 +1964,10 @@
       "localDraftFound": "A local draft was found (left by a failed save)",
       "localDraftRestore": "Restore local draft",
       "localDraftDiscard": "Discard",
-      "localDraftRestored": "Local draft restored"
+      "localDraftRestored": "Local draft restored",
+      "unsavedNavigationTitle": "Unsaved workflow changes",
+      "unsavedNavigationDesc": "Save or resolve all unsaved drafts before leaving the editor. Switching workflows keeps complete drafts in memory only; closing or refreshing may lose them.",
+      "returnToMemoryDraft": "Return to workflow #{{id}}"
     },
     "publish": {
       "action": "Publish",
@@ -1900,6 +1999,8 @@
       "selectPlaceholder": "Select a value"
     },
     "conflict": {
+      "draftId": "Target draft ID",
+      "baseVersion": "Base version",
       "title": "Version conflict (409)",
       "message": "The server draft was changed by another session (base_version mismatch). Nothing is merged automatically — choose how to proceed:",
       "overwrite": "Overwrite (audited as WORKFLOW_OVERWRITE)",
@@ -1915,6 +2016,8 @@
       "monitor": "Monitor",
       "empty": "No runs yet",
       "fetchFailed": "Failed to load runs",
+      "detailUnavailable": "Run details are unavailable, so the run cannot be verified. Try again later or contact an administrator.",
+      "dataUnavailable": "Data is unavailable; its contents cannot be verified.",
       "filtered": "Workflow #{{id}} only",
       "canvasTitle": "Run graph (read-only)",
       "nodes": "Node runs",
@@ -1982,6 +2085,8 @@
     "approval": {
       "title": "Workflow approvals",
       "fetchError": "Failed to load pending approvals",
+      "dataUnavailable": "Approval data is unavailable, so its contents cannot be verified. Try again later or contact an administrator.",
+      "restrictedReason": "Approval details are unavailable to you. You may reject this request but cannot approve it.",
       "empty": "Nothing to approve",
       "approve": "Approve",
       "reject": "Reject",
@@ -2032,6 +2137,8 @@
       "emptyDesc": "Select a node to see its config, upstream variables and docs. Click a node or press Enter.",
       "docs": {
         "when": "When to use",
+        "highRiskApprovalUnavailable": "High-risk approval binding is not implemented. An approval node does not authorize a high-risk command, which may still be blocked by the risk gate.",
+        "llmExecutionWarning": "LLM output cannot be used as raw script parameters. Host execution uses script-exec and remains subject to the risk gate.",
         "input": "Input",
         "output": "Output",
         "example": "Minimal example",
@@ -2148,6 +2255,7 @@
     },
     "ai": {
       "warning": "AI analyze reads upstream output and produces text only. It cannot execute commands or dispatch tasks.",
+      "externalInputWarning": "Input is sent to the configured model; do not include sensitive data",
       "instructions": "Instructions",
       "instructionsHint": "Tell the model what to analyze and what conclusion to produce.",
       "instructionsRequired": "Please enter instructions",
@@ -2251,20 +2359,35 @@
       "title": "Template gallery",
       "intro": "Applying a template replaces the canvas (with confirmation); adjust and save afterwards.",
       "badge": "Example",
+      "simulated": "Simulated data",
+      "realSideEffects": "Real side effects",
       "apply": "Apply template",
       "applied": "Template applied: {{name}}",
       "replaceTitle": "Replace the current canvas?",
       "replaceBody": "The canvas already has nodes. Applying a template replaces the whole graph (undo is available).",
       "replaceConfirm": "Replace and apply",
       "disk": {
+        "safeName": "Simulated disk threshold demo",
+        "safeDesc": "Demonstrates a disk threshold using a fixed value; it does not collect disk data or send notifications.",
         "name": "Disk check and alert",
         "desc": "Start → collect disk usage → normalize → alert over threshold → End."
       },
       "restart": {
+        "safeName": "Real restart after approval",
+        "executionWarning": "This template can restart a real service and has side effects. Service health is not verified. High-risk approval binding is not implemented, so the command may still be blocked by the risk gate after approval.",
+        "safeDesc": "Restarts a service after approval, with real side effects. It may send a notification but does not verify service health.",
         "name": "Service restart approval",
         "desc": "Approve, restart the service, then notify the result."
       },
+      "aiReview": {
+        "safeName": "Manual AI review",
+        "safeDesc": "Review a manually supplied observation with AI. The result is advisory and requires human review; no host commands or notifications are issued.",
+        "realAiCall": "Real external AI call",
+        "externalInputWarning": "Configure the default AI provider and model before running. Input is sent to the configured external AI model; enter only non-sensitive information."
+      },
       "health": {
+        "safeName": "Simulated count condition",
+        "safeDesc": "Demonstrates a count condition using a fixed value; it is not a real health check and sends no notifications.",
         "name": "Batch health check",
         "desc": "Probe target hosts, notify on any output, otherwise wait briefly."
       }
@@ -2311,7 +2434,23 @@
       "outputHint": "Outputs { class, reason, raw }; the canvas shows {{count}} class handles plus default."
     },
     "code": {
+      "unavailableNotice": "Running code requires a configured isolated execution service. If the service is not ready, execution is refused; code never runs locally on the server.",
       "warning": "The code node only transforms data inside a server-side isolated data sandbox; it has no host file, network or command access.",
+      "previewNoExecution": "A single-node test run is only a preview; it does not execute this code.",
+      "sampleIsolationUnavailable": "The isolated execution service is not ready. The sample cannot run.",
+      "workflowMemoryRisk": "Running code requires a configured isolated execution service. If the service is not ready, execution is refused; code never runs locally on the server.",
+      "sampleTitle": "Sample run",
+      "sampleWarning": "The sample runs in a real data sandbox. It does not dispatch host tasks or advance the workflow. Do not enter sensitive values.",
+      "sampleInput": "Sample input (JSON object)",
+      "sampleRun": "Run sample",
+      "sampleInvalid": "Enter a valid JSON object for the sample input (not an array, scalar or null).",
+      "sampleTimeoutInvalid": "Choose a timeout from 1 to 5 whole seconds.",
+      "sampleServiceUnavailable": "The isolated execution service is not ready. Try again when the service is available.",
+      "sampleFailed": "Sample run failed.",
+      "sampleError": "An error occurred during the sample run.",
+      "sampleOutput": "Sample output",
+      "sampleElapsed": "Elapsed: {{ms}} ms",
+      "previewOnly": "A single-node test run is only a preview and does not execute this code. Run the workflow to execute it in the data sandbox.",
       "language": "Language",
       "languageHint": "javascript needs main(input); python needs def main(input).",
       "languageJavascript": "JavaScript",
@@ -2322,12 +2461,15 @@
       "insertSkeleton": "Insert main skeleton",
       "inputs": "Inputs",
       "inputsHint": "Name → upstream variable template; becomes the object passed to main(input).",
+      "inputContract": "Input names become properties of the object passed to main(input). Use upstream variable templates; names must start with a letter or underscore and contain only letters, digits or underscores, up to 64 characters.",
       "addInput": "Add input",
       "inputsEmpty": "No inputs yet; main(input) receives an empty object.",
       "inputNamePlaceholder": "e.g. a",
       "timeoutSec": "Timeout (s)",
-      "timeoutSecHint": "1..15 seconds; on expiry the sandbox context is closed and execution cancelled.",
-      "outputHint": "Output = the return value of main (object / array / scalar), stored as JSON.",
+      "timeoutSecHint": "1..5 seconds; execution is cancelled on expiry.",
+      "outputHint": "Output is the JSON return value of main, up to 8 KiB. Arrays and scalars are exposed under result.",
+      "outputTitle": "Output",
+      "outputContract": "Return a JSON-compatible object, array or scalar. Return an object to expose named fields. Output fields depend on the return value; output schema validation is not yet supported.",
       "inputName": "Input name",
       "inputValue": "Input value"
     },

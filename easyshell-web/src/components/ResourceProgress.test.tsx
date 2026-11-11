@@ -1,6 +1,8 @@
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { afterEach, describe, it, expect } from 'vitest';
+import { cleanup, render, screen } from '@testing-library/react';
 import ResourceProgress from './ResourceProgress';
+
+afterEach(cleanup);
 
 /**
  * Smoke test for the vitest + jsdom + @testing-library/react setup: antd components

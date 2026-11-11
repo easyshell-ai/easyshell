@@ -1,14 +1,12 @@
 import React from 'react';
-import { Button, Input, Select, Space, Typography } from 'antd';
+import { Alert, Button, Input, Select, Space, Typography } from 'antd';
 import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import {
   EMPTY_TARGETS,
   NOTIFY_CHANNELS,
   TARGETS_MODES,
-  joinIdList,
   joinNumberList,
-  parseIdList,
   parseNumberList,
   type TargetsMode,
   type TargetsValue,
@@ -38,7 +36,7 @@ export interface TargetOptions {
   clusters?: TargetOption[];
   tags?: TargetOption[];
   /** 某个列表 API 失败时，该字段回落到自由输入（不阻断编辑） */
-  fallbackHosts?: boolean;
+  hostStatus?: 'loading' | 'ready' | 'error';
   fallbackClusters?: boolean;
   fallbackTags?: boolean;
 }
@@ -48,6 +46,7 @@ export interface TargetsEditorProps {
   onChange?: (next: TargetsValue) => void;
   options?: TargetOptions;
   groups?: WorkflowVariableGroup[];
+  onRetryHosts?: () => void;
 }
 
 /**
@@ -56,10 +55,9 @@ export interface TargetsEditorProps {
  * 只渲染当前 mode 的字段（`NodeFormPanel` 提交时也只写那一个键），
  * 这样 definition JSON 里不会残留"上次选过 cluster 留下的 clusterIds"。
  *
- * 真实下拉由 getHostList / getClusterList / getTagList 提供；接口失败或未启用
- * 远程选项时退回原有逗号分隔输入，保证离线/测试环境仍能编辑。
+ * 显式主机永不回退自由输入；动态目标在运行时重新校验。
  */
-export const TargetsEditor: React.FC<TargetsEditorProps> = ({ value, onChange, options, groups }) => {
+export const TargetsEditor: React.FC<TargetsEditorProps> = ({ value, onChange, options, groups, onRetryHosts }) => {
   const { t } = useTranslation();
   const current = value || EMPTY_TARGETS;
   const patch = (next: Partial<TargetsValue>) => onChange?.({ ...current, ...next });
@@ -80,27 +78,27 @@ export const TargetsEditor: React.FC<TargetsEditorProps> = ({ value, onChange, o
         style={{ width: '100%' }}
         aria-label={t('workflow.form.targets')}
       />
-      {current.mode === 'explicit' &&
-        (hostOptions && !options?.fallbackHosts ? (
+      {current.mode === 'explicit' && (
+        <>
           <Select
             mode="multiple"
             value={current.agentIds}
-            onChange={(agentIds: string[]) => patch({ agentIds })}
-            options={hostOptions}
+            onChange={(agentIds: string[]) => patch({ agentIds: options?.hostStatus === 'ready' ? agentIds : agentIds.filter((id) => current.agentIds.includes(id)) })}
+            options={options?.hostStatus === 'ready' ? hostOptions || [] : []}
+            loading={!options?.hostStatus || options.hostStatus === 'loading'}
             placeholder={t('workflow.form.agentIdsPlaceholder')}
             style={{ width: '100%' }}
             aria-label={t('workflow.form.agentIds')}
             showSearch
             optionFilterProp="label"
           />
-        ) : (
-          <Input
-            value={joinIdList(current.agentIds)}
-            onChange={(event) => patch({ agentIds: parseIdList(event.target.value) })}
-            placeholder="agent-1, agent-2"
-            aria-label={t('workflow.form.agentIds')}
-          />
-        ))}
+          {(!options?.hostStatus || options.hostStatus === 'loading') && <Alert type="info" showIcon message={t('workflow.form.hostsLoading', { defaultValue: 'Checking available host permissions…' })} />}
+          {options?.hostStatus === 'error' && <Alert type="warning" showIcon message={t('workflow.form.hostsFailed', { defaultValue: 'Host permissions could not be fully checked. Existing targets are preserved.' })} action={onRetryHosts && <Button size="small" onClick={onRetryHosts}>{t('workflow.form.retryHosts', { defaultValue: 'Retry' })}</Button>} />}
+          {options?.hostStatus === 'ready' && !hostOptions?.length && <Alert type="info" showIcon message={t('workflow.form.hostsEmpty', { defaultValue: 'No executable hosts are available.' })} />}
+          {options?.hostStatus === 'ready' && current.agentIds.some((id) => !hostOptions?.some((host) => host.value === id)) && <Alert type="warning" showIcon message={t('workflow.form.hostsUnavailable', { defaultValue: 'Some saved targets are unavailable or no longer executable. They are preserved until you remove them.' })} />}
+        </>
+      )}
+      {current.mode !== 'explicit' && <Alert type="info" showIcon message={t('workflow.form.dynamicTargetsPermissionHint', { defaultValue: 'Targets are resolved and permissions checked for each host at runtime; selection does not grant access.' })} />}
       {current.mode === 'cluster' &&
         (clusterOptions && !options?.fallbackClusters ? (
           <Select

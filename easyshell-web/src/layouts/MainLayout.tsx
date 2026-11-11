@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo, type CSSProperties } from 'react';
-import { getToken, clearSession } from '../api/request';
+import { useState, useEffect, useMemo, useSyncExternalStore, type CSSProperties } from 'react';
+import { getToken, clearSession, getSessionEpoch, subscribeSessionEpoch } from '../api/request';
 import { Outlet, useNavigate, useLocation, Link } from 'react-router-dom';
 import { Layout, Menu, Dropdown, Space, Avatar, Tooltip, Breadcrumb, theme, Divider, Drawer } from 'antd';
 import {
@@ -78,7 +78,8 @@ const getOpenKeys = (pathname: string): string[] => {
 const MainLayout: React.FC = () => {
   const [collapsed, setCollapsed] = useState(false);
   const [drawerVisible, setDrawerVisible] = useState(false);
-  const [currentUser, setCurrentUser] = useState<{ username: string; role: string }>({ username: '', role: '' });
+  const [verified, setVerified] = useState<{ epoch: number; username: string; role: string } | null>(null);
+  const sessionEpoch = useSyncExternalStore(subscribeSessionEpoch, getSessionEpoch, getSessionEpoch);
   const navigate = useNavigate();
   const location = useLocation();
   const [openKeys, setOpenKeys] = useState<string[]>(getOpenKeys(location.pathname));
@@ -114,6 +115,7 @@ const MainLayout: React.FC = () => {
     '/ai/approval': t('nav.ai_approval'),
     '/system': t('nav.system'),
     '/system/users': t('nav.system_users'),
+    '/system/host-permissions': t('hostPermissions.title'),
     '/system/config': t('nav.system_config'),
     '/system/ai': t('nav.system_ai'),
     '/system/bot': t('nav.system_bot'),
@@ -178,6 +180,7 @@ const MainLayout: React.FC = () => {
           label: t('nav.system'),
           children: [
             { key: '/system/users', icon: <TeamOutlined />, label: t('nav.system_users') },
+            { key: '/system/host-permissions', icon: <SafetyOutlined />, label: t('hostPermissions.title') },
             { key: '/system/config', icon: <ToolOutlined />, label: t('nav.system_config') },
             { key: '/system/ai', icon: <RobotOutlined />, label: t('nav.system_ai') },
             { key: '/system/bot', icon: <ApiOutlined />, label: t('nav.system_bot') },
@@ -227,12 +230,15 @@ const MainLayout: React.FC = () => {
       navigate('/login');
       return;
     }
+    const epoch = sessionEpoch;
+    let cancelled = false;
     getMe().then((res) => {
-      if (res.code === 200 && res.data) {
-        setCurrentUser({ username: res.data.username, role: res.data.role });
+      if (!cancelled && epoch === getSessionEpoch() && res.code === 200 && res.data) {
+        setVerified({ epoch, username: res.data.username, role: res.data.role });
       }
     }).catch(() => {});
-  }, [navigate]);
+    return () => { cancelled = true; };
+  }, [navigate, sessionEpoch]);
 
   const userMenuItems: MenuProps['items'] = useMemo(() => [
     {
@@ -343,6 +349,8 @@ const MainLayout: React.FC = () => {
       )}
     </>
   );
+
+  if (!verified || verified.epoch !== sessionEpoch || !getToken()) return null;
 
   return (
     <Layout style={{ minHeight: '100vh' }} data-testid="main-layout">
@@ -498,7 +506,7 @@ const MainLayout: React.FC = () => {
                 />
                 {!isMobile && (
                   <span style={{ color: token.colorText, fontWeight: 500, fontSize: 13 }}>
-                    {currentUser.username || '...'}
+                    {verified.username || '...'}
                   </span>
                 )}
               </Space>

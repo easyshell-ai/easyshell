@@ -36,52 +36,49 @@ export function computeAlignment(moving: Box, others: Box[], threshold = ALIGN_T
   const movingX: [number, number, number] = [moving.x, moving.x + moving.width / 2, moving.x + moving.width];
   const movingY: [number, number, number] = [moving.y, moving.y + moving.height / 2, moving.y + moving.height];
 
-  let bestX: { delta: number; line: number } | null = null;
-  let bestY: { delta: number; line: number } | null = null;
+  let bestX: number | null = null;
+  let bestY: number | null = null;
+  let minX = moving.x;
+  let maxX = moving.x + moving.width;
+  let minY = moving.y;
+  let maxY = moving.y + moving.height;
 
   for (const other of others) {
-    const otherX: [number, number, number] = [other.x, other.x + other.width / 2, other.x + other.width];
-    const otherY: [number, number, number] = [other.y, other.y + other.height / 2, other.y + other.height];
-    const pairs: Array<[number, number, 'x' | 'y']> = [
-      [otherX[0], movingX[0], 'x'],
-      [otherX[1], movingX[1], 'x'],
-      [otherX[2], movingX[2], 'x'],
-      [otherY[0], movingY[0], 'y'],
-      [otherY[1], movingY[1], 'y'],
-      [otherY[2], movingY[2], 'y'],
-    ];
-    for (const [otherValue, movingValue, axis] of pairs) {
-      const delta = otherValue - movingValue;
-      if (Math.abs(delta) > threshold) continue;
-      if (axis === 'x') {
-        if (!bestX || Math.abs(delta) < Math.abs(bestX.delta)) bestX = { delta, line: otherValue };
-      } else if (!bestY || Math.abs(delta) < Math.abs(bestY.delta)) {
-        bestY = { delta, line: otherValue };
-      }
+    minX = Math.min(minX, other.x);
+    maxX = Math.max(maxX, other.x + other.width);
+    minY = Math.min(minY, other.y);
+    maxY = Math.max(maxY, other.y + other.height);
+    for (let i = 0; i < 3; i++) {
+      const otherX = i === 0 ? other.x : i === 1 ? other.x + other.width / 2 : other.x + other.width;
+      const otherY = i === 0 ? other.y : i === 1 ? other.y + other.height / 2 : other.y + other.height;
+      const deltaX = otherX - movingX[i];
+      const deltaY = otherY - movingY[i];
+      if (!(Math.abs(deltaX) > threshold) && (bestX === null || Math.abs(deltaX) < Math.abs(bestX))) bestX = deltaX;
+      if (!(Math.abs(deltaY) > threshold) && (bestY === null || Math.abs(deltaY) < Math.abs(bestY))) bestY = deltaY;
     }
   }
 
   const guides: AlignmentGuide[] = [];
-  if (bestX) {
+  if (bestX !== null) {
     guides.push({
       orientation: 'vertical',
-      position: moving.x + bestX.delta,
-      start: Math.min(moving.y, ...others.map((o) => o.y)),
-      end: Math.max(moving.y + moving.height, ...others.map((o) => o.y + o.height)),
+      position: moving.x + bestX,
+      start: minY,
+      end: maxY,
     });
   }
-  if (bestY) {
+  if (bestY !== null) {
     guides.push({
       orientation: 'horizontal',
-      position: moving.y + bestY.delta,
-      start: Math.min(moving.x, ...others.map((o) => o.x)),
-      end: Math.max(moving.x + moving.width, ...others.map((o) => o.x + o.width)),
+      position: moving.y + bestY,
+      start: minX,
+      end: maxX,
     });
   }
 
   return {
     guides,
-    snapped: { x: moving.x + (bestX?.delta ?? 0), y: moving.y + (bestY?.delta ?? 0) },
+    snapped: { x: moving.x + (bestX ?? 0), y: moving.y + (bestY ?? 0) },
     snappedX: bestX !== null,
     snappedY: bestY !== null,
   };

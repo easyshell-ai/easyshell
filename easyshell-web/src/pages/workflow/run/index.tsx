@@ -1,11 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Button, Card, Space, Table, Tag, Typography, message } from 'antd';
+import { Button, Card, Popconfirm, Space, Table, Tag, Typography, message } from 'antd';
 import { EyeOutlined, FieldTimeOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import type { ColumnsType } from 'antd/es/table';
-import { getWorkflowRuns } from '../api';
-import type { PageResponse, RunStatus, WorkflowRun } from '../types';
+import { cancelWorkflowRun, getWorkflowRuns } from '../api';
+import type { PageResponse, RunStatus, WorkflowRunControlSummary } from '../types';
 import { formatDateTime } from '../../../utils/format';
 import { runStatusMap } from '../status';
 import PageShell from '../../../layouts/PageShell';
@@ -19,7 +19,7 @@ const WorkflowRunListPage: React.FC = () => {
   const workflowId = searchParams.get('workflowId');
 
   const [loading, setLoading] = useState(true);
-  const [page, setPage] = useState<PageResponse<WorkflowRun>>({
+  const [page, setPage] = useState<PageResponse<WorkflowRunControlSummary>>({
     content: [], totalElements: 0, totalPages: 0, size: 20, number: 0,
   });
 
@@ -43,7 +43,7 @@ const WorkflowRunListPage: React.FC = () => {
     void fetchRuns(0);
   }, [fetchRuns]);
 
-  const columns: ColumnsType<WorkflowRun> = useMemo(
+  const columns: ColumnsType<WorkflowRunControlSummary> = useMemo(
     () => [
       {
         title: t('workflow.run.col.id'),
@@ -78,14 +78,6 @@ const WorkflowRunListPage: React.FC = () => {
         render: (type: string) => t(`workflow.run.trigger.${type}`),
       },
       {
-        title: t('workflow.run.col.currentNodes'),
-        dataIndex: 'currentNodes',
-        key: 'currentNodes',
-        width: 200,
-        ellipsis: true,
-        render: (nodes: string[] | null) => (nodes && nodes.length > 0 ? nodes.join(', ') : '-'),
-      },
-      {
         title: t('common.createdAt'),
         dataIndex: 'createdAt',
         key: 'createdAt',
@@ -95,12 +87,25 @@ const WorkflowRunListPage: React.FC = () => {
       {
         title: t('common.actions'),
         key: 'action',
-        width: 120,
+        width: 220,
         fixed: 'right',
         render: (_, record) => (
-          <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => navigate(`/workflow/run/${record.id}`)}>
+          <Space wrap><Button type="link" size="small" icon={<EyeOutlined />} onClick={() => navigate(`/workflow/run/${record.id}`)}>
             {t('workflow.run.monitor')}
-          </Button>
+          </Button><Popconfirm title={t('workflow.run.cancelConfirm')} description={t('workflow.run.cancelHint')}
+            disabled={['succeeded', 'failed', 'cancelled', 'timeout', 'interrupted'].includes(record.status) || record.cancelRequested}
+            onConfirm={async () => {
+              try {
+                const res = await cancelWorkflowRun(record.id);
+                if (res.code === 200 && res.data) {
+                  const summary = res.data;
+                  setPage((previous) => ({ ...previous, content: previous.content.map((item) => item.id === record.id ? summary : item) }));
+                  message.success(t('workflow.run.cancelRequested'));
+                } else message.error(res.message || t('workflow.run.cancelFailed'));
+              } catch { message.error(t('workflow.run.cancelFailed')); }
+            }}>
+            <Button danger size="small" disabled={['succeeded', 'failed', 'cancelled', 'timeout', 'interrupted'].includes(record.status) || record.cancelRequested}>{t('workflow.run.cancel')}</Button>
+          </Popconfirm></Space>
         ),
       },
     ],
@@ -121,7 +126,7 @@ const WorkflowRunListPage: React.FC = () => {
       }
     >
       <Card styles={{ body: { padding: 0 } }}>
-        <Table<WorkflowRun>
+        <Table<WorkflowRunControlSummary>
           columns={columns}
           dataSource={page.content}
           rowKey="id"

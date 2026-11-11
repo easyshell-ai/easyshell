@@ -28,7 +28,7 @@ import { bootstrap, waitStable } from './helpers';
  * 3) 第三轮（现在）：改成量纲无关的比率——拖拽 median / 空闲 median。
  *    同一个盒子里空闲和拖拽一起变慢，比率不动，所以与机器快慢无关；
  *    而真实回归（把画布改成每次拖拽都全量重渲染 → 帧时间翻倍）会让比率跳到 2 以上，
- *    在 CI 和开发机上都会被抓住。P95 只作诊断输出，不再当门槛。
+ *    在 CI 和开发机上都会被抓住。仓库另要求 P95 必须同时满足相对空闲的硬预算。
  */
 
 /** 拖拽 median 不得超过空闲 median 的这个倍数，即"拖拽比空闲慢不超过 60%"。推导见文末断言处。 */
@@ -66,10 +66,11 @@ test('画布性能：100 节点 / 150 边拖拽帧时间不高于空闲基线的
   await page.evaluate(() => {
     const win = window as unknown as { __frames: FrameSample[] };
     win.__frames = [];
-    let last = performance.now();
-    const tick = () => {
-      const now = performance.now();
-      win.__frames.push({ t: now, dt: now - last });
+    let last: number | undefined;
+    const tick = (now: number) => {
+      if (last !== undefined) {
+        win.__frames.push({ t: now, dt: now - last });
+      }
       last = now;
       requestAnimationFrame(tick);
     };
@@ -86,7 +87,7 @@ test('画布性能：100 节点 / 150 边拖拽帧时间不高于空闲基线的
 
   const p95 = (frames: FrameSample[]) => {
     const sorted = frames.map((frame) => frame.dt).sort((a, b) => a - b);
-    return sorted[Math.max(0, Math.floor(sorted.length * 0.95) - 1)] ?? sorted[sorted.length - 1];
+    return sorted[Math.max(0, Math.ceil(sorted.length * 0.95) - 1)] ?? sorted[sorted.length - 1];
   };
 
   const median = (frames: FrameSample[]) => {
@@ -105,6 +106,11 @@ test('画布性能：100 节点 / 150 边拖拽帧时间不高于空闲基线的
   console.log(`空闲帧时间：frames=${idle.length} median=${idleMedian.toFixed(2)}ms p95=${idleP95.toFixed(2)}ms`);
 
   const target = nodes.first();
+  const nodePosition = () => target.evaluate((node) => {
+    const transform = new DOMMatrixReadOnly(getComputedStyle(node).transform);
+    return { x: transform.m41, y: transform.m42 };
+  });
+  const initialPosition = await nodePosition();
   const box = await target.boundingBox();
   expect(box).not.toBeNull();
   const startX = box!.x + box!.width / 2;
@@ -120,6 +126,7 @@ test('画布性能：100 节点 / 150 边拖拽帧时间不高于空闲基线的
   const finishedAt = await page.evaluate(() => performance.now());
 
   const frames = (await takeFrames()).filter((frame) => frame.t >= startedAt && frame.t <= finishedAt);
+  await expect.poll(nodePosition).not.toEqual(initialPosition);
   expect(frames.length).toBeGreaterThan(20);
   const dragMedian = median(frames);
   const measured = p95(frames);
@@ -130,10 +137,12 @@ test('画布性能：100 节点 / 150 边拖拽帧时间不高于空闲基线的
   );
   console.log(
     `性能门槛：拖拽/空闲 median 比率=${ratio.toFixed(2)}（预算 < ${DRAG_IDLE_RATIO_BUDGET}），` +
-      `拖拽 median < ${DRAG_MEDIAN_CEILING_MS}ms（p95 仅诊断，不作门槛）`
+      `拖拽 median < ${DRAG_MEDIAN_CEILING_MS}ms；P95 ≤ ${Math.max(40, idleP95 * 2).toFixed(2)}ms`
   );
 
   expect(pageErrors).toEqual([]);
+  // 仓库性能硬规则：P95 使用相对空闲基线的两倍，并设 40ms 下限。
+  expect(measured).toBeLessThanOrEqual(Math.max(40, idleP95 * 2));
   // 绝对护栏：median 超过两个 vsync 周期 = 拖拽中一半的帧在掉帧（见常量注释）。
   expect(dragMedian).toBeLessThan(DRAG_MEDIAN_CEILING_MS);
   // 主门槛：拖拽相对空闲的劣化幅度。倍数取 1.6 的推导——

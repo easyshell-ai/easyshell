@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
   Alert,
   Button,
@@ -32,6 +32,7 @@ import type {
   LlmConfig,
   NotifyConfig,
   ScriptExecConfig,
+  ScriptLibrarySource,
   TargetsConfig,
   TransformMapping,
   VariableSpec,
@@ -52,8 +53,12 @@ import type { WorkflowVariableGroup } from '../variables';
 import { ChannelsEditor, ParametersEditor, TargetsEditor, type TargetOptions } from './NodeConfigFields';
 import { EMPTY_TARGETS, NOTIFY_CHANNELS, TARGETS_MODES, type TargetsMode, type TargetsValue } from './nodeConfig';
 import { getHostList } from '../../../api/host';
+import { getExecuteTargets } from '../../../api/myHostPermissions';
+import { getSessionEpoch, subscribeSessionEpoch } from '../../../api/request';
 import { getClusterList } from '../../../api/cluster';
 import { getTagList } from '../../../api/tag';
+import { getScriptList, getScriptParameters } from '../../../api/script';
+import type { Script } from '../../../types';
 import { VariableInput } from './inspector/VariablePicker';
 import { AiAnalyzeFields } from './inspector/AiAnalyzeFields';
 import { LlmFields } from './inspector/LlmFields';
@@ -95,6 +100,7 @@ const EMPTY_DEFINITION: WorkflowDefinition = {
 
 export interface NodeFormPanelProps {
   node: WorkflowNode | null;
+  workflowId?: number;
   open?: boolean;
   definition?: WorkflowDefinition;
   onClose?: () => void;
@@ -114,7 +120,6 @@ export interface NodeFormPanelProps {
 interface FormValues {
   name: string;
   script?: string;
-  scriptId?: string;
   expression?: string;
   messageTemplate?: string;
   title?: string;
@@ -240,6 +245,7 @@ const FIXED_TYPES: WorkflowNodeType[] = ['start', 'end'];
 
 const NodeFormPanel: React.FC<NodeFormPanelProps> = ({
   node,
+  workflowId,
   open = true,
   definition = EMPTY_DEFINITION,
   onSave,
@@ -249,10 +255,15 @@ const NodeFormPanel: React.FC<NodeFormPanelProps> = ({
   showFooter = true,
   submitRef,
 }) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const sourceText = (key: string, en: string, zh: string) =>
+    t(`workflow.scriptSource.${key}`, { defaultValue: i18n.language.toLowerCase().startsWith('zh') ? zh : en });
   const { token } = theme.useToken();
   const [form] = Form.useForm<FormValues>();
   const nodeType: WorkflowNodeType | undefined = node?.type;
+  const renderEpoch = useSyncExternalStore(subscribeSessionEpoch, getSessionEpoch, getSessionEpoch);
+  const [initialEpoch] = useState(renderEpoch);
+  const sessionValid = initialEpoch === renderEpoch;
 
   // 结构字段（对象/数组）由面板自持：antd Form 托管不了 targets 的按 mode 动态显隐，
   // 而 parameters/channels 的增删行也不适合走 Form store
@@ -266,6 +277,35 @@ const NodeFormPanel: React.FC<NodeFormPanelProps> = ({
   const [classifierClasses, setClassifierClasses] = useState<ClassifierClass[]>([]);
   const [codeInputs, setCodeInputs] = useState<Record<string, string>>({});
   const [targetOptions, setTargetOptions] = useState<TargetOptions | undefined>(undefined);
+  const [hostAttempt, setHostAttempt] = useState(0);
+  const [scriptSource, setScriptSource] = useState<ScriptLibrarySource | null>(null);
+  const [sourceMode, setSourceMode] = useState<'manual' | 'library'>('manual');
+  const [scripts, setScripts] = useState<Script[]>([]);
+  const [sourceLoading, setSourceLoading] = useState(false);
+  const [listLoading, setListLoading] = useState(false);
+  const [listAttempt, setListAttempt] = useState(0);
+  const [sourceError, setSourceError] = useState('');
+  const sourceRequest = useRef(0);
+  const [cacheEpoch, setCacheEpoch] = useState(renderEpoch);
+  const editRevision = useRef(0);
+  const submitting = useRef(false);
+  const context = useMemo(() => ({ node, open, workflowId, variables: definition.variables, targets, parameters, rawParams, channels, startRows, endRows, transformRows, classifierClasses, codeInputs, scriptSource, sourceMode, sourceLoading }), [node, open, workflowId, definition.variables, targets, parameters, rawParams, channels, startRows, endRows, transformRows, classifierClasses, codeInputs, scriptSource, sourceMode, sourceLoading]);
+  const committedContext = useRef<object | null>(null);
+  useLayoutEffect(() => {
+    committedContext.current = context;
+    return () => { committedContext.current = null; };
+  }, [context]);
+
+  useEffect(() => {
+    if (cacheEpoch === renderEpoch) return;
+    setCacheEpoch(renderEpoch);
+    sourceRequest.current += 1;
+    setTargetOptions(undefined);
+    setScripts([]);
+    setSourceLoading(false);
+    setListLoading(false);
+    setSourceError('');
+  }, [renderEpoch, cacheEpoch]);
 
   const groups = useMemo<WorkflowVariableGroup[]>(
     () => (node ? availableVariablesForNode(definition, node.key) : []),
@@ -278,7 +318,6 @@ const NodeFormPanel: React.FC<NodeFormPanelProps> = ({
     return {
       name: node.name,
       script: str(config.script),
-      scriptId: str(config.scriptId),
       expression: str(config.expression),
       messageTemplate: str(config.messageTemplate),
       title: str(config.title),
@@ -309,13 +348,13 @@ const NodeFormPanel: React.FC<NodeFormPanelProps> = ({
       aiInstructions: str(config.instructions),
       aiInput: str(config.input),
       aiMaxInputChars: num(config.maxInputChars, 8000),
-      aiOutputMode: config.outputMode === 'json' ? 'json' : 'text',
+      aiOutputMode: str(config.outputMode, 'text'),
       aiJsonSchema: str(config.jsonSchema),
       llmProvider: typeof config.provider === 'string' ? config.provider : undefined,
       llmModel: typeof config.model === 'string' ? config.model : undefined,
       llmSystemPrompt: str(config.systemPrompt),
       llmUserPrompt: str(config.userPrompt),
-      llmOutputMode: config.outputMode === 'json' ? 'json' : 'text',
+      llmOutputMode: str(config.outputMode, 'text'),
       llmJsonSchema: str(config.jsonSchema),
       llmTemperature: num(config.temperature, 0.3),
       llmMaxInputChars: num(config.maxInputChars, 8000),
@@ -333,6 +372,12 @@ const NodeFormPanel: React.FC<NodeFormPanelProps> = ({
   useEffect(() => {
     if (!open || !node || !initialValues) return;
     const config = node.config || {};
+    sourceRequest.current += 1;
+    const source = config.scriptSource as ScriptLibrarySource | undefined;
+    setScriptSource(source?.kind === 'library-v1' ? source : null);
+    setSourceMode(source?.kind === 'library-v1' ? 'library' : 'manual');
+    setSourceLoading(false);
+    setSourceError('');
     setTargets(targetsOf(config));
     setParameters(strMap(config.parameters));
     setRawParams(strList(config.rawParams));
@@ -352,46 +397,141 @@ const NodeFormPanel: React.FC<NodeFormPanelProps> = ({
     form.setFieldsValue(initialValues);
   }, [open, node, initialValues, form, definition.variables]);
 
-  // 真实主机/集群/标签下拉：三个 API 独立失败，失败的那个字段退回自由输入
   useEffect(() => {
-    if (!remoteOptions || !open || nodeType !== 'script-exec') return;
+    if (!sessionValid || !open || nodeType !== 'script-exec' || sourceMode !== 'library') return;
     let cancelled = false;
-    Promise.allSettled([getHostList(), getClusterList(), getTagList()]).then(([hostRes, clusterRes, tagRes]) => {
-      if (cancelled) return;
-      const hostOk = hostRes.status === 'fulfilled' && hostRes.value.code === 200 && Array.isArray(hostRes.value.data);
-      const clusterOk = clusterRes.status === 'fulfilled' && clusterRes.value.code === 200 && Array.isArray(clusterRes.value.data);
-      const tagOk = tagRes.status === 'fulfilled' && tagRes.value.code === 200 && Array.isArray(tagRes.value.data);
-      const hosts = hostOk
-        ? (hostRes.value.data || []).map((host) => ({ value: host.id, label: `${host.hostname} · ${host.ip}` }))
-        : [];
-      const clusters = clusterOk
-        ? (clusterRes.value.data || []).map((cluster) => ({ value: String(cluster.id), label: cluster.name }))
-        : [];
-      const tags = tagOk
-        ? (tagRes.value.data || []).map((tag) => ({ value: String(tag.id), label: tag.name }))
-        : [];
-      setTargetOptions({
-        hosts,
-        clusters,
-        tags,
-        fallbackHosts: !hostOk || hosts.length === 0,
-        fallbackClusters: !clusterOk || clusters.length === 0,
-        fallbackTags: !tagOk || tags.length === 0,
-      });
+    const epoch = renderEpoch;
+    const current = () => !cancelled && epoch === getSessionEpoch();
+    setListLoading(true);
+    setSourceError('');
+    getScriptList().then((res) => {
+      if (!current()) return;
+      if (res.code !== 200 || !Array.isArray(res.data)) throw new Error('list');
+      setScripts(res.data.filter((item) => item.scriptType === 'shell'));
+    }).catch(() => {
+      if (current()) setSourceError('list');
+    }).finally(() => {
+      if (current()) setListLoading(false);
     });
-    return () => {
-      cancelled = true;
+    return () => { cancelled = true; };
+  }, [open, nodeType, sourceMode, listAttempt, renderEpoch, sessionValid]);
+
+  const selectLibraryScript = async (id: number) => {
+    const request = ++sourceRequest.current;
+    const epoch = renderEpoch;
+    const current = () => request === sourceRequest.current && epoch === getSessionEpoch();
+    if (epoch !== getSessionEpoch() || cacheEpoch !== epoch) return;
+    const script = scripts.find((item) => item.id === id);
+    setScriptSource(null);
+    setSourceLoading(true);
+    setSourceError('');
+    try {
+      if (!script || !Number.isSafeInteger(script.id) || script.id <= 0 ||
+          !Number.isSafeInteger(script.version) || script.version <= 0 || typeof script.content !== 'string') throw new Error('changed');
+      const [response, digest] = await Promise.all([
+        getScriptParameters(id),
+        crypto.subtle.digest('SHA-256', new TextEncoder().encode(script.content)),
+      ]);
+      if (response.code !== 200 || !Array.isArray(response.data)) throw new Error('parameters');
+      if (!current()) return;
+      const sha256 = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+      const names = new Set(response.data.filter((name) => /^[A-Z][A-Z0-9_]*$/.test(name)));
+      const slots = [...script.content.matchAll(/\{\{\s*([A-Z][A-Z0-9_]*)(?::(raw))?\s*}}/g)];
+      const suggested = slots.filter((slot) => slot[2] === 'raw' || names.has(slot[1])).map((slot) => slot[1]);
+      setParameters((previous) => {
+        const next = { ...previous };
+        suggested.forEach((name) => { if (!Object.prototype.hasOwnProperty.call(next, name)) next[name] = ''; });
+        return next;
+      });
+      form.setFieldsValue({ script: script.content });
+      setScriptSource({ kind: 'library-v1', scriptId: script.id, version: script.version, sha256 });
+    } catch {
+      if (current()) setSourceError('selection');
+    } finally {
+      if (current()) setSourceLoading(false);
+    }
+  };
+
+  // 可执行 ID 是权威候选集；可见主机列表仅用于补充显示名称。
+  useEffect(() => {
+    if (!sessionValid || !remoteOptions || !open || nodeType !== 'script-exec') return;
+    let cancelled = false;
+    const epoch = getSessionEpoch();
+    const current = () => !cancelled && epoch === getSessionEpoch();
+    setTargetOptions((previous) => ({ ...previous, hosts: [], hostStatus: 'loading' }));
+    const loadHosts = async () => {
+      const visibleHosts = getHostList().then((response) => response.code === 200 && Array.isArray(response.data) ? response.data : []).catch(() => []);
+      const ids = new Set<string>();
+      const cursors = new Set<string>();
+      let cursor: string | undefined;
+      // A broken or malicious pagination response must not cause an unbounded loop.
+      for (let page = 0; page < 1000; page++) {
+        const response = await getExecuteTargets(cursor);
+        if (!current()) return null;
+        const data = response.data;
+        if (response.code !== 200 || !data || !Array.isArray(data.agentIds) || data.agentIds.length > 100 ||
+            data.agentIds.some((id) => typeof id !== 'string' || !id.trim() || id.length > 64) ||
+            !(data.nextCursor === null || (typeof data.nextCursor === 'string' && data.nextCursor.trim() && data.nextCursor.length <= 64)) ||
+            (data.nextCursor !== null && (data.agentIds.length === 0 || data.nextCursor !== data.agentIds[data.agentIds.length - 1]))) throw new Error('execute targets');
+        data.agentIds.forEach((id) => ids.add(id));
+        if (data.nextCursor === null) {
+          const visible = await visibleHosts;
+          if (!current()) return null;
+          const labels = new Map(visible.map((host) => [host.id, `${host.hostname} · ${host.ip}`]));
+          return Array.from(ids, (id) => ({ value: id, label: labels.get(id) || id }));
+        }
+        if (cursors.has(data.nextCursor)) throw new Error('repeated cursor');
+        cursors.add(data.nextCursor);
+        cursor = data.nextCursor;
+      }
+      throw new Error('too many pages');
     };
-  }, [remoteOptions, open, nodeType]);
+    loadHosts().then((hosts) => {
+      if (current() && hosts) setTargetOptions((previous) => current() ? ({ ...previous, hosts, hostStatus: 'ready' }) : previous);
+    }).catch(() => {
+      if (current()) setTargetOptions((previous) => current() ? ({ ...previous, hosts: [], hostStatus: 'error' }) : previous);
+    });
+    return () => { cancelled = true; };
+  }, [remoteOptions, open, nodeType, node?.key, hostAttempt, renderEpoch, sessionValid]);
+
+  useEffect(() => {
+    if (!sessionValid || !remoteOptions || !open || nodeType !== 'script-exec') return;
+    let cancelled = false;
+    const epoch = getSessionEpoch();
+    const current = () => !cancelled && epoch === getSessionEpoch();
+    setTargetOptions((previous) => ({ ...previous, clusters: undefined, tags: undefined, fallbackClusters: true, fallbackTags: true }));
+    getClusterList().then((response) => {
+      if (response.code !== 200 || !Array.isArray(response.data)) throw new Error('clusters');
+      const clusters = response.data.map((cluster) => ({ value: String(cluster.id), label: cluster.name }));
+      if (current()) setTargetOptions((previous) => current() ? ({ ...previous, clusters, fallbackClusters: clusters.length === 0 }) : previous);
+    }).catch(() => {
+      if (current()) setTargetOptions((previous) => current() ? ({ ...previous, clusters: [], fallbackClusters: true }) : previous);
+    });
+    getTagList().then((response) => {
+      if (response.code !== 200 || !Array.isArray(response.data)) throw new Error('tags');
+      const tags = response.data.map((tag) => ({ value: String(tag.id), label: tag.name }));
+      if (current()) setTargetOptions((previous) => current() ? ({ ...previous, tags, fallbackTags: tags.length === 0 }) : previous);
+    }).catch(() => {
+      if (current()) setTargetOptions((previous) => current() ? ({ ...previous, tags: [], fallbackTags: true }) : previous);
+    });
+    return () => { cancelled = true; };
+  }, [remoteOptions, open, nodeType, node?.key, hostAttempt, renderEpoch, sessionValid]);
 
   const handleSubmit = async () => {
-    if (!node) return;
+    if (!node || !open || submitting.current || initialEpoch !== getSessionEpoch()) return;
+    const epoch = renderEpoch;
+    const revision = editRevision.current;
+    const current = () => epoch === getSessionEpoch() && committedContext.current === context && revision === editRevision.current;
+    if (!current()) return;
+    submitting.current = true;
+    try {
     let values: FormValues;
     try {
       values = await form.validateFields();
     } catch {
       return; // 校验失败：antd 已在字段上标红，不再静默提交
     }
+    if (!current()) return;
 
     if (nodeType === 'start') {
       if (invalidVariableNames(startRows).length > 0) {
@@ -415,6 +555,10 @@ const NodeFormPanel: React.FC<NodeFormPanelProps> = ({
     const config: Record<string, unknown> = { ...(node.config || {}) };
 
     if (nodeType === 'script-exec') {
+      if (sourceMode === 'library' && (!scriptSource || sourceLoading)) {
+        setSourceError('selection');
+        return;
+      }
       const scriptExec: ScriptExecConfig = {
         script: values.script || '',
         targets: targetsConfigOf(targets),
@@ -423,7 +567,9 @@ const NodeFormPanel: React.FC<NodeFormPanelProps> = ({
         onUnsafeValue: values.onUnsafeValue || 'reject',
         riskPolicy: values.riskPolicy || 'block',
       };
-      if (values.scriptId && values.scriptId.trim()) scriptExec.scriptId = values.scriptId.trim();
+      delete config.scriptId;
+      delete config.scriptSource;
+      if (sourceMode === 'library' && scriptSource) scriptExec.scriptSource = scriptSource;
       Object.assign(config, scriptExec);
     }
     if (nodeType === 'condition') {
@@ -468,9 +614,9 @@ const NodeFormPanel: React.FC<NodeFormPanelProps> = ({
         instructions: values.aiInstructions || '',
         input: values.aiInput || '',
         maxInputChars: values.aiMaxInputChars ?? 8000,
-        outputMode: values.aiOutputMode === 'json' ? 'json' : 'text',
+        outputMode: values.aiOutputMode || 'text',
       };
-      if (ai.outputMode === 'json' && values.aiJsonSchema && values.aiJsonSchema.trim()) {
+      if (values.aiJsonSchema !== undefined && values.aiJsonSchema !== '') {
         ai.jsonSchema = values.aiJsonSchema;
       }
       delete config.jsonSchema;
@@ -482,11 +628,11 @@ const NodeFormPanel: React.FC<NodeFormPanelProps> = ({
         model: values.llmModel && values.llmModel.trim() ? values.llmModel.trim() : null,
         systemPrompt: values.llmSystemPrompt || '',
         userPrompt: values.llmUserPrompt || '',
-        outputMode: values.llmOutputMode === 'json' ? 'json' : 'text',
+        outputMode: values.llmOutputMode || 'text',
         temperature: values.llmTemperature ?? 0.3,
         maxInputChars: values.llmMaxInputChars ?? 8000,
       };
-      if (llm.outputMode === 'json' && values.llmJsonSchema && values.llmJsonSchema.trim()) {
+      if (values.llmJsonSchema !== undefined && values.llmJsonSchema !== '') {
         llm.jsonSchema = values.llmJsonSchema;
       }
       delete config.jsonSchema;
@@ -531,21 +677,29 @@ const NodeFormPanel: React.FC<NodeFormPanelProps> = ({
       Object.assign(config, code);
     }
 
+    const strict = (nodeType === 'llm' && values.llmOutputMode === 'json_schema_v1') ||
+      (nodeType === 'ai-analyze' && values.aiOutputMode === 'json_schema_v1');
     onSave(node.key, {
       name: values.name,
       config,
       outputVar: values.outputVar || undefined,
-      retryMax: values.retryMax ?? 0,
+      retryMax: strict ? 0 : values.retryMax ?? 0,
       retryIntervalSec: values.retryIntervalSec ?? 5,
       timeoutSec: values.timeoutSecNode ?? null,
-      onFailure: values.onFailure,
+      onFailure: strict ? 'abort' : values.onFailure,
     });
     message.success(t('workflow.inspector.saved'));
+    } finally {
+      submitting.current = false;
+    }
   };
 
   // 固定 footer 由 NodeInspector 渲染时，把提交函数交给父组件（ref 只在 effect 里写）
   useEffect(() => {
-    if (submitRef) submitRef.current = handleSubmit;
+    if (submitRef) {
+      submitRef.current = sessionValid && open && node ? handleSubmit : null;
+      return () => { if (submitRef.current === handleSubmit) submitRef.current = null; };
+    }
   });
 
   /** raw 参数必须配 riskPolicy >= allow_medium（服务端 ERROR，这里提前告知而非代改） */
@@ -559,12 +713,18 @@ const NodeFormPanel: React.FC<NodeFormPanelProps> = ({
       (targets.mode === 'variable' && !targets.variableRef.trim()));
   const fixed = !!nodeType && FIXED_TYPES.includes(nodeType);
 
-  if (!open || !node || !nodeType) {
+  if (!sessionValid || !open || !node || !nodeType) {
     return <Text type="secondary">{t('workflow.form.empty')}</Text>;
   }
 
   return (
-    <Form form={form} layout="vertical" initialValues={initialValues} requiredMark="optional" className="wf-node-form">
+    <Form form={form} layout="vertical" initialValues={initialValues} requiredMark="optional" className="wf-node-form"
+      onValuesChange={(changed) => {
+        editRevision.current += 1;
+        if (changed.llmOutputMode === 'json_schema_v1' || changed.aiOutputMode === 'json_schema_v1') {
+          form.setFieldsValue({ retryMax: 0, onFailure: 'abort' });
+        }
+      }}>
       <Form.Item name="name" label={t('workflow.form.name')} rules={[{ required: true, message: t('workflow.form.nameRequired') }]}>
         <Input />
       </Form.Item>
@@ -592,21 +752,45 @@ const NodeFormPanel: React.FC<NodeFormPanelProps> = ({
       )}
 
       {nodeType === 'code' && (
-        <CodeFields groups={groups} inputs={codeInputs} onInputsChange={setCodeInputs} />
+        <CodeFields key={`${workflowId ?? ''}:${node.key}`} workflowId={workflowId} groups={groups} inputs={codeInputs} onInputsChange={setCodeInputs} />
       )}
 
       {nodeType === 'script-exec' && (
         <>
+          <Form.Item label={sourceText('label', 'Script source', '脚本来源')}>
+            <Select aria-label={sourceText('label', 'Script source', '脚本来源')} value={sourceMode} onChange={(mode: 'manual' | 'library') => {
+              sourceRequest.current += 1;
+              setSourceMode(mode);
+              setScriptSource(null);
+              setSourceLoading(false);
+              setSourceError('');
+            }} options={[
+              { value: 'manual', label: sourceText('manual', 'Manual', '手写') },
+              { value: 'library', label: sourceText('library', 'Script library', '脚本库') },
+            ]} />
+          </Form.Item>
+          {sourceMode === 'library' && <>
+            <Form.Item label={sourceText('select', 'Library script', '选择脚本')}>
+              <Select key={renderEpoch} aria-label={sourceText('select', 'Library script', '选择脚本')} allowClear loading={sourceLoading || listLoading}
+                value={scriptSource?.scriptId} options={(cacheEpoch === renderEpoch ? scripts : []).map((script) => ({ value: script.id, label: script.name }))}
+                onChange={(id: number | undefined) => {
+                  if (id === undefined) { sourceRequest.current += 1; setScriptSource(null); setSourceLoading(false); setSourceError(''); }
+                  else void selectLibraryScript(id);
+                }} />
+            </Form.Item>
+            <Alert type="info" showIcon message={sourceText('snapshotHint', 'Preview is read-only; publication uses the verified server snapshot.', '预览只读；发布以服务端校验后的快照为准。')} />
+            {sourceError && <Alert type="error" showIcon message={sourceError === 'list'
+              ? sourceText('listError', 'Unable to load scripts. Check your access and try again.', '脚本列表加载失败，请检查权限后重试。')
+              : sourceText('selectionError', 'Unable to select the script. It may have changed or access was denied; try again.', '无法选择脚本，脚本可能已变更或无权限，请重试。')} />}
+            {sourceError === 'list' && <Button onClick={() => setListAttempt((value) => value + 1)}>{sourceText('retry', 'Retry', '重试')}</Button>}
+          </>}
           <Form.Item
             name="script"
             label={t('workflow.form.script')}
             rules={[{ required: true, message: t('workflow.form.scriptRequired') }]}
             tooltip={t('workflow.form.scriptHint')}
           >
-            <Input.TextArea rows={8} style={{ fontFamily: 'monospace', fontSize: 12 }} />
-          </Form.Item>
-          <Form.Item name="scriptId" label={t('workflow.form.scriptId')} tooltip={t('workflow.form.scriptIdHint')}>
-            <Input placeholder={t('workflow.form.scriptIdPlaceholder')} />
+            <Input.TextArea readOnly={sourceMode === 'library'} rows={8} style={{ fontFamily: 'monospace', fontSize: 12 }} />
           </Form.Item>
           <Form.Item
             label={t('workflow.form.targets')}
@@ -614,7 +798,7 @@ const NodeFormPanel: React.FC<NodeFormPanelProps> = ({
             tooltip={t('workflow.form.targetsHint')}
             extra={targetIdsEmpty ? t('workflow.form.targetsEmpty') : undefined}
           >
-            <TargetsEditor value={targets} onChange={setTargets} options={targetOptions} groups={groups} />
+            <TargetsEditor value={targets} onChange={setTargets} options={cacheEpoch === renderEpoch ? targetOptions : undefined} groups={groups} onRetryHosts={remoteOptions ? () => setHostAttempt((attempt) => attempt + 1) : undefined} />
           </Form.Item>
           <Form.Item label={t('workflow.form.parameters')} tooltip={t('workflow.form.parametersHint')}>
             <ParametersEditor value={parameters} onChange={setParameters} ariaLabel={t('workflow.form.parameters')} groups={groups} />

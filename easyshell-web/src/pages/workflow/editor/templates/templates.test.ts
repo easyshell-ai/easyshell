@@ -8,8 +8,8 @@ import { WORKFLOW_TEMPLATES } from './index';
  */
 
 describe('workflow template builders', () => {
-  it('registers exactly the three advertised templates', () => {
-    expect(WORKFLOW_TEMPLATES.map((template) => template.id)).toEqual(['disk', 'restart', 'health']);
+  it('registers exactly the four advertised templates', () => {
+    expect(WORKFLOW_TEMPLATES.map((template) => template.id)).toEqual(['disk', 'restart', 'health', 'aiReview']);
   });
 
   for (const template of WORKFLOW_TEMPLATES) {
@@ -89,10 +89,18 @@ describe('workflow template builders', () => {
     expect(restart.edges.some((edge) => edge.from === approval.key && edge.to === script.key)).toBe(true);
   });
 
-  it('health template includes a wait fallback on the false branch', () => {
-    const health = WORKFLOW_TEMPLATES.find((template) => template.id === 'health')!.build();
-    const wait = health.nodes.find((node) => node.type === 'wait');
-    expect(wait).toBeTruthy();
-    expect(health.edges.some((edge) => edge.sourceHandle === 'false' && edge.to === wait!.key)).toBe(true);
+  it.each(['disk', 'health'])('%s is an offline simulation without external side effects', (id) => {
+    const definition = WORKFLOW_TEMPLATES.find((template) => template.id === id)!.build();
+    expect(definition.nodes.every((node) => ['start', 'transform', 'condition', 'end'].includes(node.type))).toBe(true);
+    const condition = definition.nodes.find((node) => node.type === 'condition')!;
+    expect(definition.edges.filter((edge) => edge.from === condition.key).map((edge) => edge.sourceHandle).sort())
+      .toEqual(['false', 'true']);
+    expect(new Set(definition.edges.map((edge) => `${edge.from}->${edge.to}`)).size).toBe(definition.edges.length);
+  });
+
+  it('restart notification does not claim health verification', () => {
+    const restart = WORKFLOW_TEMPLATES.find((template) => template.id === 'restart')!.build();
+    const message = restart.nodes.find((node) => node.type === 'notify')!.config.messageTemplate;
+    expect(message).toContain('health was not verified');
   });
 });

@@ -1,5 +1,5 @@
 /**
- * 3 个示例模板（设计 §3.4）：磁盘巡检与告警 / 服务重启审批 / 批量健康检查。
+ * 两个模拟条件演示、一个服务重启审批模板和一个真实 AI 审阅模板。
  *
  * 纯 WorkflowDefinition 构造器：结构满足 start 无入边、end 无出边、condition 双出各一条，
  * 变量引用只指向祖先；应用时统一走 editor.commit('template', snapshotOf(def))。
@@ -8,8 +8,9 @@
 
 import { createWorkflowNode } from '../../graph';
 import type { WorkflowDefinition, WorkflowNode, WorkflowNodeType } from '../../types';
+import { buildAiReviewTemplate } from './aiReview';
 
-export type WorkflowTemplateId = 'disk' | 'restart' | 'health';
+export type WorkflowTemplateId = 'disk' | 'restart' | 'health' | 'aiReview';
 
 export interface WorkflowTemplate {
   id: WorkflowTemplateId;
@@ -44,67 +45,41 @@ const END_OUTPUTS = (summary: string, extra?: { name: string; value: string }[])
   ...(extra || []),
 ];
 
-/** ① 磁盘巡检：start → script(df -h) → transform(阈值/摘要) → condition(超阈值) → notify/end */
+/** 固定数值的纯条件演示，不采集主机数据或发送通知。 */
 function diskTemplate(): WorkflowDefinition {
-  const nodes: WorkflowNode[] = [
-    node('start', 'start', 'Start', 0, 140),
-    node(
-      'script-exec',
-      'check',
-      'Disk check',
-      300,
-      140,
-      {
-        // 示例数据保证开箱即跑；接入真实主机时替换成 df/awk 采集命令
-        script: 'echo \'{"usage":87,"mount":"/"}\'',
-        parameters: {},
-        targets: { mode: 'variable', variableRef: 'run.input.targets' },
-        rawParams: [],
-        riskPolicy: 'block',
-        onUnsafeValue: 'reject',
-      },
-      { outputVar: 'disk', timeoutSec: 600 }
-    ),
-    node('transform', 'metrics', 'Normalize metrics', 600, 140, {
-      mappings: [
-        { name: 'summary', value: '${run.input.mount} usage: ${nodes.check.output.usage}%' },
-        { name: 'usage', value: '${nodes.check.output.usage}' },
-        { name: 'threshold', value: '${run.input.threshold}' },
-      ],
-    }),
-    node('condition', 'over', 'Over threshold?', 900, 140, {
-      expression: 'nodes.metrics.output.usage > nodes.metrics.output.threshold',
-    }),
-    node('notify', 'alert', 'Alert', 1200, 40, {
-      channels: ['telegram'],
-      messageTemplate: 'Disk alert: ${nodes.metrics.output.summary}',
-      parameters: {},
-      level: 'warning',
-    }),
-    node('end', 'end', 'End', 1500, 140, {
-      outputs: END_OUTPUTS('${nodes.metrics.output.summary}', [
-        { name: 'breached', value: '${nodes.over.output.result}' },
-      ]),
-    }),
-  ];
-
   return {
     schemaVersion: 1,
     defaultOnUpstreamFailure: 'skip',
     onRejection: 'abort',
     variables: {
-      targets: { type: 'json', required: true, description: 'Agent id list (e.g. ["agent-1"])' },
-      mount: { type: 'string', required: true, default: '/', description: 'Mount point to inspect' },
-      threshold: { type: 'number', required: true, default: 90, description: 'Usage percent threshold' },
+      threshold: { type: 'number', required: true, default: 90, description: 'Demo threshold' },
     },
-    nodes,
+    nodes: [
+      node('start', 'start', 'Start', 0, 140),
+      node('transform', 'metrics', 'Simulated metrics', 300, 140, {
+        mappings: [
+          { name: 'usage', value: '87' },
+          { name: 'threshold', value: '${run.input.threshold}' },
+        ],
+      }),
+      node('condition', 'over', 'Demo threshold?', 600, 140, {
+        expression: 'nodes.metrics.output.usage > nodes.metrics.output.threshold',
+      }),
+      node('transform', 'alternative', 'Other branch', 900, 240, {
+        mappings: [{ name: 'note', value: 'Simulated data only' }],
+      }),
+      node('end', 'end', 'End', 1200, 140, {
+        outputs: END_OUTPUTS('Simulated data only', [
+          { name: 'breached', value: '${nodes.over.output.result}' },
+        ]),
+      }),
+    ],
     edges: [
-      edge('start', 'check'),
-      edge('check', 'metrics'),
+      edge('start', 'metrics'),
       edge('metrics', 'over'),
-      edge('over', 'alert', 'true'),
-      edge('alert', 'end'),
-      edge('over', 'end', 'false'),
+      edge('over', 'end', 'true'),
+      edge('over', 'alternative', 'false'),
+      edge('alternative', 'end'),
     ],
   };
 }
@@ -146,7 +121,7 @@ function restartTemplate(): WorkflowDefinition {
     }),
     node('notify', 'notify', 'Notify result', 1200, 140, {
       channels: ['telegram'],
-      messageTemplate: 'Service ${nodes.result.output.service} restart: ${nodes.result.output.approved}',
+      messageTemplate: 'Restart command completed for ${nodes.result.output.service}; approval: ${nodes.result.output.approved}. Service health was not verified.',
       parameters: {},
       level: 'info',
     }),
@@ -177,63 +152,41 @@ function restartTemplate(): WorkflowDefinition {
   };
 }
 
-/** ③ 批量健康检查：start → script(uptime) → transform → condition → notify/end */
+/** 固定数量的纯条件演示，不代表健康检查结果。 */
 function healthTemplate(): WorkflowDefinition {
-  const nodes: WorkflowNode[] = [
-    node('start', 'start', 'Start', 0, 140),
-    node(
-      'script-exec',
-      'probe',
-      'Health probe',
-      300,
-      140,
-      {
-        script: 'uptime; df -h /',
-        parameters: {},
-        targets: { mode: 'variable', variableRef: 'run.input.targets' },
-        rawParams: [],
-        riskPolicy: 'block',
-        onUnsafeValue: 'reject',
-      },
-      { timeoutSec: 300 }
-    ),
-    node('transform', 'stats', 'Summarize', 600, 140, {
-      mappings: [
-        { name: 'summary', value: '${nodes.probe.output}' },
-        { name: 'targetCount', value: '1' },
-      ],
-    }),
-    node('condition', 'healthy', 'Any output?', 900, 140, {
-      expression: 'nodes.stats.output.targetCount > 0',
-    }),
-    node('notify', 'report', 'Report', 1200, 40, {
-      channels: ['telegram'],
-      messageTemplate: 'Health check: ${nodes.stats.output.summary}',
-      parameters: {},
-      level: 'info',
-    }),
-    node('wait', 'pause', 'Cooldown', 1200, 220, { durationSec: 5 }),
-    node('end', 'end', 'End', 1500, 140, {
-      outputs: END_OUTPUTS('${nodes.stats.output.summary}'),
-    }),
-  ];
-
   return {
     schemaVersion: 1,
     defaultOnUpstreamFailure: 'skip',
     onRejection: 'abort',
     variables: {
-      targets: { type: 'json', required: true, description: 'Agent id list (e.g. ["agent-1"])' },
+      minimum: { type: 'number', required: true, default: 1, description: 'Demo minimum' },
     },
-    nodes,
+    nodes: [
+      node('start', 'start', 'Start', 0, 140),
+      node('transform', 'stats', 'Simulated count', 300, 140, {
+        mappings: [
+          { name: 'targetCount', value: '1' },
+          { name: 'minimum', value: '${run.input.minimum}' },
+        ],
+      }),
+      node('condition', 'healthy', 'Demo comparison?', 600, 140, {
+        expression: 'nodes.stats.output.targetCount >= nodes.stats.output.minimum',
+      }),
+      node('transform', 'alternative', 'Other branch', 900, 240, {
+        mappings: [{ name: 'note', value: 'Simulated data only' }],
+      }),
+      node('end', 'end', 'End', 1200, 140, {
+        outputs: END_OUTPUTS('Simulated data only', [
+          { name: 'comparison', value: '${nodes.healthy.output.result}' },
+        ]),
+      }),
+    ],
     edges: [
-      edge('start', 'probe'),
-      edge('probe', 'stats'),
+      edge('start', 'stats'),
       edge('stats', 'healthy'),
-      edge('healthy', 'report', 'true'),
-      edge('healthy', 'pause', 'false'),
-      edge('report', 'end'),
-      edge('pause', 'end'),
+      edge('healthy', 'end', 'true'),
+      edge('healthy', 'alternative', 'false'),
+      edge('alternative', 'end'),
     ],
   };
 }
@@ -242,6 +195,7 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
   { id: 'disk', build: diskTemplate },
   { id: 'restart', build: restartTemplate },
   { id: 'health', build: healthTemplate },
+  { id: 'aiReview', build: buildAiReviewTemplate },
 ];
 
 export function templateById(id: string | undefined | null): WorkflowTemplate | undefined {

@@ -30,9 +30,10 @@ export interface PublishModalProps {
   onConfirm: () => void;
   onRevalidate: () => void;
   loading: boolean;
+  ready?: boolean;
 }
 
-export const PublishModal: React.FC<PublishModalProps> = ({ open, issues, onCancel, onConfirm, onRevalidate, loading }) => {
+export const PublishModal: React.FC<PublishModalProps> = ({ open, issues, onCancel, onConfirm, onRevalidate, loading, ready = true }) => {
   const { t } = useTranslation();
   const errors = issues.filter((i) => i.severity === 'ERROR');
   const warnings = issues.filter((i) => i.severity === 'WARNING');
@@ -48,7 +49,7 @@ export const PublishModal: React.FC<PublishModalProps> = ({ open, issues, onCanc
           <Button icon={<ReloadOutlined />} onClick={onRevalidate} loading={loading}>
             {t('workflow.publish.revalidate')}
           </Button>
-          <Button type="primary" danger={errors.length > 0} onClick={onConfirm} loading={loading} disabled={errors.length > 0}>
+          <Button type="primary" danger={errors.length > 0} onClick={onConfirm} loading={loading} disabled={errors.length > 0 || !ready}>
             {errors.length > 0 ? t('workflow.publish.blocked') : t('workflow.publish.confirm')}
           </Button>
         </Space>
@@ -56,7 +57,7 @@ export const PublishModal: React.FC<PublishModalProps> = ({ open, issues, onCanc
       width={640}
     >
       <Space direction="vertical" size={12} style={{ width: '100%' }}>
-        {errors.length === 0 && warnings.length === 0 && (
+        {ready && errors.length === 0 && warnings.length === 0 && (
           <Alert type="success" showIcon message={t('workflow.publish.noIssues')} />
         )}
         {errors.length > 0 && (
@@ -93,6 +94,7 @@ export interface TriggerModalProps {
   open: boolean;
   definition: WorkflowDefinition;
   workflowName: string;
+  version?: number;
   onCancel: () => void;
   onSubmit: (inputs: Record<string, unknown>, idempotencyKey: string) => void;
   loading: boolean;
@@ -128,7 +130,7 @@ function jsonInitialValue(value: unknown): string {
 }
 
 export const TriggerModal: React.FC<TriggerModalProps> = ({
-  open, definition, workflowName, onCancel, onSubmit, loading,
+  open, definition, workflowName, version, onCancel, onSubmit, loading,
 }) => {
   const { t } = useTranslation();
   const [form] = Form.useForm<TriggerFormValues>();
@@ -164,7 +166,7 @@ export const TriggerModal: React.FC<TriggerModalProps> = ({
 
   return (
     <Modal
-      title={t('workflow.trigger.title', { name: workflowName })}
+      title={<Space>{t('workflow.trigger.title', { name: workflowName })}{version != null && <Tag>{t('workflow.list.col.version')}: v{version}</Tag>}</Space>}
       open={open}
       onCancel={onCancel}
       onOk={() => void handleOk()}
@@ -256,6 +258,7 @@ export const TriggerModal: React.FC<TriggerModalProps> = ({
 
 export interface VersionConflictModalProps {
   open: boolean;
+  target: import('../api').DraftToken | null;
   onCancel: () => void;
   onOverwrite: () => void;
   onSaveCopy: () => void;
@@ -264,7 +267,7 @@ export interface VersionConflictModalProps {
 }
 
 export const VersionConflictModal: React.FC<VersionConflictModalProps> = ({
-  open, onCancel, onOverwrite, onSaveCopy, onDiscard, busy,
+  open, target, onCancel, onOverwrite, onSaveCopy, onDiscard, busy,
 }) => {
   const { t } = useTranslation();
   return (
@@ -276,14 +279,15 @@ export const VersionConflictModal: React.FC<VersionConflictModalProps> = ({
       width={560}
     >
       <Alert type="warning" showIcon message={t('workflow.conflict.message')} style={{ marginBottom: 16 }} />
+      {target && <Alert type="info" style={{ marginBottom: 16 }} message={`${t('workflow.conflict.draftId')}: ${target.draftId} · ${t('workflow.conflict.baseVersion')}: ${target.baseVersion}`} description={`SHA-256: ${target.definitionSha256}`} />}
       <Space direction="vertical" style={{ width: '100%' }}>
-        <Button block type="primary" loading={busy} onClick={onOverwrite}>
+        <Button block type="primary" loading={busy} disabled={!target || busy} onClick={onOverwrite}>
           {t('workflow.conflict.overwrite')}
         </Button>
-        <Button block onClick={onSaveCopy}>
+        <Button block disabled={busy} onClick={onSaveCopy}>
           {t('workflow.conflict.saveCopy')}
         </Button>
-        <Button block danger onClick={onDiscard}>
+        <Button block danger disabled={busy} onClick={onDiscard}>
           {t('workflow.conflict.discard')}
         </Button>
       </Space>

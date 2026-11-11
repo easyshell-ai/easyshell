@@ -16,6 +16,7 @@ import { DataFlowTab } from './DataFlowTab';
  */
 export interface NodeInspectorProps {
   node: WorkflowNode;
+  workflowId?: number;
   definition: WorkflowDefinition;
   onSave: (key: string, patch: Partial<WorkflowNode>) => void;
   onSaveMeta?: (variables: Record<string, VariableSpec>, label?: string) => void;
@@ -25,6 +26,7 @@ export interface NodeInspectorProps {
 
 export const NodeInspector: React.FC<NodeInspectorProps> = ({
   node,
+  workflowId,
   definition,
   onSave,
   onSaveMeta,
@@ -64,6 +66,7 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({
             children: (
               <NodeFormPanel
                 node={node}
+                workflowId={workflowId}
                 open
                 definition={definition}
                 onSave={onSave}

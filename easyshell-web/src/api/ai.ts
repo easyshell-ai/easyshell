@@ -1,5 +1,5 @@
 import request from './request';
-import { getToken, clearSession } from './request';
+import { getToken, clearSession, getSessionEpoch, subscribeSessionEpoch } from './request';
 import i18n from '../i18n';
 import type {
   ApiResponse,
@@ -74,12 +74,12 @@ export function rejectExecution(taskId: string): Promise<ApiResponse<null>> {
   return request.post(`/v1/ai/chat/reject/${taskId}`);
 }
 
-export function confirmPlan(sessionId: string): Promise<ApiResponse<null>> {
-  return request.post(`/v1/ai/chat/sessions/${sessionId}/plan/confirm`);
+export function confirmPlan(sessionId: string, planId: string): Promise<ApiResponse<null>> {
+  return request.post(`/v1/ai/chat/sessions/${sessionId}/plan/confirm`, { planId });
 }
 
-export function rejectPlan(sessionId: string): Promise<ApiResponse<null>> {
-  return request.post(`/v1/ai/chat/sessions/${sessionId}/plan/reject`);
+export function rejectPlan(sessionId: string, planId: string): Promise<ApiResponse<null>> {
+  return request.post(`/v1/ai/chat/sessions/${sessionId}/plan/reject`, { planId });
 }
 
 export function approveCheckpoint(sessionId: string, stepIndex: number): Promise<ApiResponse<null>> {
@@ -99,17 +99,6 @@ export function getPendingApprovals(): Promise<ApiResponse<Task[]>> {
 }
 
 const STREAM_TIMEOUT_MS = 180_000;
-const STREAM_MAX_RETRIES = 2;
-const NON_RETRYABLE_STATUSES = new Set([400, 401, 403, 404, 422]);
-
-function isRetryableError(err: unknown): boolean {
-  if (err instanceof DOMException && err.name === 'AbortError') return false;
-  if (err instanceof Error && err.message.startsWith('HTTP ')) {
-    const status = parseInt(err.message.slice(5), 10);
-    if (NON_RETRYABLE_STATUSES.has(status)) return false;
-  }
-  return true;
-}
 
 export function sendChatStream(
   data: AiChatRequest,
@@ -118,30 +107,49 @@ export function sendChatStream(
   onComplete: () => void,
 ): AbortController {
   const controller = new AbortController();
-  let attempt = 0;
+  const epoch = getSessionEpoch();
+  const isCurrentSession = () => epoch === getSessionEpoch();
+  let fetchAbort: AbortController | undefined;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const cleanup = () => {
+    clearTimeout(timeoutId);
+    unsubscribe();
+    controller.signal.removeEventListener('abort', cancel);
+  };
+  const cancel = () => {
+    fetchAbort?.abort();
+    if (reader) void reader.cancel().catch(() => {});
+    cleanup();
+  };
+  const unsubscribe = subscribeSessionEpoch(() => {
+    if (!isCurrentSession()) cancel();
+  });
+  controller.signal.addEventListener('abort', cancel, { once: true });
 
   const doFetch = () => {
+    if (controller.signal.aborted || !isCurrentSession()) { cleanup(); return; }
     const token = getToken();
     let receivedTerminalEvent = false;
+    let timedOut = false;
 
     const wrappedOnEvent = (event: AgentEvent) => {
+      if (!isCurrentSession()) return;
       if (event.type === 'DONE' || event.type === 'ERROR') {
         receivedTerminalEvent = true;
       }
       onEvent(event);
     };
 
-    // Dual AbortController: timeoutId fires fetchAbort (triggers retry),
-    // while controller.abort() is the user-initiated cancel (no retry).
-    const timeoutId = setTimeout(() => {
+    // Keep timeout distinct from user cancellation, which is silent.
+    fetchAbort = new AbortController();
+    const activeFetch = fetchAbort;
+    timeoutId = setTimeout(() => {
       if (!receivedTerminalEvent && !controller.signal.aborted) {
-        fetchAbort.abort(new DOMException('Stream timeout', 'TimeoutError'));
+        timedOut = true;
+        activeFetch.abort(new DOMException('Stream timeout', 'TimeoutError'));
       }
     }, STREAM_TIMEOUT_MS);
-
-    const fetchAbort = new AbortController();
-    const onUserAbort = () => fetchAbort.abort();
-    controller.signal.addEventListener('abort', onUserAbort, { once: true });
 
     fetch('/api/v1/ai/chat/stream', {
       method: 'POST',
@@ -152,27 +160,31 @@ export function sendChatStream(
         'Accept-Language': i18n.language || 'zh-CN',
       },
       body: JSON.stringify(data),
-      signal: fetchAbort.signal,
+      signal: activeFetch.signal,
     })
       .then(async (response) => {
         clearTimeout(timeoutId);
+        if (!isCurrentSession() || controller.signal.aborted) { cleanup(); return; }
         if (!response.ok) {
           if (response.status === 401) {
+            cleanup();
             clearSession();
             window.location.href = '/login';
             return;
           }
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
-        const reader = response.body?.getReader();
+        reader = response.body?.getReader();
         if (!reader) throw new Error('No response body');
+        const activeReader = reader;
 
         const decoder = new TextDecoder();
         let buffer = '';
 
         try {
           while (true) {
-            const { done, value } = await reader.read();
+            const { done, value } = await activeReader.read();
+            if (!isCurrentSession() || controller.signal.aborted) { cleanup(); return; }
             if (done) break;
 
             buffer += decoder.decode(value, { stream: true });
@@ -222,27 +234,25 @@ export function sendChatStream(
           }
         }
 
-        onComplete();
+        if (isCurrentSession() && !controller.signal.aborted) onComplete();
+        cleanup();
       })
       .catch((err) => {
         clearTimeout(timeoutId);
-        controller.signal.removeEventListener('abort', onUserAbort);
 
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted || !isCurrentSession()) { cleanup(); return; }
 
         if (receivedTerminalEvent) {
+          cleanup();
           onComplete();
           return;
         }
 
-        if (isRetryableError(err) && attempt < STREAM_MAX_RETRIES) {
-          attempt++;
-          const backoff = Math.min(1000 * Math.pow(2, attempt - 1), 8000);
-          setTimeout(doFetch, backoff);
-          return;
-        }
-
-        onError(err instanceof Error ? err : new Error(String(err)));
+        // A failed POST may already have side effects; without server-side
+        // idempotency, even a network error must not trigger another request.
+        cleanup();
+        onError(timedOut ? new DOMException('Stream timeout', 'TimeoutError') :
+          err instanceof Error ? err : new Error(String(err)));
       });
   };
 

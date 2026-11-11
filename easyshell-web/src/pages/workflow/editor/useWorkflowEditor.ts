@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import {
   saveWorkflowDraft,
   type SaveDraftRequest,
+  type DraftToken,
   type WorkflowVersionSummary,
 } from '../api';
 import type { WorkflowDefinition, WorkflowNode, WorkflowVersionDetail, VariableSpec } from '../types';
@@ -16,7 +17,8 @@ import {
   type WorkflowFlowNode,
 } from '../graph';
 import { HistoryStack } from './canvas/HistoryStack';
-import { clearDraft, readDraft, writeDraft, type StoredDraft } from '../utils/draftStorage';
+import type { StoredDraft } from '../utils/draftStorage';
+import { getSessionEpoch } from '../../../api/request';
 
 /** 结构变更标 dirty 后，无新变更 1.5s 自动 PUT（设计 §4.3） */
 export const SAVE_DEBOUNCE_MS = 1500;
@@ -45,7 +47,7 @@ export interface UseWorkflowEditorOptions {
   workflowId: number;
   draft: WorkflowVersionDetail;
   /** 409 VERSION_CONFLICT：三选一弹窗（覆盖 / 另存副本 / 放弃重载），不做自动合并 */
-  onVersionConflict: (info: { localBaseVersion: number }) => void;
+  onVersionConflict: (info: { localBaseVersion: number; target: DraftToken | null }) => void;
   onSaved?: (version: WorkflowVersionSummary) => void;
 }
 
@@ -70,16 +72,23 @@ export interface UseWorkflowEditorResult {
   redo: () => void;
   /** 当前快照（回调里取最新值，避免把 snapshot 塞进 useCallback 依赖） */
   getSnapshot: () => EditorSnapshot;
-  saveNow: () => Promise<void>;
+  saveNow: () => Promise<boolean>;
   /**
    * 409 三选一①：覆盖保存（onConflict=overwrite，服务端记 WORKFLOW_OVERWRITE 审计）。
-   * 覆盖写不校验令牌，但仍旧要把服务端当前令牌带回来，避免下一次保存再撞一次。
+   * 只接受冲突弹窗展示过的目标令牌，服务端须原子校验。
    */
-  overwriteDraft: () => Promise<void>;
+  overwriteDraft: (target: DraftToken) => Promise<boolean>;
   /** 409 三选一②：另存副本（onConflict=copy，新版本草稿行，不动服务端当前草稿） */
-  saveDraftAsCopy: () => Promise<void>;
+  saveDraftAsCopy: () => Promise<boolean>;
   /** 409 三选一③：放弃本地变更，重载服务端草稿 */
   reloadFromServer: (draft: WorkflowVersionDetail) => void;
+  getDiscardCheckpoint: () => { epoch: number; generation: number };
+  beginDiscard: () => Promise<{ epoch: number; generation: number } | null>;
+  endDiscard: (checkpoint: { epoch: number; generation: number }) => void;
+  discardAndReload: (draft: WorkflowVersionDetail, checkpoint: { epoch: number; generation: number }) => boolean;
+  hasUnsavedMemoryDrafts: () => boolean;
+  hasUnsavedChanges: () => boolean;
+  memoryDraftIds: number[];
   exportDefinition: () => WorkflowDefinition;
   restoreLocalDraft: () => void;
   discardLocalDraft: () => void;
@@ -98,14 +107,6 @@ export function snapshotOf(definition: WorkflowDefinition): EditorSnapshot {
   const configs: Record<string, WorkflowNode> = {};
   for (const node of definition.nodes || []) configs[node.key] = node;
   return { nodes, edges, configs, meta: metaOf(definition) };
-}
-
-function storageSafe(): Storage | null {
-  try {
-    return typeof window === 'undefined' ? null : window.localStorage;
-  } catch {
-    return null;
-  }
 }
 
 /** 递归按 key 排序后再序列化：同一份定义即使对象 key 顺序不同也判定为 no-op。 */
@@ -145,12 +146,32 @@ function withRefreshedNodeData(
 
 /** draft 对象可能每次 render 都新建；用 id + baseVersion 识别"这是另一份服务端草稿" */
 function draftKeyOf(workflowId: number, draft: WorkflowVersionDetail): string {
-  return `${workflowId}:${draft.id}:${draft.baseVersion}`;
+  return `${workflowId}:${draft.id}:${draft.baseVersion}:${draft.definitionSha256 || ''}`;
+}
+
+function tokenOf(draft: WorkflowVersionDetail): DraftToken | null {
+  return draft.id > 0 && draft.definitionSha256
+    ? { draftId: draft.id, baseVersion: draft.baseVersion, definitionSha256: draft.definitionSha256 }
+    : null;
+}
+
+function conflictTarget(data: unknown): DraftToken | null {
+  if (!data || typeof data !== 'object') return null;
+  const value = data as Record<string, unknown>;
+  if (!Number.isSafeInteger(value.draftVersionId) || (value.draftVersionId as number) <= 0
+      || !Number.isSafeInteger(value.currentBaseVersion) || (value.currentBaseVersion as number) < 0
+      || typeof value.currentDefinitionSha256 !== 'string' || !value.currentDefinitionSha256.trim()) return null;
+  return { draftId: value.draftVersionId as number, baseVersion: value.currentBaseVersion as number, definitionSha256: value.currentDefinitionSha256 };
+}
+
+function sameToken(a: DraftToken | null, b: DraftToken): boolean {
+  return !!a && a.draftId === b.draftId && a.baseVersion === b.baseVersion && a.definitionSha256 === b.definitionSha256;
 }
 
 export function useWorkflowEditor(options: UseWorkflowEditorOptions): UseWorkflowEditorResult {
   const { workflowId, draft, onVersionConflict, onSaved } = options;
   const { t } = useTranslation();
+  const sessionEpoch = useRef(getSessionEpoch());
 
   const initialSnapshot = useMemo(() => snapshotOf(draft.definition), [draft.definition]);
   /** 首屏也先规范化（condition 边补 sourceHandle / 普通边不写 out），保证 no-op 对比基准一致 */
@@ -167,21 +188,33 @@ export function useWorkflowEditor(options: UseWorkflowEditorOptions): UseWorkflo
   const [saveSeq, setSaveSeq] = useState(0);
   const [saving, setSaving] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
-  const [localDraft, setLocalDraft] = useState<StoredDraft | null>(null);
+  // Legacy local drafts have no trustworthy owner; recovery is disabled.
+  const localDraft: StoredDraft | null = null;
 
   const historyRef = useRef(new HistoryStack<EditorSnapshot>());
   const snapshotRef = useRef<EditorSnapshot>(initialSnapshot);
   const definitionRef = useRef<WorkflowDefinition>(initialDefinition);
   /** 乐观锁令牌 = 草稿行的 baseVersion（不是 version 号；服务端每次保存 +1） */
   const baseVersionRef = useRef<number>(draft.baseVersion);
+  const originRef = useRef<{ token?: DraftToken; expectedAbsent?: true }>(
+    tokenOf(draft) ? { token: tokenOf(draft)! } : draft.id <= 0 ? { expectedAbsent: true } : {}
+  );
+  const conflictRef = useRef(false);
+  const conflictTargetRef = useRef<DraftToken | null>(null);
   const dirtyRef = useRef(false);
   /** 每次结构编辑 +1；保存成功时只有 generation 未变才允许清 dirty */
   const editGenerationRef = useRef(0);
   /** workflowId 切换 +1：旧工作流的异步保存结果必须丢弃 */
   const workflowEpochRef = useRef(0);
-  const saveInFlightRef = useRef<Promise<void> | null>(null);
+  const saveInFlightRef = useRef<Promise<boolean> | null>(null);
+  const copyInFlightRef = useRef<Promise<boolean> | null>(null);
+  const discardRef = useRef<{ epoch: number; generation: number } | null>(null);
+  const queueGenerationRef = useRef(0);
+  const activeSaveRef = useRef<Promise<boolean> | null>(null);
   const loadedDraftKeyRef = useRef<string>(draftKeyOf(workflowId, draft));
   const previousWorkflowIdRef = useRef(workflowId);
+  const memoryDraftsRef = useRef(new Map<number, { snapshot: EditorSnapshot; definition: WorkflowDefinition; origin: { token?: DraftToken; expectedAbsent?: true }; baseVersion: number }>());
+  const [memoryDraftIds, setMemoryDraftIds] = useState<number[]>([]);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
 
@@ -191,24 +224,12 @@ export function useWorkflowEditor(options: UseWorkflowEditorOptions): UseWorkflo
     setCanRedo(historyRef.current.canRedo);
   }, []);
 
-  useEffect(() => {
-    const store = storageSafe();
-    setLocalDraft(store ? readDraft(store, workflowId) : null);
-  }, [workflowId]);
-
   const markDirty = useCallback(() => {
     editGenerationRef.current += 1;
     dirtyRef.current = true;
     setDirty(true);
     setSaveSeq((seq) => seq + 1);
   }, []);
-
-  const persistLocalDraft = useCallback(() => {
-    const store = storageSafe();
-    if (!store) return;
-    writeDraft(store, workflowId, definitionRef.current, baseVersionRef.current);
-    setLocalDraft(readDraft(store, workflowId));
-  }, [workflowId]);
 
   const applySnapshot = useCallback((next: EditorSnapshot) => {
     const nextDefinition = flowToDefinition(next.nodes, next.edges, {
@@ -251,6 +272,7 @@ export function useWorkflowEditor(options: UseWorkflowEditorOptions): UseWorkflo
   );
 
   const onNodesChange = useCallback((changes: NodeChange<WorkflowFlowNode>[]) => {
+    if (discardRef.current && changes.some((change) => change.type !== 'select' && change.type !== 'dimensions')) editGenerationRef.current += 1;
     // 选中/拖拽中的位置变化不进撤销栈（落一次在 onNodeDragStop 的 commit 里）
     const next = { ...snapshotRef.current, nodes: applyNodeChanges(changes, snapshotRef.current.nodes) };
     snapshotRef.current = next;
@@ -258,6 +280,7 @@ export function useWorkflowEditor(options: UseWorkflowEditorOptions): UseWorkflo
   }, []);
 
   const onEdgesChange = useCallback((changes: EdgeChange<WorkflowFlowEdge>[]) => {
+    if (discardRef.current && changes.some((change) => change.type !== 'select')) editGenerationRef.current += 1;
     const next = { ...snapshotRef.current, edges: applyEdgeChanges(changes, snapshotRef.current.edges) };
     snapshotRef.current = next;
     setSnapshot(next);
@@ -315,83 +338,120 @@ export function useWorkflowEditor(options: UseWorkflowEditorOptions): UseWorkflo
    * 说明保存期间用户又改了，保留 dirty 并触发一次 trailing save。
    */
   const runSave = useCallback(
-    async (onConflict: SaveDraftRequest['onConflict']) => {
+    async (onConflict: SaveDraftRequest['onConflict'], target?: DraftToken) => {
+      if (sessionEpoch.current !== getSessionEpoch()) return false;
       const requestEpoch = workflowEpochRef.current;
       const requestGeneration = editGenerationRef.current;
       const definitionSnapshot = definitionRef.current;
       const baseVersionSnapshot = baseVersionRef.current;
+      if (onConflict === 'overwrite') {
+        if (!target || !sameToken(conflictTargetRef.current, target)) return false;
+        conflictTargetRef.current = null; // Each confirmation authorizes at most one attempt.
+      }
+      if (onConflict === 'copy' && !originRef.current.token) {
+        onVersionConflict({ localBaseVersion: baseVersionSnapshot, target: conflictTargetRef.current });
+        return false;
+      }
+      if (onConflict !== 'copy' && onConflict !== 'overwrite' && (conflictRef.current || (!originRef.current.token && !originRef.current.expectedAbsent))) {
+        onVersionConflict({ localBaseVersion: baseVersionSnapshot, target: conflictTargetRef.current });
+        return false;
+      }
       setSaving(true);
       try {
         const res = await saveWorkflowDraft(workflowId, {
           definition: definitionSnapshot,
-          baseVersion: baseVersionSnapshot,
+          ...(onConflict === 'overwrite' ? target : originRef.current.token || { expectedAbsent: true as const, baseVersion: 0 }),
           onConflict,
         });
         // 工作流已切换：旧响应既不能改令牌，也不能清 dirty
-        if (requestEpoch !== workflowEpochRef.current) return;
+        if (requestEpoch !== workflowEpochRef.current || sessionEpoch.current !== getSessionEpoch()) return false;
 
         if (res.code === 200 && res.data) {
+          const token = tokenOf(res.data);
+          if (!token) {
+            originRef.current = {};
+            message.error(t('workflow.editor.saveFailed'));
+            return false;
+          }
           // 服务端把令牌 +1 后回传，下一次保存必须原样带回新值
           baseVersionRef.current = res.data.baseVersion;
+          originRef.current = { token };
+          conflictRef.current = false;
+          conflictTargetRef.current = null;
           setLastSavedAt(Date.now());
           onSaved?.(res.data);
+          if (discardRef.current) {
+            return false;
+          }
           if (editGenerationRef.current === requestGeneration) {
             dirtyRef.current = false;
             setDirty(false);
-            const store = storageSafe();
-            if (store) clearDraft(store, workflowId);
-            setLocalDraft(null);
+            return true;
           } else {
-            // 保存期间有新编辑：本地留最新草稿，并重置防抖排一次 trailing save
-            persistLocalDraft();
+            // 保存期间有新编辑：保留内存草稿，并重置防抖排一次 trailing save
             setSaveSeq((seq) => seq + 1);
+            return false;
           }
         } else if (res.code === 409) {
-          onVersionConflict({ localBaseVersion: baseVersionSnapshot });
+          conflictRef.current = true;
+          conflictTargetRef.current = conflictTarget(res.data);
+          onVersionConflict({ localBaseVersion: baseVersionSnapshot, target: conflictTargetRef.current });
+          message.error(res.message || t('workflow.editor.saveFailed'));
         } else {
-          // 网络/服务端失败：改动落地本地，刷新不丢
-          persistLocalDraft();
+          // 网络/服务端失败：只保留内存中的改动
           message.error(res.message || t('workflow.editor.saveFailed'));
         }
+        return false;
       } catch {
-        if (requestEpoch !== workflowEpochRef.current) return;
-        persistLocalDraft();
-        message.error(t('workflow.editor.saveFailedOffline'));
+        if (requestEpoch !== workflowEpochRef.current || sessionEpoch.current !== getSessionEpoch()) return false;
+        message.error(t('workflow.editor.saveFailed'));
+        return false;
       } finally {
         if (requestEpoch === workflowEpochRef.current) setSaving(false);
       }
     },
-    [workflowId, onVersionConflict, onSaved, persistLocalDraft, t]
+    [workflowId, onVersionConflict, onSaved, t]
   );
 
   /** 同一时刻最多一个请求；后续 saveNow/overwrite 等排队，避免丢令牌或并发覆盖。 */
   const saveWithConflictPolicy = useCallback(
-    async (onConflict: SaveDraftRequest['onConflict']) => {
+    (onConflict: SaveDraftRequest['onConflict'], target?: DraftToken) => {
+      if (discardRef.current) return Promise.resolve(false);
+      if (onConflict === 'copy' && copyInFlightRef.current) return copyInFlightRef.current;
+      const epoch = workflowEpochRef.current;
+      const queueGeneration = queueGenerationRef.current;
       const pending = saveInFlightRef.current;
-      if (pending) {
-        try {
-          await pending;
-        } catch {
-          // runSave 内部已处理
-        }
-      }
-      const task = runSave(onConflict);
+      const task = (async () => {
+        if (pending) await pending;
+        if (epoch !== workflowEpochRef.current || queueGeneration !== queueGenerationRef.current || discardRef.current) return false;
+        const active = runSave(onConflict, target);
+        activeSaveRef.current = active;
+        try { return await active; } finally { if (activeSaveRef.current === active) activeSaveRef.current = null; }
+      })();
       saveInFlightRef.current = task;
-      try {
-        await task;
-      } finally {
+      if (onConflict === 'copy') copyInFlightRef.current = task;
+      const cleanup = () => {
         if (saveInFlightRef.current === task) saveInFlightRef.current = null;
-      }
+        if (copyInFlightRef.current === task) copyInFlightRef.current = null;
+      };
+      void task.then(cleanup, cleanup);
+      return task;
     },
     [runSave]
   );
 
   /** 自动/手动保存：若已有请求在飞，等它结束后再按最新 dirty 状态重试一次 */
   const saveNow = useCallback(async () => {
+    if (discardRef.current) return false;
+    const generation = editGenerationRef.current;
+    const epoch = workflowEpochRef.current;
+    const queueGeneration = queueGenerationRef.current;
     const pending = saveInFlightRef.current;
-    if (pending) await pending;
-    if (!dirtyRef.current) return;
-    await saveWithConflictPolicy('reject');
+    if (pending && !(await pending)) return false;
+    if (epoch !== workflowEpochRef.current || generation !== editGenerationRef.current || queueGeneration !== queueGenerationRef.current || discardRef.current) return false;
+    if (!dirtyRef.current) return true;
+    const saved = await saveWithConflictPolicy('reject');
+    return saved && epoch === workflowEpochRef.current && generation === editGenerationRef.current && !dirtyRef.current;
   }, [saveWithConflictPolicy]);
 
   const redo = useCallback(() => {
@@ -415,7 +475,7 @@ export function useWorkflowEditor(options: UseWorkflowEditorOptions): UseWorkflo
   // beforeunload 提示
   useEffect(() => {
     const handler = (event: BeforeUnloadEvent) => {
-      if (!dirtyRef.current) return;
+      if (!dirtyRef.current && memoryDraftsRef.current.size === 0) return;
       event.preventDefault();
       event.returnValue = '';
     };
@@ -429,10 +489,18 @@ export function useWorkflowEditor(options: UseWorkflowEditorOptions): UseWorkflo
       const restored = snapshotOf(next.definition);
       const normalized = flowToDefinition(restored.nodes, restored.edges, next.definition);
       workflowEpochRef.current += 1;
+      discardRef.current = null;
+      queueGenerationRef.current += 1;
+      saveInFlightRef.current = null;
+      activeSaveRef.current = null;
+      copyInFlightRef.current = null;
       editGenerationRef.current = 0;
       snapshotRef.current = restored;
       definitionRef.current = normalized;
       baseVersionRef.current = next.baseVersion;
+      originRef.current = tokenOf(next) ? { token: tokenOf(next)! } : next.id <= 0 ? { expectedAbsent: true } : {};
+      conflictRef.current = false;
+      conflictTargetRef.current = null;
       historyRef.current.clear();
       setSnapshot(restored);
       setDefinition(normalized);
@@ -448,18 +516,41 @@ export function useWorkflowEditor(options: UseWorkflowEditorOptions): UseWorkflo
   useEffect(() => {
     const key = draftKeyOf(workflowId, draft);
     if (previousWorkflowIdRef.current !== workflowId) {
+      const previousId = previousWorkflowIdRef.current;
+      if (dirtyRef.current) {
+        const pending = { snapshot: snapshotRef.current, definition: definitionRef.current, origin: originRef.current, baseVersion: baseVersionRef.current };
+        memoryDraftsRef.current.set(previousId, pending);
+        message.warning(t('workflow.editor.saveFailed'));
+      }
       previousWorkflowIdRef.current = workflowId;
       loadedDraftKeyRef.current = key;
       adoptDraft(draft);
+      const pending = memoryDraftsRef.current.get(workflowId);
+      if (pending) {
+        memoryDraftsRef.current.delete(workflowId);
+        snapshotRef.current = pending.snapshot;
+        definitionRef.current = pending.definition;
+        originRef.current = pending.origin;
+        baseVersionRef.current = pending.baseVersion;
+        setSnapshot(pending.snapshot);
+        setDefinition(pending.definition);
+        dirtyRef.current = true;
+        setDirty(true);
+        setSaveSeq((seq) => seq + 1);
+      }
+      setMemoryDraftIds([...memoryDraftsRef.current.keys()]);
       setLastSavedAt(null);
       return;
     }
     // 首屏详情异步到达 / 服务端重载：草稿行换了就整份采纳（对象身份不稳定时不误触发）
-    if (loadedDraftKeyRef.current !== key) {
+    if (loadedDraftKeyRef.current !== key && !dirtyRef.current) {
       loadedDraftKeyRef.current = key;
       adoptDraft(draft);
     }
-  }, [workflowId, draft, adoptDraft]);
+  }, [workflowId, draft, adoptDraft, t]);
+
+  const hasUnsavedMemoryDrafts = useCallback(() => memoryDraftsRef.current.size > 0, []);
+  const hasUnsavedChanges = useCallback(() => dirtyRef.current || memoryDraftsRef.current.size > 0, []);
 
   const reloadFromServer = useCallback(
     (next: WorkflowVersionDetail) => {
@@ -469,33 +560,67 @@ export function useWorkflowEditor(options: UseWorkflowEditorOptions): UseWorkflo
     [workflowId, adoptDraft]
   );
 
-  const overwriteDraft = useCallback(async () => {
-    await saveWithConflictPolicy('overwrite');
+  const getDiscardCheckpoint = useCallback(() => ({ epoch: workflowEpochRef.current, generation: editGenerationRef.current }), []);
+
+  const beginDiscard = useCallback(async () => {
+    if (discardRef.current) return null;
+    const checkpoint = { epoch: workflowEpochRef.current, generation: editGenerationRef.current };
+    discardRef.current = checkpoint;
+    queueGenerationRef.current += 1;
+    const active = activeSaveRef.current;
+    try {
+      if (active) await active;
+    } catch {
+      if (discardRef.current === checkpoint) {
+        discardRef.current = null;
+        if (dirtyRef.current) setSaveSeq((seq) => seq + 1);
+      }
+      return null;
+    }
+    if (discardRef.current !== checkpoint || checkpoint.epoch !== workflowEpochRef.current || checkpoint.generation !== editGenerationRef.current) {
+      if (discardRef.current === checkpoint) {
+        discardRef.current = null;
+        if (dirtyRef.current) setSaveSeq((seq) => seq + 1);
+      }
+      return null;
+    }
+    return checkpoint;
+  }, []);
+
+  const endDiscard = useCallback((checkpoint: { epoch: number; generation: number }) => {
+    if (discardRef.current === checkpoint) {
+      discardRef.current = null;
+      if (dirtyRef.current) setSaveSeq((seq) => seq + 1);
+    }
+  }, []);
+
+  const discardAndReload = useCallback((next: WorkflowVersionDetail, checkpoint: { epoch: number; generation: number }) => {
+    if (discardRef.current !== checkpoint) return false;
+    if (checkpoint.epoch !== workflowEpochRef.current || checkpoint.generation !== editGenerationRef.current) {
+      discardRef.current = null;
+      if (dirtyRef.current) setSaveSeq((seq) => seq + 1);
+      return false;
+    }
+    loadedDraftKeyRef.current = draftKeyOf(workflowId, next);
+    adoptDraft(next);
+    return true;
+  }, [workflowId, adoptDraft]);
+
+  const overwriteDraft = useCallback(async (target: DraftToken) => {
+    return saveWithConflictPolicy('overwrite', target);
   }, [saveWithConflictPolicy]);
 
   const saveDraftAsCopy = useCallback(async () => {
-    await saveWithConflictPolicy('copy');
+    return saveWithConflictPolicy('copy');
   }, [saveWithConflictPolicy]);
 
   const exportDefinition = useCallback(() => definitionRef.current, []);
 
   const getSnapshot = useCallback(() => snapshotRef.current, []);
 
-  const restoreLocalDraft = useCallback(() => {
-    const store = storageSafe();
-    if (!store) return;
-    const stored = readDraft(store, workflowId);
-    if (!stored) return;
-    applySnapshot(snapshotOf(stored.definition));
-    setLocalDraft(null);
-    message.success(t('workflow.editor.localDraftRestored'));
-  }, [workflowId, applySnapshot, t]);
-
-  const discardLocalDraft = useCallback(() => {
-    const store = storageSafe();
-    if (store) clearDraft(store, workflowId);
-    setLocalDraft(null);
-  }, [workflowId]);
+  // Kept for the existing UI interface; unowned legacy data is never accessed.
+  const restoreLocalDraft = useCallback(() => {}, []);
+  const discardLocalDraft = useCallback(() => {}, []);
 
   return {
     nodes: snapshot.nodes,
@@ -520,6 +645,13 @@ export function useWorkflowEditor(options: UseWorkflowEditorOptions): UseWorkflo
     overwriteDraft,
     saveDraftAsCopy,
     reloadFromServer,
+    getDiscardCheckpoint,
+    beginDiscard,
+    endDiscard,
+    discardAndReload,
+    hasUnsavedMemoryDrafts,
+    hasUnsavedChanges,
+    memoryDraftIds,
     exportDefinition,
     restoreLocalDraft,
     discardLocalDraft,

@@ -3,6 +3,7 @@ import { Alert, Form, Input, InputNumber, Select } from 'antd';
 import { useTranslation } from 'react-i18next';
 import type { WorkflowVariableGroup } from '../../variables';
 import { VariableInput } from './VariablePicker';
+import { StructuredSchemaEditor } from './LlmFields';
 
 /**
  * AI 分析节点的配置字段：instructions / input / maxInputChars / outputMode / jsonSchema。
@@ -17,6 +18,8 @@ export const AiAnalyzeFields: React.FC<AiAnalyzeFieldsProps> = ({ groups }) => {
   return (
     <div data-testid="ai-analyze-fields">
       <Alert type="warning" showIcon message={t('workflow.ai.warning')} style={{ marginBottom: 12 }} />
+      <Alert type="warning" showIcon message={t('workflow.ai.externalInputWarning', { defaultValue: '输入会发送给配置的模型，请勿输入敏感数据。' })} style={{ marginBottom: 12 }} />
+      <Alert type="warning" showIcon message={t('workflow.structured.savedProtection', { defaultValue: '严格结构化输出节点保存后，不能删除节点或修改节点标识、类型、输出模式及 Schema；其他配置仍可修改。' })} style={{ marginBottom: 12 }} />
       <Form.Item
         name="aiInstructions"
         label={t('workflow.ai.instructions')}
@@ -43,12 +46,15 @@ export const AiAnalyzeFields: React.FC<AiAnalyzeFieldsProps> = ({ groups }) => {
           options={[
             { value: 'text', label: t('workflow.ai.outputModeText') },
             { value: 'json', label: t('workflow.ai.outputModeJson') },
+            { value: 'json_schema_v1', label: t('workflow.structured.mode') },
           ]}
         />
       </Form.Item>
       <Form.Item noStyle shouldUpdate={(prev, next) => prev.aiOutputMode !== next.aiOutputMode}>
         {({ getFieldValue }) =>
-          getFieldValue('aiOutputMode') === 'json' ? (
+          getFieldValue('aiOutputMode') === 'json_schema_v1' ? (
+            <Form.Item name="aiJsonSchema" label={t('workflow.ai.jsonSchema')}><StructuredSchemaEditor /></Form.Item>
+          ) : getFieldValue('aiOutputMode') === 'json' ? (
             <Form.Item name="aiJsonSchema" label={t('workflow.ai.jsonSchema')} tooltip={t('workflow.ai.jsonSchemaHint')}>
               <Input.TextArea
                 rows={5}
