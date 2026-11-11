@@ -7,6 +7,8 @@ import ast, json, pathlib
 
 root = pathlib.Path.cwd()
 ast.parse((root / 'service-entry.py').read_text())
+ast.parse((root / 'preflight.py').read_text())
+ast.parse((root / 'runtime-entry.py').read_text())
 json.loads((root / 'daemon.json.example').read_text())
 dockerfile = (root / 'Dockerfile').read_text()
 for name in ('CODE_JRE_IMAGE', 'CODE_JDK_IMAGE', 'CODE_CC_IMAGE'):
@@ -25,23 +27,25 @@ units = list((root / 'systemd').glob('*.service'))
 assert len(units) == 5
 for unit in units:
     content = unit.read_text()
-    for required in ('NoNewPrivileges=yes', 'ProtectSystem=strict', 'Restart=no',
-                     'ExecStartPre=/bin/bash /opt/easyshell-code/deploy/preflight.sh'):
+    runtime = unit.name in ('easyshell-code-containerd.service', 'easyshell-code-dockerd.service')
+    for required in ('NoNewPrivileges=no' if runtime else 'NoNewPrivileges=yes', 'Restart=no',
+                      'ExecStartPre=/bin/bash /usr/lib/easyshell-code/deploy/preflight.sh'):
         assert required in content, (unit.name, required)
     assert 'Environment=' not in content
     assert 'ExecStopPost=' not in content
+    if runtime:
+        assert 'UMask=0022' in content and 'PrivateTmp=no' in content
+    else:
+        assert 'ProtectSystem=strict' in content
 control = (root / 'systemd/easyshell-code-control.service').read_text()
 assert 'User=17001' in control and 'Group=17001' in control
 assert 'InaccessiblePaths=/run/easyshell-code/runtime' in control
 assert 'exit 78' in (root / 'preflight.sh').read_text()
-print('STATIC_TEMPLATES_VERIFIED; deployment remains BLOCKED')
+print('STATIC_TEMPLATES_VERIFIED; protected release provisioning required')
 PY
 # Optional compiler parses only; no executable, daemon, download or service action.
 if command -v cc >/dev/null 2>&1; then
     cc -std=c11 -Wall -Wextra -Werror -fsyntax-only launcher.c
 fi
-if bash ./preflight.sh 2>/dev/null; then
-    echo 'preflight must block' >&2; exit 1
-else
-    [[ $? == 78 ]]
-fi
+# Do not inspect or assume the state of a real host's /etc release manifest here.
+# Missing/expired/tampered provisioning is verified by supervisor.test_preflight.

@@ -1,23 +1,24 @@
 [Unit]
-Description=EasyShell dedicated dockerd (blocked deployment template)
+Description=EasyShell dedicated dockerd
 Requires=easyshell-code-containerd.service
 After=easyshell-code-containerd.service
+JoinsNamespaceOf=easyshell-code-containerd.service
 StartLimitIntervalSec=300
 StartLimitBurst=3
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
+TimeoutStartSec=60
 User=root
-UMask=0077
-ExecStartPre=/bin/bash /opt/easyshell-code/deploy/preflight.sh
-ExecStart=/usr/bin/dockerd --config-file=/etc/easyshell-code/daemon.json
+UMask=0022
+ExecStartPre=/bin/bash /usr/lib/easyshell-code/deploy/preflight.sh
+ExecStart=/usr/bin/python3 -I -B /usr/lib/easyshell-code/deploy/runtime-entry.py
 Restart=no
 TimeoutStopSec=30
 KillMode=process
 Delegate=yes
-NoNewPrivileges=yes
-ProtectSystem=strict
-ProtectHome=yes
-PrivateTmp=yes
-ReadWritePaths=/var/lib/easyshell-code/docker /var/lib/easyshell-code/containerd /run/easyshell-code/runtime
+NoNewPrivileges=no
+PrivateTmp=no
+# runtime-entry joins containerd's verified mount and private network namespaces.
 RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6

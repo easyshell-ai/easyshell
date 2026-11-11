@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Deliberately unconditional until reviewed core integration + real acceptance replace it.
-echo 'DEPLOYMENT_BLOCKED: pinned build inputs, protected provisioning and systemd restart acceptance are still required' >&2
-exit 78
+# Missing, stale or changed protected release state fails closed (exit 78).
+test -f /usr/lib/easyshell-code/deploy/preflight.py || exit 78
+exec /usr/bin/python3 -I -B /usr/lib/easyshell-code/deploy/preflight.py

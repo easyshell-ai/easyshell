@@ -18,6 +18,7 @@ import struct
 import threading
 import time
 import uuid
+import fcntl
 
 from .control import MAX_REQUEST, decode_json, fingerprint, request
 
@@ -581,7 +582,7 @@ class Orchestrator:
 
 
 class RPCServer:
-    """Linux AF_UNIX listener; never removes an existing endpoint or tasks."""
+    """Linux AF_UNIX listener; exclusive owner lock and verified stale socket recovery."""
 
     def __init__(self, path, orchestrator, *, connections=8):
         if connections < 1:
@@ -594,8 +595,7 @@ class RPCServer:
     def serve(self):
         uid = self.orchestrator.allowed_uid
         private_path(self.path, uid, require_socket=False)
-        if os.path.lexists(self.path):
-            raise RPCError("ENDPOINT_EXISTS")
+        self.endpoint_lock = acquire_endpoint(self.path, uid)
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
             self.sock = listener
             # Restrictive creation, even before chown/chmod completes.
@@ -608,6 +608,8 @@ class RPCServer:
             os.chmod(self.path, 0o600)
             private_path(self.path, uid)
             listener.listen(8)
+            from .reaper import notify_ready
+            notify_ready()
             while True:
                 connection, _ = listener.accept()
                 if not self.slots.acquire(blocking=False):
@@ -636,6 +638,34 @@ class RPCServer:
         finally:
             self.slots.release()
 
+
+def acquire_endpoint(path, uid):
+    """Hold until process exit. Never delete a live, replaced or foreign endpoint."""
+    fd = os.open(path + '.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o600:
+            raise RPCError('ENDPOINT_EXISTS')
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if os.path.lexists(path):
+            before = os.lstat(path)
+            if not stat.S_ISSOCK(before.st_mode) or before.st_uid != uid or stat.S_IMODE(before.st_mode) != 0o600:
+                raise RPCError('ENDPOINT_EXISTS')
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
+                probe.settimeout(0.2)
+                try:
+                    probe.connect(path)
+                except ConnectionRefusedError:
+                    after = os.lstat(path)
+                    if (after.st_dev, after.st_ino) != (before.st_dev, before.st_ino):
+                        raise RPCError('ENDPOINT_EXISTS')
+                    os.unlink(path)
+                else:
+                    raise RPCError('ENDPOINT_EXISTS')
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
 
 def main():
     parser = argparse.ArgumentParser(description="Trusted execution orchestrator; never run inside worker")
