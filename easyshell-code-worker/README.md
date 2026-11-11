@@ -1,4 +1,4 @@
-# 独立 code worker（专用测试验收通过，生产部署待验收）
+# 独立 code worker（持久服务部署与隔离验收）
 
 ## 当前验证状态
 
@@ -6,11 +6,13 @@
 运行中取消、监督器 SIGKILL 后独立回收、memcg OOM 后正常任务恢复，以及保留原
 journal 的重启。产品工作流详情和浏览器代码样例也已实际验证。execution 策略现只
 运行 `/opt/code-worker/launcher`，固定 JVM 参数并在 execve 时使用空环境；默认
-Worker/CLI 仍拒绝执行。监督器 167 项测试和锁定依赖的离线 strict 构建通过。
+Worker/CLI 仍拒绝执行。监督器 181 项测试和锁定依赖的离线 strict 构建通过。
 
 以下诊断过程与早期测试数量保留为历史证据，不能把其中“待复验”当作最新状态。
-生产仍缺固定基础镜像的独立供应链审查、完整主机重启、证书运维和 systemd 验收；
-`deploy/preflight.sh` 因此保持明确阻断，不能把临时运行步骤当作正式部署。
+现使用固定官方完整 Temurin JRE21、root 控制的持久发布目录和五个 systemd 服务，
+target 整链停止/启动与 restart 后的真实验收通过。preflight 验证受保护且有有效期的
+文件哈希/镜像/验收清单，缺失或不匹配拒绝。目标机器仍须独立配置账户、证书及镜像，
+物理宿主冷启动与另一条 CI 多阶段构建未在本次执行；详见 `deploy/README.md`。
 
 计时约定更新：Java Context build/显式语言initialize在执行future之前，由监督器固定
 15秒startup allowance + guest timeoutMs（最大5000ms，总执行deadline最大20秒）覆盖。
