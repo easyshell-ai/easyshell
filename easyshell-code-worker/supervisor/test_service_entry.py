@@ -63,3 +63,23 @@ class ServiceEntryTest(unittest.TestCase):
             path.symlink_to(target)
             with self.assertRaises(SystemExit):
                 self.launch(['reaper', '--journal', str(path)])
+
+    def test_unsafe_parent_and_world_readable_session_database_are_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'journal.sqlite'
+            path.touch(mode=0o644)
+            with self.assertRaises(SystemExit):
+                self.launch(['orchestrator_rpc', '--journal', str(path)])
+            path.chmod(0o600)
+            Path(directory).chmod(0o777)
+            try:
+                with self.assertRaises(SystemExit):
+                    self.launch(['reaper', '--journal', str(path)])
+            finally:
+                Path(directory).chmod(0o700)
+
+    def test_duplicate_or_missing_journal_option_is_rejected(self):
+        for arguments in (['reaper'], ['reaper', '--journal'],
+                          ['reaper', '--journal', '/one', '--journal', '/two']):
+            with self.subTest(arguments=arguments), self.assertRaises(SystemExit):
+                self.launch(arguments)
