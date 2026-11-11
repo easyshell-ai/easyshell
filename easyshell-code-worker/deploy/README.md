@@ -68,6 +68,9 @@ gcc builder 是额外供应链依赖，成本较高；本方案不现场装大�
 exportResources` 所需的所有配置，写锁并审查。polyglot、js-community、python-community 必须
 全部严格为 **25.2.4**，禁止 `+`/SNAPSHOT/changing；也锁定 Jackson、JUnit 和全部传递依赖。
 checksum 元数据须覆盖所有下载制品、POM/模块元数据；不得把首次下载结果自动视为受信。
+2026-11-11 对候选元数据的 70 项制品做了 Maven Central 外部对照：60 项匹配公开
+SHA-256，10 项在未取得摘要文件后受限下载公开制品并重新计算 SHA-256，全部一致。
+这不是 PGP 签名验证、漏洞审计或基础镜像供应链证明，更新版本后须重新核验。
 wrapper JAR、Gradle zip 和锁文件本身也纳入发布清单。更新元数据须在独立候选中审查，
 不要为消除校验错误而自动接受新哈希。
 
