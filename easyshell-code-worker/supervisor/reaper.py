@@ -6,6 +6,7 @@ import time
 import uuid
 import fcntl
 import stat
+import socket
 from pathlib import Path
 
 from .control import Journal, MAX_HARD_SECONDS, Rejected, Supervisor
@@ -16,6 +17,21 @@ from .host_guard import HostGuard
 def starttime(pid):
     text = Path('/proc', str(pid), 'stat').read_text()
     return text[text.rfind(')') + 2:].split()[19]
+
+
+def notify_ready():
+    """Optional systemd readiness, only after reconciliation and fresh heartbeat."""
+    address = os.environ.get('NOTIFY_SOCKET')
+    if address is None:
+        return
+    if not address or address[0] not in ('/', '@') or len(address.encode()) > 107:
+        raise Rejected('REAPER_UNVERIFIED')
+    if address[0] == '@':
+        address = '\0' + address[1:]
+    with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as channel:
+        channel.settimeout(0.5)
+        channel.connect(address)
+        channel.sendall(b'READY=1')
 
 
 def require_live(journal, session):
@@ -80,6 +96,7 @@ def main():
     started = starttime(pid)
     try:
         tick(adapter, journal, session, pid, started)
+        notify_ready()
         print(json.dumps({'status': 'ready', 'session': session}), flush=True)
         while True:
             time.sleep(0.2)
