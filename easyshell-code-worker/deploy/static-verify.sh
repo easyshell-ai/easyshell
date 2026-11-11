@@ -27,6 +27,7 @@ units = list((root / 'systemd').glob('*.service'))
 assert len(units) == 5
 for unit in units:
     content = unit.read_text()
+    assert 'PartOf=easyshell-code.target' in content
     runtime = unit.name in ('easyshell-code-containerd.service', 'easyshell-code-dockerd.service')
     for required in ('NoNewPrivileges=no' if runtime else 'NoNewPrivileges=yes', 'Restart=no',
                       'ExecStartPre=/bin/bash /usr/lib/easyshell-code/deploy/preflight.sh'):
