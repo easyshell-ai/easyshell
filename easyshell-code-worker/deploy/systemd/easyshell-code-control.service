@@ -1,0 +1,34 @@
+[Unit]
+Description=EasyShell mTLS control UID17001 (blocked deployment template)
+Requires=easyshell-code-orchestrator.service
+After=easyshell-code-orchestrator.service
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=17001
+Group=17001
+SupplementaryGroups=
+WorkingDirectory=/opt/easyshell-code
+UMask=0077
+ExecStartPre=/bin/bash /opt/easyshell-code/deploy/preflight.sh
+ExecStart=/usr/bin/python3 -I -B /opt/easyshell-code/deploy/service-entry.py control_server --listen-host 127.0.0.1 --listen-port 9443 --cert /etc/easyshell-code/tls/server.crt --key /etc/easyshell-code/tls/server.key --ca /etc/easyshell-code/tls/client-ca.crt --client-dns code-client.example.invalid --rpc-socket /run/easyshell-code/control-rpc/orchestrator.sock --control-uid 17001 --orchestrator-uid 0 --journal /var/lib/easyshell-code/control/control.sqlite
+Restart=no
+TimeoutStopSec=30
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+ProtectControlGroups=yes
+PrivateTmp=yes
+PrivateDevices=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+ReadWritePaths=/var/lib/easyshell-code/control
+ReadOnlyPaths=/etc/easyshell-code/tls /run/easyshell-code/control-rpc
+InaccessiblePaths=/run/easyshell-code/runtime /var/lib/easyshell-code/execution /var/lib/easyshell-code/orchestrator /var/lib/easyshell-code/docker /var/lib/easyshell-code/containerd -/run/docker.sock -/var/run/docker.sock -/run/containerd
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+StandardOutput=null
+StandardError=null
