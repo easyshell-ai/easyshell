@@ -31,7 +31,7 @@
 - 使用新建、无宿主挂载与端口、仅 loopback 的临时 MySQL 8 容器，对四张合成旧表运行真实 Flyway，并验证 baseline、版本、数据、关键列/索引和重复迁移；另在该专用库运行主机身份并发重建测试。该实例不是 v1.1.2 实际旧库，也没有运行生产 ACL 回填或真实 Agent。
 - 包含精确审批、持久恢复和远程 code 的独立网络命名空间 clean 全量为 1560 项、0 失败、5 条件跳过；四项真实 Java mTLS 测试另行实际执行通过。`WorkflowApiWiringTest` 实际启动，基础设施通用 `contextLoads` 仍禁用。专用 MySQL 另实际验证排序规则、恢复 SQL 1093 回归以及 RR 旧快照不能错误释放恢复槽。
 - 单一独立测试栈实际完成双 VM LOW 只读脚本、真实 OpenAI 协议 LLM 文本/严格 JSON/分类、脚本输出传模型，以及 HIGH `chmod --help` 的精确审批批准后双 VM 成功、拒绝后不派发；Agent 在测试 server 更新后可重连。此为测试实例证据，不能替代真实旧库或多实例崩溃证明。
-- GitHub Actions、真实旧库副本、备份恢复及回滚、完整崩溃恢复和生产 code 沙箱仍未完成。临时测试库升级前已保存受限备份，但未做恢复演练，不能宣称备份可恢复。
+- GitHub Actions、真实 v1.1.2 旧库副本的迁移/恢复/回滚、完整崩溃恢复和生产 code 部署仍未完成。临时测试库升级前备份已实际导入独立 proof schema，恢复 42 张表、8 条运行和两台 Agent，全部 `CHECK TABLE` 为 OK；原测试库未修改。这只证明该测试备份可导入，未证明应用在恢复库上的完整启动或旧版本回滚。
 - code 在专用运行时完成 JS/Python、mTLS 跨身份授权、取消、监督器 SIGKILL 独立回收、memcg OOM 后恢复、保留 journal 重启和固定空环境 native launcher 验收。产品浏览器样例与工作流详情已验证。此证据不覆盖固定基础镜像供应链、完整主机重启或 systemd 模板，`easyshell-code-worker/deploy` 仍保持发布阻断。
 
 后端、前端、Agent 身份底座和 worker 已分批建立本地候选提交；尚未推送、打标签或声明正式发布。独立体验配置见 `docs/isolated-trial.md`；文档中的 Compose 方案与实际专用运行时试用栈必须区分，不能未经验证混用。
