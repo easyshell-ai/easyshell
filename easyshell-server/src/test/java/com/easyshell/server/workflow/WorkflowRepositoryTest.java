@@ -202,11 +202,20 @@ class WorkflowRepositoryTest {
     @Test
     @DisplayName("node_run 条件 UPDATE：waiting 唤醒与未终态节点批量取消")
     void nodeRun_conditionalStatusTransitions() {
-        workflowNodeRunRepository.saveAndFlush(nodeRun("gate", 1, "waiting"));
+        WorkflowApproval approval = new WorkflowApproval();
+        approval.setRunId(runId);
+        approval.setNodeKey("gate");
+        approval.setNodeType("script-exec");
+        approval.setTitle("gate");
+        approval.setStatus("approved");
+        approval = workflowApprovalRepository.saveAndFlush(approval);
+        WorkflowNodeRun gate = nodeRun("gate", 1, "waiting");
+        gate.setApprovalId(approval.getId());
+        workflowNodeRunRepository.saveAndFlush(gate);
         workflowNodeRunRepository.saveAndFlush(nodeRun("check", 1, "pending"));
         workflowNodeRunRepository.saveAndFlush(nodeRun("done", 1, "succeeded"));
 
-        assertThat(workflowNodeRunRepository.resumeWaitingNodes(runId)).isEqualTo(1);
+        assertThat(workflowNodeRunRepository.resumeWaitingAttempt(gate.getId(), runId, approval.getId())).isEqualTo(1);
         assertThat(workflowNodeRunRepository.cancelUnfinishedNodes(runId, "user_cancelled")).isEqualTo(1);
         // 幂等：第二次取消已没有 pending/waiting 行
         assertThat(workflowNodeRunRepository.cancelUnfinishedNodes(runId, "user_cancelled")).isZero();

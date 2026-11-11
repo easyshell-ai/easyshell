@@ -2,11 +2,15 @@ package com.easyshell.server.workflow.controller;
 
 import com.easyshell.server.common.exception.BusinessException;
 import com.easyshell.server.model.entity.Workflow;
+import com.easyshell.server.model.entity.WorkflowApproval;
 import com.easyshell.server.model.entity.WorkflowRun;
 import com.easyshell.server.repository.WorkflowRepository;
 import com.easyshell.server.repository.WorkflowRunRepository;
 import com.easyshell.server.security.AuditUsers;
 import com.easyshell.server.service.AuditLogService;
+import com.easyshell.server.workflow.service.WorkflowRunProvenanceService;
+import com.easyshell.server.workflow.service.WorkflowDispatchApprovalAccessService;
+import org.springframework.beans.factory.annotation.Autowired;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Component;
@@ -42,6 +46,14 @@ public class WorkflowAccess {
     private final WorkflowRepository workflowRepository;
     private final WorkflowRunRepository runRepository;
     private final AuditLogService auditLogService;
+    @Autowired
+    private WorkflowRunProvenanceService provenanceService;
+    private WorkflowDispatchApprovalAccessService dispatchApprovalAccess;
+
+    @Autowired(required = false)
+    public void setDispatchApprovalAccess(WorkflowDispatchApprovalAccessService dispatchApprovalAccess) {
+        this.dispatchApprovalAccess = dispatchApprovalAccess;
+    }
 
     public WorkflowAccess(WorkflowRepository workflowRepository,
                           WorkflowRunRepository runRepository,
@@ -78,15 +90,30 @@ public class WorkflowAccess {
      * 或当前用户是该 run 所属工作流的创建者（§6.1 GET /runs/{runId}、/cancel）。
      */
     public WorkflowRun requireRunAccess(String runId, Authentication auth) {
+        WorkflowRun run = requireRunControl(runId, auth);
+        Long userId = principalId(auth);
+        boolean canView;
+        try {
+            canView = provenanceService.canView(userId, runId);
+        } catch (Exception e) {
+            canView = false;
+        }
+        if (!canView) {
+            deny(auth, userId, "workflow_run", runId, "无权访问此运行");
+        }
+        return run;
+    }
+
+    /** 控制权不授予运行数据查看权，例如取消运行不应依赖主机 VIEW。 */
+    public WorkflowRun requireRunControl(String runId, Authentication auth) {
         Long userId = principalId(auth);
         WorkflowRun run = runRepository.findById(runId)
                 .orElseThrow(() -> new BusinessException(404, "RUN_NOT_FOUND: 运行不存在"));
-        if (isAdmin(auth) || userId.equals(run.getStartedBy())) {
-            return run;
-        }
-        Workflow workflow = workflowRepository.findById(run.getWorkflowId()).orElse(null);
-        if (workflow == null || !userId.equals(workflow.getCreatedBy())) {
-            deny(auth, userId, "workflow_run", runId, "无权访问此运行");
+        if (!isAdmin(auth) && !userId.equals(run.getStartedBy())) {
+            Workflow workflow = workflowRepository.findById(run.getWorkflowId()).orElse(null);
+            if (workflow == null || !userId.equals(workflow.getCreatedBy())) {
+                deny(auth, userId, "workflow_run", runId, "无权访问此运行");
+            }
         }
         return run;
     }
@@ -103,6 +130,54 @@ public class WorkflowAccess {
         if (!isAdmin(auth)) {
             Long userId = principalId(auth);
             deny(auth, userId, "workflow_approval", null, "审批需要管理员权限");
+        }
+    }
+
+    /** 决策时还须满足审批记录指定的角色；未知角色拒绝，避免配置损坏时降权。 */
+    public void requireApprovalAdmin(Authentication auth, WorkflowApproval approval) {
+        requireApprovalAdmin(auth);
+        if (!canControlApproval(auth, approval)) {
+            deny(auth, principalId(auth), "workflow_approval", String.valueOf(approval.getId()),
+                    "审批需要指定的管理员权限");
+        }
+    }
+
+    /** 列表中不暴露不属于当前管理员角色的审批，未知角色 fail-closed。 */
+    public boolean canControlApproval(Authentication auth, WorkflowApproval approval) {
+        if (!isAdmin(auth) || approval == null) return false;
+        String role = approval.getApproverRole();
+        return "ADMIN".equals(role) || ("SUPER_ADMIN".equals(role) && auth.getAuthorities().stream()
+                .anyMatch(a -> ROLE_SUPER_ADMIN.equals(a.getAuthority())));
+    }
+
+    /** 控制权不意味着内容可读；缺失旧 provenance 或查询异常都只返回受限摘要。 */
+    public boolean canViewApproval(Authentication auth, WorkflowApproval approval) {
+        Long userId = principalId(auth);
+        if (approval == null) return false;
+        if ("script-exec".equals(approval.getNodeType())) {
+            try {
+                return dispatchApprovalAccess != null && dispatchApprovalAccess.canView(userId, approval);
+            } catch (Exception invalid) {
+                return false;
+            }
+        }
+        try {
+            if (provenanceService != null && provenanceService.canView(userId, approval.getRunId())) return true;
+        } catch (Exception e) {
+            // The approval-specific proof must independently validate every source.
+        }
+        try {
+            return dispatchApprovalAccess != null && dispatchApprovalAccess.canView(userId, approval);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** Only approval content access; does not authorize run detail or WebSocket subscriptions. */
+    public void requireApprovalContentAccess(Authentication auth, WorkflowApproval approval) {
+        requireApprovalAdmin(auth, approval);
+        if (!canViewApproval(auth, approval)) {
+            deny(auth, principalId(auth), "workflow_approval", String.valueOf(approval.getId()), "无权访问此审批内容");
         }
     }
 

@@ -2,10 +2,13 @@ package com.easyshell.server.workflow.controller;
 
 import com.easyshell.server.common.exception.BusinessException;
 import com.easyshell.server.model.entity.Workflow;
+import com.easyshell.server.model.entity.WorkflowApproval;
 import com.easyshell.server.model.entity.WorkflowRun;
 import com.easyshell.server.repository.WorkflowRepository;
 import com.easyshell.server.repository.WorkflowRunRepository;
 import com.easyshell.server.service.AuditLogService;
+import com.easyshell.server.workflow.service.WorkflowRunProvenanceService;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -46,12 +49,17 @@ class WorkflowAccessTest {
     private WorkflowRunRepository runRepository;
     @Mock
     private AuditLogService auditLogService;
+    @Mock
+    private WorkflowRunProvenanceService provenanceService;
 
     private WorkflowAccess access;
 
     @BeforeEach
     void setUp() {
         access = new WorkflowAccess(workflowRepository, runRepository, auditLogService);
+        ReflectionTestUtils.setField(access, "provenanceService", provenanceService);
+        lenient().when(provenanceService.canView(org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.anyString())).thenReturn(true);
     }
 
     private Authentication auth(Long userId, String role) {
@@ -176,6 +184,36 @@ class WorkflowAccessTest {
     }
 
     @Test
+    void runAdminWithoutProvenance_isDeniedAndAudited() {
+        when(runRepository.findById("wfr_abc")).thenReturn(Optional.of(run()));
+        when(provenanceService.canView(ADMIN, "wfr_abc")).thenReturn(false);
+        assertThatThrownBy(() -> access.requireRunAccess("wfr_abc", auth(ADMIN, "super_admin")))
+                .isInstanceOfSatisfying(BusinessException.class, e -> assertThat(e.getCode()).isEqualTo(403));
+        verify(auditLogService).logSync(eq(ADMIN), eq("user-7"), eq("WORKFLOW_ACCESS_DENIED"),
+                eq("workflow_run"), eq("wfr_abc"), eq("无权访问此运行"), eq(null), eq("denied"));
+    }
+
+    @Test
+    void controlDoesNotRequireViewButStillRejectsStrangers() {
+        when(runRepository.findById("wfr_abc")).thenReturn(Optional.of(run()));
+        when(workflowRepository.findById(1L)).thenReturn(Optional.of(workflow()));
+        when(provenanceService.canView(OWNER, "wfr_abc")).thenReturn(false);
+        assertThat(access.requireRunControl("wfr_abc", auth(OWNER, "operator"))).isNotNull();
+        assertThatThrownBy(() -> access.requireRunAccess("wfr_abc", auth(OWNER, "operator")))
+                .isInstanceOfSatisfying(BusinessException.class, e -> assertThat(e.getCode()).isEqualTo(403));
+        assertThatThrownBy(() -> access.requireRunControl("wfr_abc", auth(123L, "operator")))
+                .isInstanceOfSatisfying(BusinessException.class, e -> assertThat(e.getCode()).isEqualTo(403));
+    }
+
+    @Test
+    void provenanceFailureDeniesDetails() {
+        when(runRepository.findById("wfr_abc")).thenReturn(Optional.of(run()));
+        when(provenanceService.canView(STRANGER, "wfr_abc")).thenThrow(new IllegalStateException());
+        assertThatThrownBy(() -> access.requireRunAccess("wfr_abc", auth(STRANGER, "operator")))
+                .isInstanceOfSatisfying(BusinessException.class, e -> assertThat(e.getCode()).isEqualTo(403));
+    }
+
+    @Test
     @DisplayName("requireRunAccess：run 不存在 404")
     void runMissing_is404() {
         when(runRepository.findById("wfr_abc")).thenReturn(Optional.empty());
@@ -197,6 +235,15 @@ class WorkflowAccessTest {
 
         verify(auditLogService).logSync(eq(STRANGER), eq("user-99"), eq("WORKFLOW_ACCESS_DENIED"),
                 eq("workflow_approval"), eq(null), eq("审批需要管理员权限"), eq(null), eq("denied"));
+    }
+
+    @Test
+    void approvalRole_unknownFailsClosed() {
+        WorkflowApproval approval = new WorkflowApproval();
+        approval.setId(5L);
+        approval.setApproverRole("UNKNOWN");
+        assertThatThrownBy(() -> access.requireApprovalAdmin(auth(ADMIN, "super_admin"), approval))
+                .isInstanceOfSatisfying(BusinessException.class, e -> assertThat(e.getCode()).isEqualTo(403));
     }
 
     @Test

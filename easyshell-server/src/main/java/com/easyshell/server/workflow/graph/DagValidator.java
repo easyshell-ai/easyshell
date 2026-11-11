@@ -59,7 +59,7 @@ public class DagValidator {
     private static final Pattern CODE_INPUT_NAME = Pattern.compile("^[A-Za-z_][A-Za-z0-9_]{0,63}$");
     private static final int MAX_CLASSES = 10;
     private static final int MAX_CODE_CHARS = 20_000;
-    private static final int MAX_CODE_TIMEOUT_SEC = 15;
+    private static final int MAX_CODE_TIMEOUT_SEC = 5;
     private static final int LLM_MIN_INPUT_CHARS = 1000;
     private static final int LLM_MAX_INPUT_CHARS = 32000;
 
@@ -431,7 +431,15 @@ public class DagValidator {
                     }
                 }
             }
-            validateAiRawParams(node, def, aliases, sink);
+            if (node.nodeType() == NodeType.SCRIPT_EXEC && hasAiAncestor(def, node.getKey())) {
+                List<Object> raw = node.configList("rawParams");
+                if (raw != null && !raw.isEmpty()) {
+                    sink.error("AI_OUTPUT_RAW_FORBIDDEN", "AI/LLM/classifier 祖先下禁止使用 rawParams", node.getKey());
+                }
+                if (dominatingApprovals(def, node.getKey()).isEmpty()) {
+                    sink.error("AI_APPROVAL_REQUIRED", "AI/LLM/classifier 祖先下的脚本必须由 approval 支配", node.getKey());
+                }
+            }
             // 失败策略取值合法性（未知值在运行期按最严格 ABORT 处理，发布期先警告）
             for (String policy : new String[]{node.getOnFailure()}) {
                 if (policy != null && !policy.isBlank() && FailurePolicy.fromCode(policy) == null) {
@@ -443,6 +451,15 @@ public class DagValidator {
 
         // ⑦ 各节点类型执行器补充校验（脚本槽位、wait 时长、approval 配置等）
         for (WorkflowNode node : def.getNodes()) {
+            if ((node.nodeType() == NodeType.LLM || node.nodeType() == NodeType.AI_ANALYZE)
+                    && "json_schema_v1".equals(node.configString("outputMode"))) {
+                if (!"abort".equals(node.getOnFailure())) {
+                    sink.error("STRICT_AI_FAILURE_POLICY", "严格 AI 节点必须设置 onFailure=abort", node.getKey());
+                }
+                if (node.getRetryMax() != null && node.getRetryMax() != 0) {
+                    sink.error("STRICT_AI_RETRY", "严格 AI 节点必须设置 retryMax=0", node.getKey());
+                }
+            }
             if (node.nodeType() == NodeType.WAIT) {
                 int duration = node.configInt("durationSec", 0);
                 if (duration < 1 || duration > MAX_WAIT_SECONDS) {
@@ -562,9 +579,9 @@ public class DagValidator {
             sink.error("NODE_CONFIG_INVALID", "llm 节点缺少 userPrompt", node.getKey());
         }
         String outputMode = node.configString("outputMode", "text");
-        if (!"text".equals(outputMode) && !"json".equals(outputMode)) {
+        if (!"text".equals(outputMode) && !"json".equals(outputMode) && !"json_schema_v1".equals(outputMode)) {
             sink.error("NODE_CONFIG_INVALID",
-                    "llm 节点 outputMode 只能是 text / json，实际 '" + outputMode + "'", node.getKey());
+                    "llm 节点 outputMode 只能是 text / json / json_schema_v1，实际 '" + outputMode + "'", node.getKey());
         }
         Object rawTemperature = node.getConfig() == null ? null : node.getConfig().get("temperature");
         if (rawTemperature != null) {
@@ -585,7 +602,8 @@ public class DagValidator {
             }
         }
         Object rawSchema = node.getConfig() == null ? null : node.getConfig().get("jsonSchema");
-        if (rawSchema != null) {
+        // Strict schemas are validated by the LLM executor, including object-valued schemas.
+        if (rawSchema != null && !"json_schema_v1".equals(outputMode)) {
             if (!(rawSchema instanceof String schema)) {
                 sink.warning("NODE_CONFIG_INVALID",
                         "llm 节点 jsonSchema 不是字符串，已忽略（jsonSchema 仅作为提示词约束）",
@@ -707,46 +725,40 @@ public class DagValidator {
         }
     }
 
-    /**
-     * rawParams 的值绕过 L1 字符集与 L3 段级禁替换检查，直接进入脚本。AI 节点输出可被
-     * 上游提示注入污染，若被 raw 槽位直引，提示注入就能变成命令执行面——发布期直接拒绝。
-     */
-    private void validateAiRawParams(WorkflowNode node, WorkflowDefinition def,
-                                     Map<String, String> aliases, ValidationIssue.Sink sink) {
-        if (node.nodeType() != NodeType.SCRIPT_EXEC) {
-            return;
+    public boolean hasAiAncestor(WorkflowDefinition def, String key) {
+        Set<String> ancestors = ancestorMap(def).getOrDefault(key, Set.of());
+        return def.getNodes().stream().anyMatch(n -> ancestors.contains(n.getKey())
+                && (n.nodeType() == NodeType.AI_ANALYZE || n.nodeType() == NodeType.LLM
+                || n.nodeType() == NodeType.CLASSIFIER));
+    }
+
+    /** All paths from every graph entry to the script must pass the same approval. */
+    public Set<String> dominatingApprovals(WorkflowDefinition def, String key) {
+        Set<String> keys = new HashSet<>();
+        for (WorkflowNode node : def.getNodes()) {
+            if (node.getKey() == null || !keys.add(node.getKey())) return Set.of();
         }
-        List<Object> rawSlots = node.configList("rawParams");
-        Map<String, Object> parameters = node.configMap("parameters");
-        if (rawSlots == null || rawSlots.isEmpty() || parameters == null) {
-            return;
+        if (!keys.contains(key)) return Set.of();
+        for (WorkflowEdge edge : def.getEdges()) {
+            if (!keys.contains(edge.getFrom()) || !keys.contains(edge.getTo())) return Set.of();
         }
-        Set<String> aiNodes = new HashSet<>();
-        for (WorkflowNode candidate : def.getNodes()) {
-            if (candidate.nodeType() == NodeType.AI_ANALYZE || candidate.nodeType() == NodeType.LLM) {
-                aiNodes.add(candidate.getKey());
+        if (hasCycle(def)) return Set.of();
+        Map<String, Set<String>> adj = adjacency(def);
+        Set<String> entries = new HashSet<>(keys);
+        for (WorkflowEdge edge : def.getEdges()) entries.remove(edge.getTo());
+        Set<String> result = new LinkedHashSet<>();
+        for (WorkflowNode node : def.getNodes()) {
+            if (node.nodeType() != NodeType.APPROVAL) continue;
+            Set<String> visited = new HashSet<>();
+            Deque<String> queue = new ArrayDeque<>(entries);
+            while (!queue.isEmpty()) {
+                String current = queue.remove();
+                if (current.equals(node.getKey()) || !visited.add(current)) continue;
+                queue.addAll(adj.getOrDefault(current, Set.of()));
             }
+            if (!visited.contains(key)) result.add(node.getKey());
         }
-        if (aiNodes.isEmpty()) {
-            return;
-        }
-        for (Object rawSlot : rawSlots) {
-            if (!(rawSlot instanceof String slot)) {
-                continue;
-            }
-            Object value = parameters.get(slot);
-            if (!(value instanceof String template)) {
-                continue;
-            }
-            for (String referenced : templateReferencedNodeKeys(template, aliases)) {
-                if (aiNodes.contains(referenced)) {
-                    sink.error("AI_OUTPUT_RAW_FORBIDDEN",
-                            "脚本参数 '" + slot + "' 在 rawParams 中直接引用 AI/LLM 节点 '"
-                                    + referenced + "' 的输出；raw 值绕过值策略，禁止进入命令面",
-                            node.getKey());
-                }
-            }
-        }
+        return result;
     }
 
     /**

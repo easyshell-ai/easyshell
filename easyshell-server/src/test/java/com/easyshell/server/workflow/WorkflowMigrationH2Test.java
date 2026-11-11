@@ -34,7 +34,7 @@ import static org.assertj.core.api.Assertions.assertThatNoException;
 
 /**
  * Flyway 迁移在 H2(MODE=MySQL) 上的落地验证（设计 §5.4 / 复核 C-16 的 CI 门禁）：
- * <p>① 五张工作流表被真实迁移脚本建出，字段/唯一键/索引齐全；
+ * <p>① 六张工作流表被真实迁移脚本建出，字段/主键/唯一键/索引齐全；
  * ② flyway_schema_history 里每个 version 都能在 db/migration 找到脚本（F3-③）；
  * ③ 迁移脚本零 ALTER / 零 DROP、绝不碰存量 22 张表（MF-6 / MF-7）；
  * ④ Flyway 自身 validate 通过（validate-on-migrate 的启动即 fail-fast 语义）；
@@ -44,12 +44,13 @@ import static org.assertj.core.api.Assertions.assertThatNoException;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ActiveProfiles("test")
 @TestPropertySource(properties = {"spring.jpa.show-sql=false", "logging.level.org.hibernate.SQL=warn"})
-@DisplayName("Flyway 迁移 — H2(MODE=MySQL) 上建出五张工作流表")
+@DisplayName("Flyway 迁移 — H2(MODE=MySQL) 上建出六张工作流表")
 class WorkflowMigrationH2Test {
 
-    /** 设计 §5.2 的五张表（M1 范围；workflow_trigger / workflow_artifact 按 SF-19 属 M2，不建） */
+    /** Flyway 纳管的工作流 JPA 表 */
     private static final Set<String> WORKFLOW_TABLES = Set.of(
-            "workflow", "workflow_version", "workflow_run", "workflow_node_run", "workflow_approval");
+            "workflow", "workflow_version", "workflow_run", "workflow_node_run", "workflow_approval",
+            "workflow_dispatch_approval_binding");
 
     /** 存量 22 张表：迁移脚本一个都不许碰（零 ALTER 旧表原则） */
     private static final Set<String> LEGACY_TABLES = Set.of(
@@ -92,8 +93,8 @@ class WorkflowMigrationH2Test {
     private Flyway flyway;
 
     @Test
-    @DisplayName("五张工作流表存在，字段与设计 §5.2 逐列对齐（列名 + 可空性）")
-    void migration_createsFiveWorkflowTablesWithDesignedColumns() throws SQLException {
+    @DisplayName("六张工作流表存在，字段逐列对齐（列名 + 可空性）")
+    void migration_createsWorkflowTablesWithDesignedColumns() throws SQLException {
         Map<String, Map<String, Boolean>> actual = readColumns();
         assertThat(actual.keySet()).containsAll(WORKFLOW_TABLES);
 
@@ -137,11 +138,37 @@ class WorkflowMigrationH2Test {
                 entry("approver_role", false), entry("decided_by", true), entry("decided_at", true),
                 entry("decision_comment", true), entry("expires_at", true), entry("version", false),
                 entry("created_at", true), entry("updated_at", true)));
+        expected.put("workflow_dispatch_approval_binding", cols(
+                entry("approval_id", false), entry("dispatch_node_run_id", false),
+                entry("dispatch_attempt", false), entry("dispatch_user_id", false),
+                entry("dispatch_script_hmac", false), entry("dispatch_intent_hmac", false),
+                entry("dispatch_targets", false), entry("dispatch_timeout_sec", false),
+                entry("dispatch_consumed_at", true), entry("dispatch_task_id", true)));
 
+        assertThat(expected.keySet()).containsExactlyInAnyOrderElementsOf(WORKFLOW_TABLES);
         for (Map.Entry<String, Map<String, Boolean>> table : expected.entrySet()) {
             assertThat(actual.get(table.getKey()))
                     .as("表 %s 的列集合与可空性", table.getKey())
                     .containsExactlyInAnyOrderEntriesOf(table.getValue());
+        }
+    }
+
+    @Test
+    @DisplayName("每张工作流表主键列与实体契约一致")
+    void migration_createsExpectedPrimaryKeys() throws SQLException {
+        try (Connection connection = dataSource.getConnection()) {
+            for (String table : WORKFLOW_TABLES) {
+                List<String> columns = new ArrayList<>();
+                try (ResultSet rs = connection.getMetaData().getPrimaryKeys(null, null, table.toUpperCase(Locale.ROOT))) {
+                    while (rs.next()) {
+                        int position = rs.getShort("KEY_SEQ");
+                        while (columns.size() < position) columns.add(null);
+                        columns.set(position - 1, rs.getString("COLUMN_NAME").toLowerCase(Locale.ROOT));
+                    }
+                }
+                assertThat(columns).as("表 %s 的主键", table)
+                        .containsExactly(table.equals("workflow_dispatch_approval_binding") ? "approval_id" : "id");
+            }
         }
     }
 

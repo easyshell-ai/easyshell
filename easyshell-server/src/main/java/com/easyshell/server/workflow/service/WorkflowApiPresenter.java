@@ -21,6 +21,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.time.LocalDateTime;
 
 /**
  * 工作流 REST 的<b>出站装配</b>：实体 → VO。
@@ -55,6 +56,19 @@ public class WorkflowApiPresenter {
     // ------------------------------------------------------------------
     // run / nodeRun
     // ------------------------------------------------------------------
+
+    /** 控制摘要是独立白名单，不能沿用包含动态快照的详情 VO。 */
+    public record RunControlSummary(String id, Long workflowId, Long versionId, Integer versionNo,
+                                    String triggerType, String status, Boolean cancelRequested,
+                                    Long startedBy, LocalDateTime createdAt, LocalDateTime startedAt,
+                                    LocalDateTime finishedAt, Long durationMs) {}
+
+    public RunControlSummary runControlSummary(WorkflowRun run) {
+        if (run == null) return null;
+        return new RunControlSummary(run.getId(), run.getWorkflowId(), run.getVersionId(), run.getVersionNo(),
+                run.getTriggerType(), run.getStatus(), Boolean.TRUE.equals(run.getCancelRequested()),
+                run.getStartedBy(), run.getCreatedAt(), run.getStartedAt(), run.getFinishedAt(), run.getDurationMs());
+    }
 
     public WorkflowRunVO run(WorkflowRun run) {
         if (run == null) {
@@ -123,6 +137,15 @@ public class WorkflowApiPresenter {
     // approval
     // ------------------------------------------------------------------
 
+    /** 独立白名单：不能复用含动态内容的完整审批 VO。 */
+    public record RestrictedApprovalSummary(Long id, String status, LocalDateTime expiresAt,
+                                            boolean canReject, boolean canApprove) {}
+
+    public RestrictedApprovalSummary restrictedApproval(WorkflowApproval approval) {
+        return new RestrictedApprovalSummary(approval.getId(), approval.getStatus(), approval.getExpiresAt(),
+                true, false);
+    }
+
     public WorkflowApprovalVO approval(WorkflowApproval approval) {
         if (approval == null) {
             return null;
@@ -141,15 +164,15 @@ public class WorkflowApiPresenter {
                 .workflowName(workflowName)
                 .nodeKey(approval.getNodeKey())
                 .nodeType(approval.getNodeType())
-                .title(approval.getTitle())
-                .detail(readMap(approval.getDetailJson()))
+                .title(mask(approval.getTitle()))
+                .detail(readMap(mask(approval.getDetailJson())))
                 .riskLevel(approval.getRiskLevel())
                 .riskMatches(approval.getRiskMatches())
                 .status(approval.getStatus())
                 .approverRole(approval.getApproverRole())
                 .decidedBy(approval.getDecidedBy())
                 .decidedAt(approval.getDecidedAt())
-                .reason(approval.getDecisionComment())
+                .reason(mask(approval.getDecisionComment()))
                 .expiresAt(approval.getExpiresAt())
                 .createdAt(approval.getCreatedAt())
                 .build();

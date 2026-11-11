@@ -45,7 +45,10 @@ public class AuthServiceImpl implements AuthService {
             throw new BusinessException(429, "Too many failed login attempts, please try again later");
         }
 
-        User user = userRepository.findByUsername(request.getUsername()).orElse(null);
+        // Read credentials and status only after acquiring the same row lock used by
+        // account mutations. Do not load the entity before locking it: an existing
+        // persistence-context instance need not be refreshed by a lock query.
+        User user = userRepository.findByUsernameForUpdate(request.getUsername()).orElse(null);
 
         // Always run a BCrypt comparison so that a missing user costs the same as a wrong
         // password; otherwise response timing reveals which usernames exist.

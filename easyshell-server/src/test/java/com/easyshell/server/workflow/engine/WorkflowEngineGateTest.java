@@ -2,6 +2,7 @@ package com.easyshell.server.workflow.engine;
 
 import com.easyshell.server.ai.security.SensitiveDataFilter;
 import com.easyshell.server.model.entity.WorkflowNodeRun;
+import com.easyshell.server.model.entity.WorkflowRun;
 import com.easyshell.server.repository.JobRepository;
 import com.easyshell.server.repository.WorkflowApprovalRepository;
 import com.easyshell.server.repository.WorkflowNodeRunRepository;
@@ -28,9 +29,14 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 @DisplayName("WorkflowEngine.evaluateGate — classifier 动态 handle（default / fail-closed）")
 class WorkflowEngineGateTest {
@@ -40,13 +46,15 @@ class WorkflowEngineGateTest {
     private VariableStore store;
     private Map<String, WorkflowNodeRun> latest;
     private ExecutorService pool;
+    private WorkflowRunRepository runs;
 
     @BeforeEach
     void setUp() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
         ExpressionEvaluator evaluator = new ExpressionEvaluator(objectMapper);
         pool = Executors.newSingleThreadExecutor();
-        engine = new WorkflowEngine(mock(WorkflowRunRepository.class),
+        runs = mock(WorkflowRunRepository.class);
+        engine = new WorkflowEngine(runs,
                 mock(WorkflowNodeRunRepository.class), mock(WorkflowApprovalRepository.class),
                 mock(WorkflowVersionRepository.class), mock(WorkflowRepository.class),
                 mock(JobRepository.class), mock(NodeExecutorRegistry.class),
@@ -77,6 +85,49 @@ class WorkflowEngineGateTest {
         upstream.setStatus("succeeded");
         latest = Map.of("classify", upstream);
         store = new VariableStore();
+    }
+
+    @Test
+    void cleanupWhileLockedCannotCreateSecondLockOrEnterStaleRun() throws Exception {
+        WorkflowRun run = new WorkflowRun();
+        run.setId("same-run");
+        run.setStatus("running");
+        when(runs.findById(run.getId())).thenReturn(Optional.of(run));
+        Method withLock = WorkflowEngine.class.getDeclaredMethod("withLock", WorkflowRun.class, Runnable.class);
+        Method cleanup = WorkflowEngine.class.getDeclaredMethod("cleanup", String.class);
+        withLock.setAccessible(true);
+        cleanup.setAccessible(true);
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicInteger entries = new AtomicInteger();
+        Future<?> first = pool.submit(() -> {
+            try {
+                withLock.invoke(engine, run, (Runnable) () -> {
+                    entries.incrementAndGet();
+                    entered.countDown();
+                    try {
+                        if (!release.await(5, TimeUnit.SECONDS)) throw new AssertionError("release timeout");
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new AssertionError(e);
+                    }
+                });
+            } catch (ReflectiveOperationException e) {
+                throw new AssertionError(e);
+            }
+        });
+        try {
+            assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+            cleanup.invoke(engine, run.getId());
+            withLock.invoke(engine, run, (Runnable) entries::incrementAndGet);
+            assertThat(entries.get()).isEqualTo(1);
+        } finally {
+            release.countDown();
+            first.get(5, TimeUnit.SECONDS);
+        }
+        run.setStatus("cancelled");
+        withLock.invoke(engine, run, (Runnable) entries::incrementAndGet);
+        assertThat(entries.get()).isEqualTo(1);
     }
 
     @org.junit.jupiter.api.AfterEach
@@ -122,19 +173,19 @@ class WorkflowEngineGateTest {
     }
 
     @Test
-    @DisplayName("class 不在配置类别：class handle SKIP，default PASS")
-    void unknownClassFallsBackToDefault() throws Exception {
+    @DisplayName("class 不在配置类别：所有边 SKIP")
+    void unknownClassFailsClosed() throws Exception {
         store.putNodeOutput("classify", null, Map.of("class", "storage"));
         assertThat(gate("disk_branch")).isEqualTo("SKIP");
-        assertThat(gate("default_branch")).isEqualTo("PASS");
+        assertThat(gate("default_branch")).isEqualTo("SKIP");
     }
 
     @Test
-    @DisplayName("class 字段缺失：class handle SKIP，default PASS")
-    void missingClassFallsBackToDefault() throws Exception {
+    @DisplayName("class 字段缺失：所有边 SKIP")
+    void missingClassFailsClosed() throws Exception {
         store.putNodeOutput("classify", null, Map.of("reason", "no class"));
         assertThat(gate("disk_branch")).isEqualTo("SKIP");
-        assertThat(gate("default_branch")).isEqualTo("PASS");
+        assertThat(gate("default_branch")).isEqualTo("SKIP");
     }
 
     @Test
@@ -150,5 +201,88 @@ class WorkflowEngineGateTest {
         store.putNodeOutput("classify", null, Map.of("class", 42));
         assertThat(gate("disk_branch")).isEqualTo("SKIP");
         assertThat(gate("default_branch")).isEqualTo("SKIP");
+    }
+
+    @Test
+    void skippedOrdinaryEdgesPropagateAndJoinAllowsSelectedPath() throws Exception {
+        WorkflowNode a = node("a");
+        WorkflowNode b = node("b");
+        WorkflowNode join = node("join");
+        definition.setNodes(List.of(a, b, join));
+        definition.setEdges(List.of(edge("a", "b", null), edge("a", "join", null),
+                edge("b", "join", null)));
+        latest = Map.of("a", row("a", "skipped"));
+        assertThat(gate("b")).isEqualTo("SKIP");
+        latest = Map.of("a", row("a", "skipped"), "b", row("b", "skipped"));
+        assertThat(gate("join")).isEqualTo("SKIP");
+        latest = Map.of("a", row("a", "succeeded"), "b", row("b", "skipped"));
+        assertThat(gate("join")).isEqualTo("PASS");
+    }
+
+    @Test
+    void missingBranchHandleCannotUseLegacyConditionToBypassGate() throws Exception {
+        store.putNodeOutput("classify", null, Map.of("class", "disk"));
+        WorkflowEdge noHandle = edge("classify", "disk_branch", null);
+        noHandle.setCondition("true");
+        definition.setEdges(List.of(noHandle));
+        assertThat(gate("disk_branch")).isEqualTo("SKIP");
+        definition.nodeByKey("classify").setType("condition");
+        store.putNodeOutput("classify", null, Map.of("result", true));
+        assertThat(gate("disk_branch")).isEqualTo("SKIP");
+    }
+
+    @Test
+    void legacyConditionResultComparisonStillGatesBothOutcomes() throws Exception {
+        definition.nodeByKey("classify").setType("condition");
+        WorkflowEdge legacy = edge("classify", "disk_branch", null);
+        legacy.setCondition("nodes.classify.output.result == true");
+        definition.setEdges(List.of(legacy));
+        assertThat(gate("disk_branch")).isEqualTo("SKIP");
+        store.putNodeOutput("classify", null, Map.of("result", false));
+        assertThat(gate("disk_branch")).isEqualTo("SKIP");
+        store.putNodeOutput("classify", null, Map.of("result", true));
+        assertThat(gate("disk_branch")).isEqualTo("PASS");
+        legacy.setCondition("nodes.classify.output.result == true || true");
+        assertThat(gate("disk_branch")).isEqualTo("SKIP");
+    }
+
+    @Test
+    void failedBranchCannotUseStaleOutputEvenWithPartial() throws Exception {
+        definition.nodeByKey("classify").setType("condition");
+        WorkflowEdge branch = edge("classify", "disk_branch", "false");
+        branch.setOnUpstreamFailure("partial");
+        definition.setEdges(List.of(branch));
+        store.putNodeOutput("classify", null, Map.of("result", false));
+        latest = Map.of("classify", row("classify", "failed"));
+        assertThat(gate("disk_branch")).isEqualTo("SKIP");
+    }
+
+    @Test
+    void downstreamWaitsForRetryAndUsesLatestAttempt() throws Exception {
+        WorkflowNode source = node("source");
+        source.setRetryMax(1);
+        WorkflowNode target = node("target");
+        definition.setNodes(List.of(source, target));
+        definition.setEdges(List.of(edge("source", "target", null)));
+        WorkflowNodeRun failed = row("source", "failed");
+        latest = Map.of("source", failed);
+        Method method = WorkflowEngine.class.getDeclaredMethod("dagSchedulerFindReady",
+                WorkflowDefinition.class, Map.class, String.class);
+        method.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        List<WorkflowNode> ready = (List<WorkflowNode>) method.invoke(engine, definition, latest, "run");
+        assertThat(ready).extracting(WorkflowNode::getKey).containsExactly("source");
+        WorkflowNodeRun succeeded = row("source", "succeeded");
+        succeeded.setAttempt(2);
+        latest = DagScheduler.latestByKey(List.of(failed, succeeded));
+        assertThat(gate("target")).isEqualTo("PASS");
+    }
+
+    private WorkflowNodeRun row(String key, String status) {
+        WorkflowNodeRun row = new WorkflowNodeRun();
+        row.setNodeKey(key);
+        row.setAttempt(1);
+        row.setStatus(status);
+        return row;
     }
 }

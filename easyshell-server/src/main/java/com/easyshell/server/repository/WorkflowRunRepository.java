@@ -5,9 +5,11 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import jakarta.persistence.LockModeType;
 
 import java.time.LocalDateTime;
 import java.util.Collection;
@@ -16,6 +18,10 @@ import java.util.Optional;
 
 @Repository
 public interface WorkflowRunRepository extends JpaRepository<WorkflowRun, String> {
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select r from WorkflowRun r where r.id = :id")
+    Optional<WorkflowRun> lockById(@Param("id") String id);
 
     List<WorkflowRun> findByStatus(String status);
 
@@ -115,22 +121,24 @@ public interface WorkflowRunRepository extends JpaRepository<WorkflowRun, String
     int resumeIfWaiting(@Param("id") String runId);
 
     /**
-     * 置位取消请求（§3.10）：仅当尚未置位时生效，返回值用于审计"谁先按的取消"。
+     * 置位取消请求（§3.10）：仅当 run 尚未终态且尚未置位时生效。
      *
      * @return 1 = 本次置位；0 = run 不存在或已有人先置位
      */
     @Modifying(flushAutomatically = true)
-    @Query("update WorkflowRun r set r.cancelRequested = true where r.id = :id and r.cancelRequested = false")
+    @Query("update WorkflowRun r set r.cancelRequested = true where r.id = :id and r.cancelRequested = false " +
+            "and r.status not in ('succeeded', 'failed', 'cancelled', 'timeout')")
     int requestCancelAtomically(@Param("id") String runId);
 
     /**
      * 波末 checkpoint：心跳 + 当前波节点 + 标量变量全量快照一把写（§3.7）。
      *
-     * @return 1 = 已写；0 = run 不存在
+     * @return 1 = 已写；0 = run 不存在或已终态
      */
     @Modifying(flushAutomatically = true)
     @Query("update WorkflowRun r set r.heartbeatAt = :heartbeatAt, r.currentNodes = :currentNodes, " +
-            "r.variablesJson = :variablesJson, r.variablesTruncated = :variablesTruncated where r.id = :id")
+            "r.variablesJson = :variablesJson, r.variablesTruncated = :variablesTruncated " +
+            "where r.id = :id and r.status not in ('succeeded', 'failed', 'cancelled', 'timeout')")
     int checkpointAtomically(@Param("id") String runId,
                              @Param("heartbeatAt") LocalDateTime heartbeatAt,
                              @Param("currentNodes") String currentNodes,

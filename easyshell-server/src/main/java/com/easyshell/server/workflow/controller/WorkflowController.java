@@ -13,10 +13,8 @@ import com.easyshell.server.model.entity.Workflow;
 import com.easyshell.server.model.entity.WorkflowApproval;
 import com.easyshell.server.model.entity.WorkflowRun;
 import com.easyshell.server.model.entity.WorkflowVersion;
-import com.easyshell.server.model.vo.WorkflowApprovalVO;
 import com.easyshell.server.model.vo.WorkflowDetailVO;
 import com.easyshell.server.model.vo.WorkflowRunDetailVO;
-import com.easyshell.server.model.vo.WorkflowRunVO;
 import com.easyshell.server.model.vo.WorkflowTestRunVO;
 import com.easyshell.server.model.vo.WorkflowValidateResultVO;
 import com.easyshell.server.model.vo.WorkflowVersionDetailVO;
@@ -25,11 +23,13 @@ import com.easyshell.server.repository.WorkflowApprovalRepository;
 import com.easyshell.server.repository.WorkflowNodeRunRepository;
 import com.easyshell.server.repository.WorkflowRunRepository;
 import com.easyshell.server.security.AuditUsers;
+import com.easyshell.server.service.AuditLogService;
 import com.easyshell.server.workflow.approval.WorkflowResumeService;
 import com.easyshell.server.workflow.service.WorkflowApiPresenter;
 import com.easyshell.server.workflow.service.WorkflowDefinitionService;
 import com.easyshell.server.workflow.service.WorkflowRunService;
 import com.easyshell.server.workflow.service.WorkflowTestRunService;
+import com.easyshell.server.workflow.service.WorkflowCodeSampleService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.extern.slf4j.Slf4j;
@@ -40,13 +40,14 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
+import java.io.IOException;
 import java.util.List;
 
 /**
- * 工作流引擎 REST API（设计 §6.1：M1 <b>17 个端点</b>，其中 13 个带路径变量）。
+ * 工作流引擎 REST API（18 个端点，其中 14 个带路径变量）。
  *
  * <p><b>权限注解与数据级校验一一对应</b>（硬规则，缺一即漏洞）：方法级注解管"角色能不能
- * 碰这类操作"，{@link WorkflowAccess} 管"这个 id 是不是他的"。带路径变量的 13 个端点
+ * 碰这类操作"，{@link WorkflowAccess} 管"这个 id 是不是他的"。带路径变量的 14 个端点
  * 全部经过 {@link WorkflowAccess} 的三个函数，没有第二份内联实现（反面教材：
  * {@code TaskController.java:203-211}）。</p>
  *
@@ -75,6 +76,8 @@ public class WorkflowController {
     private final WorkflowRunRepository runRepository;
     private final WorkflowNodeRunRepository nodeRunRepository;
     private final WorkflowApprovalRepository approvalRepository;
+    private final WorkflowCodeSampleService codeSampleService;
+    private final AuditLogService auditLogService;
 
     public WorkflowController(WorkflowDefinitionService definitionService,
                               WorkflowRunService runService,
@@ -84,7 +87,9 @@ public class WorkflowController {
                               WorkflowApiPresenter presenter,
                               WorkflowRunRepository runRepository,
                               WorkflowNodeRunRepository nodeRunRepository,
-                              WorkflowApprovalRepository approvalRepository) {
+                              WorkflowApprovalRepository approvalRepository,
+                              WorkflowCodeSampleService codeSampleService,
+                              AuditLogService auditLogService) {
         this.definitionService = definitionService;
         this.runService = runService;
         this.testRunService = testRunService;
@@ -94,6 +99,8 @@ public class WorkflowController {
         this.runRepository = runRepository;
         this.nodeRunRepository = nodeRunRepository;
         this.approvalRepository = approvalRepository;
+        this.codeSampleService = codeSampleService;
+        this.auditLogService = auditLogService;
     }
 
     // ==================================================================
@@ -217,14 +224,23 @@ public class WorkflowController {
                                         Authentication auth, HttpServletRequest httpRequest) {
         access.requireWorkflowOwner(id, auth);
         WorkflowVersion version = definitionService.publish(id,
-                request == null ? null : request.getChangelog(), (Long) auth.getPrincipal(), auth,
+                request, (Long) auth.getPrincipal(), auth,
                 httpRequest.getRemoteAddr());
         return R.ok(WorkflowVersionVO.from(version));
     }
 
+    @PostMapping(value = "/{id}/nodes/code/test", consumes = "application/json")
+    @PreAuthorize("hasAnyRole('OPERATOR','ADMIN','SUPER_ADMIN')")
+    public R<Object> testCode(@PathVariable Long id, Authentication auth, HttpServletRequest request) throws IOException {
+        access.requireWorkflowOwner(id, auth);
+        auditLogService.logSync((Long) auth.getPrincipal(), AuditUsers.name(auth), "WORKFLOW_CODE_SAMPLE_TEST",
+                "workflow", id.toString(), null, request.getRemoteAddr(), "attempted");
+        return R.ok(codeSampleService.execute(request.getInputStream()));
+    }
+
     @PostMapping("/{id}/runs")
     @PreAuthorize("hasAnyRole('OPERATOR','ADMIN','SUPER_ADMIN')")
-    public R<WorkflowRunVO> triggerRun(@PathVariable Long id,
+    public R<WorkflowApiPresenter.RunControlSummary> triggerRun(@PathVariable Long id,
                                      @RequestBody(required = false) WorkflowRunTriggerRequest request,
                                      Authentication auth) {
         Workflow workflow = access.requireWorkflowOwner(id, auth);
@@ -235,7 +251,7 @@ public class WorkflowController {
         }
         WorkflowRun run = runService.startRun(id, versionId, body.getInput(), (Long) auth.getPrincipal(),
                 body.getIdempotencyKey(), "manual");
-        return R.ok(presenter.run(run));
+        return R.ok(presenter.runControlSummary(run));
     }
 
     // ==================================================================
@@ -243,7 +259,7 @@ public class WorkflowController {
     // ==================================================================
 
     @GetMapping("/runs")
-    public R<Page<WorkflowRunVO>> runs(
+    public R<Page<WorkflowApiPresenter.RunControlSummary>> runs(
             @RequestParam(required = false) Long workflowId,
             @RequestParam(required = false) String status,
             @RequestParam(defaultValue = "0") int page,
@@ -256,7 +272,7 @@ public class WorkflowController {
         Page<WorkflowRun> runs = WorkflowAccess.isAdmin(auth)
                 ? runRepository.findAllFiltered(statusFilter, workflowId, pageable)
                 : runRepository.findVisibleToUser(userId, statusFilter, workflowId, pageable);
-        return R.ok(runs.map(presenter::run));
+        return R.ok(runs.map(presenter::runControlSummary));
     }
 
     @GetMapping("/runs/{runId}")
@@ -267,10 +283,10 @@ public class WorkflowController {
 
     @PostMapping("/runs/{runId}/cancel")
     @PreAuthorize("hasAnyRole('OPERATOR','ADMIN','SUPER_ADMIN')")
-    public R<WorkflowRunVO> cancelRun(@PathVariable String runId, Authentication auth) {
-        WorkflowRun run = access.requireRunAccess(runId, auth);
+    public R<WorkflowApiPresenter.RunControlSummary> cancelRun(@PathVariable String runId, Authentication auth) {
+        WorkflowRun run = access.requireRunControl(runId, auth);
         runService.requestCancel(runId, (Long) auth.getPrincipal());
-        return R.ok(presenter.run(runRepository.findById(runId).orElse(run)));
+        return R.ok(presenter.runControlSummary(runRepository.findById(runId).orElse(run)));
     }
 
     // ==================================================================
@@ -296,23 +312,47 @@ public class WorkflowController {
 
     @GetMapping("/approvals/pending")
     @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
-    public R<List<WorkflowApprovalVO>> pendingApprovals(Authentication auth) {
+    public R<List<Object>> pendingApprovals(Authentication auth) {
         access.requireApprovalAdmin(auth);
         // 只返回 pending 且未过期（过期件由 WorkflowWatchdog 置 timeout）
-        return R.ok(presenter.approvals(
-                approvalRepository.findByStatusAndExpiresAtAfter("pending", LocalDateTime.now())));
+        List<WorkflowApproval> approvals = approvalRepository.findByStatusAndExpiresAtAfter("pending", LocalDateTime.now());
+        return R.ok(approvals.stream().filter(approval -> access.canControlApproval(auth, approval))
+                .map(approval -> approvalResponse(approval, access.canViewApproval(auth, approval)))
+                .toList());
     }
 
     @PostMapping("/approvals/{approvalId}/decision")
     @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
-    public R<WorkflowApprovalVO> decideApproval(@PathVariable Long approvalId,
+    public R<Object> decideApproval(@PathVariable Long approvalId,
                                               @Valid @RequestBody WorkflowApprovalDecisionRequest request,
                                               Authentication auth) {
         access.requireApprovalAdmin(auth);
         requireBody(request);
+        WorkflowApproval existing = approvalRepository.findById(approvalId)
+                .orElseThrow(() -> new BusinessException(404, "APPROVAL_NOT_FOUND"));
+        access.requireApprovalAdmin(auth, existing);
+        if (!"pending".equals(existing.getStatus())) {
+            throw new BusinessException(409, "APPROVAL_DECIDED");
+        }
+        boolean viewBeforeDecision = access.canViewApproval(auth, existing);
+        if (!"rejected".equals(request.getDecision())) {
+            access.requireApprovalContentAccess(auth, existing);
+        }
         WorkflowApproval approval = resumeService.decide(approvalId, request.getDecision(),
                 (Long) auth.getPrincipal(), request.getComment());
-        return R.ok(presenter.approval(approval));
+        if (approval == null) return R.ok(null);
+        return R.ok(approvalResponse(approval, viewBeforeDecision && access.canViewApproval(auth, approval)));
+    }
+
+    private Object approvalResponse(WorkflowApproval approval, boolean canView) {
+        if (canView) {
+            try {
+                return presenter.approval(approval);
+            } catch (Exception e) {
+                log.warn("Unable to assemble approval detail; returning restricted summary");
+            }
+        }
+        return presenter.restrictedApproval(approval);
     }
 
     // ------------------------------------------------------------------

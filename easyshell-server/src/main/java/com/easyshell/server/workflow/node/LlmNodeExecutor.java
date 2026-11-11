@@ -81,9 +81,9 @@ public class LlmNodeExecutor implements NodeExecutor {
             issues.error("NODE_CONFIG_INVALID", "llm 节点缺少 userPrompt", node.getKey());
         }
         String outputMode = node.configString("outputMode", "text");
-        if (!"text".equals(outputMode) && !"json".equals(outputMode)) {
+        if (!"text".equals(outputMode) && !"json".equals(outputMode) && !AiJsonSchemaV1.MODE.equals(outputMode)) {
             issues.error("NODE_CONFIG_INVALID",
-                    "llm 节点 outputMode 只能是 text / json，实际 '" + outputMode + "'", node.getKey());
+                    "llm 节点 outputMode 只能是 text / json / json_schema_v1，实际 '" + outputMode + "'", node.getKey());
         }
         Double temperature = node.configDouble("temperature");
         if (node.getConfig() != null && node.getConfig().containsKey("temperature")) {
@@ -102,7 +102,12 @@ public class LlmNodeExecutor implements NodeExecutor {
                                 + MAX_INPUT_CHARS + " 之间，实际 " + maxInputChars, node.getKey());
             }
         }
-        validateJsonSchemaHint(node, issues);
+        if (AiJsonSchemaV1.MODE.equals(outputMode)) {
+            try { new AiJsonSchemaV1(node.getConfig().get("jsonSchema"), objectMapper); }
+            catch (IllegalArgumentException e) { issues.error("NODE_CONFIG_INVALID", "无效的严格 JSON Schema", node.getKey()); }
+        } else {
+            validateJsonSchemaHint(node, issues);
+        }
     }
 
     private void validateJsonSchemaHint(WorkflowNode node, ValidationIssue.Sink issues) {
@@ -134,9 +139,14 @@ public class LlmNodeExecutor implements NodeExecutor {
             throw new NodeFailedException("NODE_CONFIG_INVALID", "llm 节点缺少 userPrompt");
         }
         String outputMode = node.configString("outputMode", "text");
-        if (!"text".equals(outputMode) && !"json".equals(outputMode)) {
+        if (!"text".equals(outputMode) && !"json".equals(outputMode) && !AiJsonSchemaV1.MODE.equals(outputMode)) {
             throw new NodeFailedException("NODE_CONFIG_INVALID",
-                    "llm 节点 outputMode 只能是 text / json，实际 '" + outputMode + "'");
+                    "llm 节点 outputMode 只能是 text / json / json_schema_v1，实际 '" + outputMode + "'");
+        }
+        AiJsonSchemaV1 strict = null;
+        if (AiJsonSchemaV1.MODE.equals(outputMode)) {
+            try { strict = new AiJsonSchemaV1(node.getConfig().get("jsonSchema"), objectMapper); }
+            catch (IllegalArgumentException e) { throw new NodeFailedException("NODE_CONFIG_INVALID", "无效的严格 JSON Schema"); }
         }
         Double temperature = node.configDouble("temperature");
         if (temperature != null && (!Double.isFinite(temperature)
@@ -177,6 +187,11 @@ public class LlmNodeExecutor implements NodeExecutor {
             systemPrompt = systemPrompt + "\n\n" + AiStructuredOutput.jsonInstruction(schema);
         }
 
+        if (strict != null) {
+            systemPrompt += "\n\n只输出符合以下 schema 的 JSON 对象：\n"
+                    + sensitiveDataFilter.filter(node.configString("jsonSchema"));
+        }
+        systemPrompt = sensitiveDataFilter.filter(systemPrompt);
         ChatModel chatModel = aiCaller.resolveModel(provider, model, temperature);
         int waitSec = Math.max(1, Math.min(
                 node.timeoutSecOrDefault(properties.getEngine().getDefaultNodeTimeoutSec()),
@@ -193,7 +208,18 @@ public class LlmNodeExecutor implements NodeExecutor {
         Map<String, Object> output = new LinkedHashMap<>();
         output.put("model", modelLabel);
 
-        if ("text".equals(outputMode)) {
+        if (strict != null) {
+            try {
+                output.put("model", sensitiveDataFilter.filter((String) output.get("model")));
+                Object parsed = strict.parseAndMask(raw, sensitiveDataFilter);
+                output.put("json", parsed);
+                output.put("text", objectMapper.writeValueAsString(parsed));
+                output.put("structured", true);
+                strict.checkEnvelope(output);
+            } catch (Exception e) {
+                throw new NodeFailedException("AI_OUTPUT_INVALID_JSON", "严格 JSON 输出无效或超限");
+            }
+        } else if ("text".equals(outputMode)) {
             output.put("text", sensitiveDataFilter.filter(raw));
             output.put("json", null);
             output.put("structured", false);
@@ -206,7 +232,7 @@ public class LlmNodeExecutor implements NodeExecutor {
                     throw new NodeCancelledException("运行已取消，停止 JSON 修复");
                 }
                 String repaired = repairJson(ctx, chatModel, systemPrompt, filteredInput,
-                        sensitiveDataFilter.filter(raw), firstError, waitSec);
+                        "[无法安全展示无效 JSON]", firstError, waitSec);
                 try {
                     parsed = AiStructuredOutput.parseJson(repaired, objectMapper);
                 } catch (Exception secondError) {
@@ -218,11 +244,14 @@ public class LlmNodeExecutor implements NodeExecutor {
             if (parsed == null) {
                 throw new NodeFailedException("AI_OUTPUT_INVALID_JSON", "模型输出的 JSON 为 null");
             }
-            output.put("text", sensitiveDataFilter.filter(raw));
-            output.put("json", AiStructuredOutput.maskJson(parsed, sensitiveDataFilter));
+            Object masked = AiStructuredOutput.maskJson(parsed, sensitiveDataFilter);
+            try { output.put("text", objectMapper.writeValueAsString(masked)); }
+            catch (Exception e) { throw new NodeFailedException("AI_OUTPUT_INVALID_JSON", "模型输出无法安全序列化"); }
+            output.put("json", masked);
             output.put("structured", true);
         }
 
+        if (ctx.isCancelled()) throw new NodeCancelledException("运行已取消，丢弃 LLM 结果");
         ctx.variables().putNodeOutput(node.getKey(), node.getOutputVar(), output);
         return NodeOutcome.SUCCEEDED;
     }
@@ -236,7 +265,7 @@ public class LlmNodeExecutor implements NodeExecutor {
                 + "\n上一次输出：\n" + previousOutput
                 + "\n\n请只输出修正后的合法 JSON，不要输出 Markdown 代码块或解释文字。";
         String repaired = aiCaller.call(ctx.run().getStartedBy(), "workflow-llm-repair", chatModel,
-                systemPrompt, repairPrompt, waitSec, WorkflowAiCaller.MAX_WAIT_SECONDS);
+                systemPrompt, sensitiveDataFilter.filter(repairPrompt), waitSec, WorkflowAiCaller.MAX_WAIT_SECONDS);
         return repaired == null ? "" : repaired;
     }
 }

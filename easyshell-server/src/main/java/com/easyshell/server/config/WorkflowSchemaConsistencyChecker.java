@@ -2,6 +2,7 @@ package com.easyshell.server.config;
 
 import com.easyshell.server.model.entity.Workflow;
 import com.easyshell.server.model.entity.WorkflowApproval;
+import com.easyshell.server.model.entity.WorkflowDispatchApprovalBinding;
 import com.easyshell.server.model.entity.WorkflowNodeRun;
 import com.easyshell.server.model.entity.WorkflowRun;
 import com.easyshell.server.model.entity.WorkflowVersion;
@@ -37,16 +38,16 @@ import java.util.Map;
 /**
  * 工作流 schema 一致性校验（"双主管"对冲的第二半，设计 §5.4 / 复核 C-16）。
  *
- * <p>背景：存量 22 张表由 Hibernate ddl-auto 管理，workflow* 五张新表由 Flyway 纳管
+ * <p>背景：存量表由 Hibernate ddl-auto 管理，workflow* 表由 Flyway 纳管
  * （{@link WorkflowSchemaFilterProvider} 保证两个主管的管辖范围不相交）。Flyway 只保证
  * "脚本被完整执行过"，不保证"脚本与 JPA 实体还对得上"——实体加一个字段而忘了改迁移脚本，
  * 生产上要到第一次 SQL 报 Unknown column 才暴露。</p>
  *
- * <p>因此启动时（ApplicationRunner，上下文刷新后、对外服务前）把五个工作流实体与真实 DDL
+ * <p>因此启动时（ApplicationRunner，上下文刷新后、对外服务前）把工作流实体与真实 DDL
  * 逐字段比对：列名集合、可空性、VARCHAR 长度、主键、唯一键、索引。任何不一致立即抛异常，
  * 让进程 fail-fast 起不来，而不是带着隐性漂移运行。</p>
  *
- * <p>范围说明（刻意为之）：只校验 Flyway 纳管的五张工作流表；存量表的 schema 一致性继续由
+ * <p>范围说明（刻意为之）：只校验 Flyway 纳管的工作流 JPA 表；存量表的 schema 一致性继续由
  * ddl-auto 自己保证。SQL 类型名不做逐字比对——MySQL 报 MEDIUMTEXT、H2(MODE=MySQL) 对同一列
  * 报 CHARACTER VARYING，逐字比会产生方言误报；类型级校验留给 M2 的全局 Hibernate validate。</p>
  */
@@ -54,10 +55,10 @@ import java.util.Map;
 @Component
 public class WorkflowSchemaConsistencyChecker implements ApplicationRunner {
 
-    /** 五个工作流实体 = Flyway 纳管的五张表（顺序即校验顺序） */
+    /** Flyway 纳管的工作流 JPA 实体（顺序即校验顺序） */
     private static final List<Class<?>> WORKFLOW_ENTITIES = List.of(
             Workflow.class, WorkflowVersion.class, WorkflowRun.class,
-            WorkflowNodeRun.class, WorkflowApproval.class);
+            WorkflowNodeRun.class, WorkflowApproval.class, WorkflowDispatchApprovalBinding.class);
 
     private final DataSource dataSource;
 

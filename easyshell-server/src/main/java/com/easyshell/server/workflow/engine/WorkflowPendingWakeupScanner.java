@@ -17,9 +17,8 @@ import java.util.List;
  * 待唤醒扫描器（§3.8 唤醒路径③ + §3.9 背压①的泵回）。
  *
  * <p>两件事：① 把 {@code queued} 的 run 在有余量时启动（全局并发上限的排队不是丢弃）；
- * ② 心跳过期但仍是 running/waiting 的 run 重新驱动一次——执行线程死掉、退避重试的
- * scheduler 任务丢失、tryLock 被拒绝后没人兜底，都由这里补救（per-run 锁保证重复驱动
- * 不会双跑）。</p>
+ * ② 可选地重驱心跳过期的 running run。后者没有持久 fencing，默认关闭；本地锁不能
+ * 证明跨实例或崩溃后的执行安全。</p>
  *
  * <p>注意它<b>不</b>负责审批唤醒（那在 {@code WorkflowResumeService.scanWakeups}，
  * 派生式扫 waiting 节点）——两个扫描器周期不同（10s / 10s 但关注面不同），
@@ -60,7 +59,10 @@ public class WorkflowPendingWakeupScanner {
     public void scan() {
         try {
             pumpQueued();
-            reDriveStaleHeartbeat();
+            if (properties.getEngine().isAutomaticRecoveryEnabled()
+                    && !properties.getEngine().isDurableResumeEnabled()) {
+                reDriveStaleHeartbeat();
+            }
         } catch (Exception e) {
             log.error("待唤醒扫描异常: {}", e.getMessage(), e);
         }

@@ -177,7 +177,7 @@ public class DagExecutor {
 
         try {
             CompletableFuture<String> resultFuture = CompletableFuture.supplyAsync(
-                    () -> orchestratorEngine.executeAsSubAgent(agentDef, taskDescription, chatModelFactory),
+                    () -> orchestratorEngine.executeAsSubAgent(agentDef, taskDescription, chatModelFactory, request.getUserId(), request.getSourceIp()),
                     dagExecutor);
 
             String result = resultFuture.get(timeout, TimeUnit.SECONDS);

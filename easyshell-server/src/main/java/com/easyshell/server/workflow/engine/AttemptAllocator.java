@@ -2,15 +2,20 @@ package com.easyshell.server.workflow.engine;
 
 import com.easyshell.server.model.entity.WorkflowNodeRun;
 import com.easyshell.server.repository.WorkflowNodeRunRepository;
+import com.easyshell.server.repository.WorkflowRunRepository;
+import com.easyshell.server.repository.WorkflowRecoveryClaimRepository.State;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 /**
  * attempt 分配与终态写入（§3.6 / §3.2.2 第一、二类事务边界）。
@@ -18,18 +23,21 @@ import java.util.UUID;
  * <p>{@code startAttempt} 与 {@code finishAttempt} 各是<b>独立短事务</b>（REQUIRES_NEW）：
  * 节点执行可能跑几分钟，绝不能让 attempt 行的事务跟着一起挂着。</p>
  *
- * <p><b>抢占竞态（MF-10 / G-2）</b>：nextAttempt = 该 (runId, nodeKey) 已有最大 attempt + 1，
- * 读与 INSERT 之间有竞态，由 {@code uk_node_run(run_id, node_key, attempt)} 兜底。
- * 兜底命中即视为"另一个执行者已接管本节点"：把挡我们的既有行条件 UPDATE 为
- * failed(reason=attempt_conflict) 留痕，再抛 {@link AttemptConflictException} 终止 run——
- * <b>不 INSERT 与唯一键冲突的同一键</b>（v3 N7-f 修正），也不静默重试
- * （否则下波会再次看到 pending → 再次同样 attempt → 无限热循环）。</p>
+ * <p>先锁 run，与取消串行；再核对调用方看到的最新 attempt，避免陈旧调度重复执行。
+ * 唯一键仍作为不遵循此锁协议的写入者的最后防线，不改写已有 attempt。</p>
  */
 @Slf4j
 @Service
 public class AttemptAllocator {
 
     private final WorkflowNodeRunRepository nodeRunRepository;
+    private final WorkflowRunRepository runRepository;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private WorkflowRecoveryClaimService recoveryClaims;
+
+    @jakarta.persistence.PersistenceContext
+    private jakarta.persistence.EntityManager entityManager;
 
     /**
      * 显式事务模板（PROPAGATION_REQUIRES_NEW）而不是 {@code @Transactional}：
@@ -38,9 +46,10 @@ public class AttemptAllocator {
      */
     private final TransactionTemplate transactionTemplate;
 
-    public AttemptAllocator(WorkflowNodeRunRepository nodeRunRepository,
+    public AttemptAllocator(WorkflowNodeRunRepository nodeRunRepository, WorkflowRunRepository runRepository,
                             PlatformTransactionManager transactionManager) {
         this.nodeRunRepository = nodeRunRepository;
+        this.runRepository = runRepository;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
@@ -52,9 +61,24 @@ public class AttemptAllocator {
      * @throws AttemptConflictException uk_node_run 冲突：另一执行者已接管
      */
     public WorkflowNodeRun startAttempt(String runId, String nodeKey, String nodeType) {
+        return startAttempt(runId, nodeKey, nodeType, 0);
+    }
+
+    /** expectedPrevious 是调用方决定重试时看到的失败 attempt；首次启动传 0。 */
+    public WorkflowNodeRun startAttempt(String runId, String nodeKey, String nodeType, int expectedPrevious) {
         try {
             return transactionTemplate.execute(status -> {
-                int next = nodeRunRepository.findMaxAttempt(runId, nodeKey).map(v -> v + 1).orElse(1);
+                var run = runRepository.lockById(runId).orElse(null);
+                if (run == null || !"running".equals(run.getStatus()) || !Boolean.FALSE.equals(run.getCancelRequested())) {
+                    return null;
+                }
+                var previous = nodeRunRepository.findFirstByRunIdAndNodeKeyOrderByAttemptDesc(runId, nodeKey);
+                if (previous.isPresent() ? previous.get().getAttempt() != expectedPrevious
+                        || !("failed".equals(previous.get().getStatus()) || "timeout".equals(previous.get().getStatus()))
+                        : expectedPrevious != 0) {
+                    return null;
+                }
+                int next = expectedPrevious + 1;
                 WorkflowNodeRun row = new WorkflowNodeRun();
                 row.setId(newNodeRunId());
                 row.setRunId(runId);
@@ -70,18 +94,67 @@ public class AttemptAllocator {
             // （H2 行锁会让后到者先阻塞再失败），两种都按"另一个执行者已接管"处理。
             // 留痕放在新事务里：原事务已被标记回滚，不能在里面再写。
             int blocking = nodeRunRepository.findMaxAttempt(runId, nodeKey).orElse(1);
-            transactionTemplate.execute(tx -> {
-                nodeRunRepository.markFailedIfPresent(runId, nodeKey, blocking, "attempt_conflict",
-                        LocalDateTime.now());
-                return null;
-            });
             log.warn("attempt 抢占失败: run={} node={} attempt={}", runId, nodeKey, blocking);
             throw new AttemptConflictException(runId, nodeKey, blocking);
         }
     }
 
     public int finishAttempt(WorkflowNodeRun row, AttemptResult result) {
-        return transactionTemplate.execute(status -> nodeRunRepository.finishAttemptAtomically(
+        return finishAttempt(row, result, outcome -> {});
+    }
+
+    public int finishAttempt(WorkflowNodeRun row, AttemptResult result, Consumer<String> staleCommitted) {
+        return finishAttempt(row, result, staleCommitted, false);
+    }
+
+    public int finishAttempt(WorkflowNodeRun row, AttemptResult result, Consumer<String> staleCommitted,
+                             boolean preserveApprovalBinding) {
+        return finishAttempt(row, result, staleCommitted, preserveApprovalBinding, null, null);
+    }
+
+    public int finishAttempt(WorkflowNodeRun row, AttemptResult result, Consumer<String> staleCommitted,
+                             boolean preserveApprovalBinding, RecoveryAttemptRef ref, State recoveryState) {
+        return finishAttempt(row, result, staleCommitted, preserveApprovalBinding, ref, recoveryState, null);
+    }
+
+    public int finishAttempt(WorkflowNodeRun row, AttemptResult result, Consumer<String> staleCommitted,
+                             boolean preserveApprovalBinding, RecoveryAttemptRef ref, State recoveryState,
+                             String errorCode) {
+        return transactionTemplate.execute(status -> {
+            var run = runRepository.lockById(row.getRunId()).orElse(null);
+            if (run == null) return 0;
+            if (ref != null) {
+                requireMatchingRef(row, ref);
+                State outcome = recoveryState == State.UNCERTAIN
+                        ? ordinaryApprovalOutcome(row, ref, errorCode) : recoveryState;
+                if (outcome == null || !recoveryClaims.finish(ref, outcome)) {
+                    throw new IllegalStateException("recovery completion conflict: " + row.getId());
+                }
+                // Unknown execution keeps its node running and its durable slot occupied.
+                if (outcome == State.UNCERTAIN) return 0;
+            }
+            if (!"running".equals(run.getStatus()) || !Boolean.FALSE.equals(run.getCancelRequested())) {
+                // 仅收尾本地记录：已提交的外部副作用可能仍在运行，不能声称取消已送达。
+                String outcome = "timeout".equals(run.getStatus()) ? "timeout" : "cancelled";
+                int updated = nodeRunRepository.closeStaleAttempt(row.getId(), outcome,
+                        result.inputJson(), result.taskId(),
+                        "run 已结束或取消，迟到结果已丢弃；外部执行可能仍在运行",
+                        LocalDateTime.now(), result.durationMs());
+                if (ref != null && updated != 1) {
+                    throw new IllegalStateException("recovery node completion conflict: " + row.getId());
+                }
+                if (updated == 1) {
+                    TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            staleCommitted.accept(outcome);
+                        }
+                    });
+                }
+                // 0 告知调用者结果不可合并，即使本次已把 running 记录收尾。
+                return 0;
+            }
+            int updated = nodeRunRepository.finishAttemptAtomically(
                 row.getId(),
                 result.status(),
                 result.inputJson(),
@@ -95,19 +168,129 @@ public class AttemptAllocator {
                 result.agentVersions(),
                 result.taskId(),
                 result.approvalId(),
+                preserveApprovalBinding,
                 result.cancelDelivered(),
                 LocalDateTime.now(),
-                result.durationMs()));
+                result.durationMs());
+            if (ref != null && updated != 1) {
+                throw new IllegalStateException("recovery node completion conflict: " + row.getId());
+            }
+            return updated;
+        });
+    }
+
+    /** A code alone is not evidence: require the persisted ordinary approval and exact attempt binding. */
+    private State ordinaryApprovalOutcome(WorkflowNodeRun expected, RecoveryAttemptRef ref, String errorCode) {
+        if (!"approval".equals(expected.getNodeType()) || entityManager == null) return State.UNCERTAIN;
+        String decision = switch (errorCode == null ? "" : errorCode) {
+            case "approval_rejected" -> "rejected";
+            case "approval_timeout" -> "timeout";
+            case "approval_cancelled" -> "cancelled";
+            default -> null;
+        };
+        if (decision == null) return State.UNCERTAIN;
+        var lock = jakarta.persistence.LockModeType.PESSIMISTIC_WRITE;
+        WorkflowNodeRun actual = entityManager.find(WorkflowNodeRun.class, ref.member().nodeRunId(), lock);
+        if (actual == null) return State.UNCERTAIN;
+        entityManager.refresh(actual, lock);
+        requireMatchingRef(actual, ref);
+        if (!"running".equals(actual.getStatus()) || !"approval".equals(actual.getNodeType())
+                || actual.getTaskId() != null || expected.getTaskId() != null || actual.getApprovalId() == null
+                || !java.util.Objects.equals(actual.getApprovalId(), expected.getApprovalId())) {
+            return State.UNCERTAIN;
+        }
+        var approval = entityManager.find(com.easyshell.server.model.entity.WorkflowApproval.class,
+                actual.getApprovalId(), lock);
+        if (approval == null) return State.UNCERTAIN;
+        entityManager.refresh(approval, lock);
+        if (!java.util.Objects.equals(actual.getRunId(), approval.getRunId())
+                || !java.util.Objects.equals(actual.getNodeKey(), approval.getNodeKey())
+                || !"approval".equals(approval.getNodeType()) || !decision.equals(approval.getStatus())) {
+            return State.UNCERTAIN;
+        }
+        return "cancelled".equals(decision) ? State.CANCELLED : State.FAILED;
+    }
+
+    /** Each barrier returns only after its independent transaction committed. */
+    public boolean enterRecovery(RecoveryAttemptRef ref) {
+        return Boolean.TRUE.equals(transactionTemplate.execute(tx -> {
+            var run = runRepository.lockById(ref.claim().runId()).orElse(null);
+            return run != null && "running".equals(run.getStatus())
+                    && Boolean.FALSE.equals(run.getCancelRequested()) && recoveryClaims.enter(ref);
+        }));
+    }
+
+    public boolean verifyRecoveryEntered(RecoveryAttemptRef ref) {
+        return Boolean.TRUE.equals(transactionTemplate.execute(tx -> {
+            var run = runRepository.lockById(ref.claim().runId()).orElse(null);
+            return run != null && "running".equals(run.getStatus())
+                    && Boolean.FALSE.equals(run.getCancelRequested()) && recoveryClaims.verifyEntered(ref);
+        }));
+    }
+
+    /** Best-effort conservative closure of ENTERED work with no committed result. Never grants delivery. */
+    public boolean markRecoveryUncertain(RecoveryAttemptRef ref) {
+        return Boolean.TRUE.equals(transactionTemplate.execute(tx -> {
+            if (runRepository.lockById(ref.claim().runId()).isEmpty()) return false;
+            return recoveryClaims.finish(ref, State.UNCERTAIN);
+        }));
+    }
+
+    /** Only a definite pool rejection permits ENTERED to become a cancellation tombstone. */
+    public int closeRecoveryAborted(RecoveryAttemptRef ref, boolean rejected, Consumer<Void> committed) {
+        return transactionTemplate.execute(tx -> {
+            if (runRepository.lockById(ref.claim().runId()).isEmpty()) return 0;
+            boolean changed = rejected ? recoveryClaims.rejectEntered(ref) : recoveryClaims.abortUnentered(ref);
+            if (!changed) return 0;
+            var member = ref.member();
+            int updated = nodeRunRepository.closeResumeAbortedAttempt(member.nodeRunId(), ref.claim().runId(),
+                    member.nodeKey(), member.attempt(), "resume_aborted: 恢复在执行此节点前中止",
+                    LocalDateTime.now(), 0L);
+            if (updated != 1) throw new IllegalStateException("recovery abort conflict: " + member.nodeRunId());
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() { committed.accept(null); }
+            });
+            return updated;
+        });
+    }
+
+    private static void requireMatchingRef(WorkflowNodeRun row, RecoveryAttemptRef ref) {
+        var member = ref.member();
+        if (!java.util.Objects.equals(row.getRunId(), ref.claim().runId())
+                || !java.util.Objects.equals(row.getId(), member.nodeRunId())
+                || !java.util.Objects.equals(row.getNodeKey(), member.nodeKey())
+                || !java.util.Objects.equals(row.getAttempt(), member.attempt())) {
+            throw new IllegalArgumentException("recovery attempt identity mismatch");
+        }
     }
 
     /**
-     * 挂起：running -> waiting 并回填 approvalId（§3.8）。
-     *
-     * @return 1 = 已挂起；0 = 行已不是 running（取消/超时抢先，本次挂起作废）
+     * Close a resume claim that was never accepted by the execution pool.
+     * This deliberately does not use finishAttempt: its stale branch represents
+     * a late executor result and cannot retain the resume-specific reason.
      */
-    public int suspendAttempt(WorkflowNodeRun row, Long approvalId) {
-        return transactionTemplate.execute(status ->
-                nodeRunRepository.suspendAttemptAtomically(row.getId(), approvalId));
+    public int closeResumeAborted(String runId, String nodeKey, String attemptId, int attempt,
+                                  String errorMessage, Consumer<Void> committed) {
+        return transactionTemplate.execute(status -> {
+            var run = runRepository.lockById(runId).orElse(null);
+            if (run == null || !("cancelled".equals(run.getStatus())
+                    || "failed".equals(run.getStatus()) || "timeout".equals(run.getStatus()))) {
+                return 0;
+            }
+            LocalDateTime now = LocalDateTime.now();
+            int updated = nodeRunRepository.closeResumeAbortedAttempt(
+                    attemptId, runId, nodeKey, attempt, errorMessage, now, 0L);
+            if (updated == 1) {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        committed.accept(null);
+                    }
+                });
+            }
+            return updated;
+        });
     }
 
     /** attempt 终态字段集合（避免 15 参方法在调用处散落） */

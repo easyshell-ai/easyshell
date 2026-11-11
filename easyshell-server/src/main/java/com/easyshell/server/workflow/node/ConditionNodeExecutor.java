@@ -17,14 +17,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * condition 节点执行器（§2.11：节点的 expression 只决定 true/false handle 出边，
- * <b>边的 condition 才是唯一门控</b>；本节点的求值结果作为 output.result 与边条件输入）。
- *
- * <p><b>fail-closed 语义（§2.5）</b>：求值失败/超时/含不允许的语法时，节点记 NODE_WARNING
- * 并走 <b>false 分支</b>（output.result=false + warning_message 落库 + 审计 warning），
- * 绝不放行——依赖它的边条件 {@code nodes.x.output.result == true} 自然不通行，
- * 于是下游被跳过。这与 AI Chat {@code ConditionEvaluator} 的 fail-open（{@code return true}）
- * 是刻意分叉。</p>
+ * condition 节点执行器：表达式结果决定 true/false handle，求值异常则节点失败，
+ * 不能将异常当成 false 而执行 ELSE。
  */
 @Slf4j
 @Component
@@ -64,10 +58,7 @@ public class ConditionNodeExecutor implements NodeExecutor {
         try {
             result = expressionEvaluator.evaluate(expression, ctx.resolver());
         } catch (RuntimeException e) {
-            // fail-closed：不可求值 → false 分支 + warning（§2.5）
-            ctx.variables().addWarning("条件求值失败（" + e.getMessage() + "），按 false 分支处理");
-            ctx.emit("NODE_WARNING", "条件求值失败，按 false 分支处理");
-            result = false;
+            throw new NodeFailedException("CONDITION_EVALUATION_FAILED", "条件求值失败", e);
         }
         Map<String, Object> output = new LinkedHashMap<>();
         output.put("result", result);

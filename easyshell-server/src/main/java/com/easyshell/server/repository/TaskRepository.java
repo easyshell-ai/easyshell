@@ -16,6 +16,10 @@ import java.util.Optional;
 @Repository
 public interface TaskRepository extends JpaRepository<Task, String> {
 
+    @Modifying(flushAutomatically = true)
+    @Query("update Task t set t.source = 'workflow' where t.id = :id")
+    int markWorkflowSource(@Param("id") String id);
+
     List<Task> findByCreatedByOrderByCreatedAtDesc(Long createdBy);
 
     List<Task> findAllByOrderByCreatedAtDesc();

@@ -42,6 +42,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -273,5 +274,41 @@ class AiAnalyzeNodeExecutorTest {
         ValidationIssue.Sink ok = new ValidationIssue.Sink();
         executor.validate(node("分析", "", 8000, 60), new WorkflowDefinition(), ok);
         assertThat(ok.hasError()).isFalse();
+    }
+
+    @Test
+    void legacyJsonRequestsMaskInstructionsSchemaInputAndRepair() {
+        when(chatModelFactory.getChatModel((String) null)).thenReturn(chatModel);
+        when(chatModel.call(any(Prompt.class)))
+                .thenReturn(response("invalid token=previoussecret"), response("{\"ok\":true}"));
+        WorkflowNode node = node("password=instructionsecret", "token=inputsecret", 1000, 60);
+        node.getConfig().put("outputMode", "json");
+        node.getConfig().put("jsonSchema", "password=schemasecret");
+        executor.execute(context(node, new VariableStore()));
+        ArgumentCaptor<Prompt> prompts = ArgumentCaptor.forClass(Prompt.class);
+        verify(chatModel, times(2)).call(prompts.capture());
+        for (Prompt prompt : prompts.getAllValues()) {
+            String text = String.join("\n", prompt.getInstructions().stream().map(Message::getText).toList());
+            assertThat(text).contains("***").doesNotContain("instructionsecret", "inputsecret", "schemasecret", "previoussecret");
+        }
+    }
+
+    @Test
+    void strictSchemaFailureDoesNotPublishOutput() {
+        String schema = "{\"type\":\"object\",\"properties\":{\"ok\":{\"type\":\"boolean\"}},\"required\":[\"ok\"],\"additionalProperties\":false}";
+        when(chatModelFactory.getChatModel((String) null)).thenReturn(chatModel);
+        WorkflowNode node = node("password=instructionsecret", "token=inputsecret", 1000, 60);
+        node.getConfig().put("outputMode", "json_schema_v1");
+        node.getConfig().put("jsonSchema", schema);
+        when(chatModel.call(any(Prompt.class))).thenReturn(response("{\"ok\":\"wrong\"}"));
+        VariableStore variables = new VariableStore();
+        assertThatThrownBy(() -> executor.execute(context(node, variables)))
+                .isInstanceOfSatisfying(NodeFailedException.class, e ->
+                        assertThat(e.getCode()).isEqualTo("AI_OUTPUT_INVALID_JSON"));
+        assertThat(variables.nodeOutput("ai")).isNull();
+        ArgumentCaptor<Prompt> prompt = ArgumentCaptor.forClass(Prompt.class);
+        verify(chatModel).call(prompt.capture());
+        String text = String.join("\n", prompt.getValue().getInstructions().stream().map(Message::getText).toList());
+        assertThat(text).contains("***", "additionalProperties").doesNotContain("instructionsecret", "inputsecret");
     }
 }

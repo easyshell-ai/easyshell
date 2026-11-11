@@ -1,6 +1,9 @@
 package com.easyshell.server.repository;
 
 import com.easyshell.server.model.entity.WorkflowVersion;
+import com.easyshell.server.model.entity.Workflow;
+import jakarta.persistence.LockModeType;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -14,6 +17,18 @@ import java.util.Optional;
 
 @Repository
 public interface WorkflowVersionRepository extends JpaRepository<WorkflowVersion, Long> {
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select w from Workflow w where w.id = :id")
+    Optional<Workflow> lockWorkflow(@Param("id") Long id);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select v from WorkflowVersion v where v.workflowId = :workflowId and v.isValid = false order by v.version desc")
+    List<WorkflowVersion> lockDrafts(@Param("workflowId") Long workflowId);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select v from WorkflowVersion v where v.id = :id and v.workflowId = :workflowId")
+    Optional<WorkflowVersion> lockVersion(@Param("id") Long id, @Param("workflowId") Long workflowId);
 
     List<WorkflowVersion> findByWorkflowIdOrderByVersionDesc(Long workflowId);
 
@@ -63,31 +78,18 @@ public interface WorkflowVersionRepository extends JpaRepository<WorkflowVersion
      *
      * @return 1 = 已保存；0 = base_version 不匹配
      */
-    @Modifying(flushAutomatically = true)
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("update WorkflowVersion v set v.definitionJson = :definitionJson, " +
             "v.definitionSha256 = :definitionSha256, v.changelog = :changelog, " +
             "v.baseVersion = v.baseVersion + 1 " +
-            "where v.id = :id and v.baseVersion = :expectedBaseVersion")
+            "where v.id = :id and v.isValid = false and v.baseVersion = :expectedBaseVersion " +
+            "and v.definitionSha256 = :expectedSha256")
     int saveDraftIfBaseVersionMatches(@Param("id") Long versionId,
                                       @Param("definitionJson") String definitionJson,
                                       @Param("definitionSha256") String definitionSha256,
                                       @Param("changelog") String changelog,
-                                      @Param("expectedBaseVersion") int expectedBaseVersion);
-
-    /**
-     * 覆盖保存（409 三选一里的 overwrite）：无条件写定义并推进 baseVersion，
-     * 同时记 {@code WORKFLOW_OVERWRITE} 审计（调用方负责）。
-     *
-     * @return 1 = 已覆盖；0 = 草稿行不存在
-     */
-    @Modifying(flushAutomatically = true)
-    @Query("update WorkflowVersion v set v.definitionJson = :definitionJson, " +
-            "v.definitionSha256 = :definitionSha256, v.changelog = :changelog, " +
-            "v.baseVersion = v.baseVersion + 1 where v.id = :id and v.isValid = false")
-    int overwriteDraft(@Param("id") Long versionId,
-                       @Param("definitionJson") String definitionJson,
-                       @Param("definitionSha256") String definitionSha256,
-                       @Param("changelog") String changelog);
+                                       @Param("expectedBaseVersion") int expectedBaseVersion,
+                                       @Param("expectedSha256") String expectedSha256);
 
     /**
      * 发布：草稿行 is_valid=false -> true，回填 publishedAt/publishedBy/estimatedRisk。
@@ -95,12 +97,26 @@ public interface WorkflowVersionRepository extends JpaRepository<WorkflowVersion
      *
      * @return 1 = 已发布；0 = 行不存在或已发布
      */
-    @Modifying(flushAutomatically = true)
+    @Deprecated
+    default int publishDraftAtomically(Long versionId, LocalDateTime publishedAt, Long publishedBy,
+                                       String estimatedRisk) {
+        throw new UnsupportedOperationException("Publishing requires the validated draft snapshot");
+    }
+
+    /** Publish exactly the snapshot validated by the caller, including its changelog atomically. */
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("update WorkflowVersion v set v.isValid = true, v.publishedAt = :publishedAt, " +
-            "v.publishedBy = :publishedBy, v.estimatedRisk = :estimatedRisk " +
-            "where v.id = :id and v.isValid = false")
-    int publishDraftAtomically(@Param("id") Long versionId,
-                               @Param("publishedAt") LocalDateTime publishedAt,
-                               @Param("publishedBy") Long publishedBy,
-                               @Param("estimatedRisk") String estimatedRisk);
+            "v.publishedBy = :publishedBy, v.estimatedRisk = :estimatedRisk, v.changelog = :changelog, " +
+            "v.definitionJson = :frozenJson, v.definitionSha256 = :frozenSha256 " +
+            "where v.id = :id and v.isValid = false and v.baseVersion = :baseVersion " +
+            "and v.definitionSha256 = :definitionSha256")
+    int publishValidatedDraftAtomically(@Param("id") Long versionId,
+                                @Param("publishedAt") LocalDateTime publishedAt,
+                                @Param("publishedBy") Long publishedBy,
+                                @Param("estimatedRisk") String estimatedRisk,
+                                @Param("changelog") String changelog,
+                                @Param("baseVersion") int baseVersion,
+                                @Param("definitionSha256") String definitionSha256,
+                                 @Param("frozenJson") String frozenJson,
+                                 @Param("frozenSha256") String frozenSha256);
 }

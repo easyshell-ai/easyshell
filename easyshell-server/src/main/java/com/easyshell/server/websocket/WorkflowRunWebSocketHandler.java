@@ -3,10 +3,13 @@ package com.easyshell.server.websocket;
 import com.easyshell.server.config.WebSocketAuthInterceptor;
 import com.easyshell.server.model.entity.Workflow;
 import com.easyshell.server.model.entity.WorkflowRun;
+import com.easyshell.server.repository.UserRepository;
 import com.easyshell.server.repository.WorkflowRepository;
 import com.easyshell.server.repository.WorkflowRunRepository;
 import com.easyshell.server.service.AuditLogService;
 import com.easyshell.server.workflow.engine.WorkflowEvent;
+import com.easyshell.server.workflow.service.WorkflowRunProvenanceService;
+import org.springframework.beans.factory.annotation.Autowired;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
@@ -43,21 +46,27 @@ public class WorkflowRunWebSocketHandler extends TextWebSocketHandler {
 
     /** 与 TaskLogWebSocketHandler / WorkflowAccess 同一套 RBAC 语义 */
     private static final List<String> ADMIN_ROLES = List.of("admin", "super_admin");
+    private static final List<String> VALID_ROLES = List.of("viewer", "operator", "admin", "super_admin");
 
     private final Map<String, CopyOnWriteArrayList<WebSocketSession>> runSessions = new ConcurrentHashMap<>();
 
     private final WorkflowRunRepository runRepository;
+    private final UserRepository userRepository;
     private final WorkflowRepository workflowRepository;
     private final AuditLogService auditLogService;
+    @Autowired
+    private WorkflowRunProvenanceService provenanceService;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper =
             new com.fasterxml.jackson.databind.ObjectMapper();
 
     public WorkflowRunWebSocketHandler(WorkflowRunRepository runRepository,
                                        WorkflowRepository workflowRepository,
-                                       AuditLogService auditLogService) {
+                                       AuditLogService auditLogService,
+                                       UserRepository userRepository) {
         this.runRepository = runRepository;
         this.workflowRepository = workflowRepository;
         this.auditLogService = auditLogService;
+        this.userRepository = userRepository;
     }
 
     @Override
@@ -91,15 +100,23 @@ public class WorkflowRunWebSocketHandler extends TextWebSocketHandler {
      */
     private boolean canAccessRun(Long userId, String role, String runId) {
         try {
+            var user = userRepository.findById(userId).orElse(null);
+            if (user == null || !Integer.valueOf(1).equals(user.getStatus())
+                    || user.getRole() == null || !VALID_ROLES.contains(user.getRole())) {
+                return false;
+            }
             WorkflowRun run = runRepository.findById(runId).orElse(null);
             if (run == null) {
                 return false;
             }
-            if (userId.equals(run.getStartedBy()) || ADMIN_ROLES.contains(role)) {
-                return true;
+            boolean admin = ADMIN_ROLES.contains(role) && ADMIN_ROLES.contains(user.getRole());
+            if (!userId.equals(run.getStartedBy()) && !admin) {
+                Workflow workflow = workflowRepository.findById(run.getWorkflowId()).orElse(null);
+                if (workflow == null || !userId.equals(workflow.getCreatedBy())) {
+                    return false;
+                }
             }
-            Workflow workflow = workflowRepository.findById(run.getWorkflowId()).orElse(null);
-            return workflow != null && userId.equals(workflow.getCreatedBy());
+            return provenanceService.canView(userId, runId);
         } catch (Exception e) {
             log.error("Run ownership check failed for run {}, denying subscription", runId, e);
             return false;
@@ -119,6 +136,7 @@ public class WorkflowRunWebSocketHandler extends TextWebSocketHandler {
     @Override
     protected void handleTextMessage(WebSocketSession session, TextMessage message) throws Exception {
         if ("PING".equalsIgnoreCase(message.getPayload())) {
+            if (!reauthorize(session, extractRunId(session))) return;
             session.sendMessage(new TextMessage("PONG"));
         }
     }
@@ -154,6 +172,7 @@ public class WorkflowRunWebSocketHandler extends TextWebSocketHandler {
             for (WebSocketSession session : sessions) {
                 if (session.isOpen()) {
                     try {
+                        if (!reauthorize(session, event.runId())) continue;
                         session.sendMessage(text);
                     } catch (IOException e) {
                         log.warn("Failed to push workflow event to session: {}", e.getMessage());
@@ -163,6 +182,18 @@ public class WorkflowRunWebSocketHandler extends TextWebSocketHandler {
         } catch (Exception e) {
             log.error("Failed to serialize workflow event", e);
         }
+    }
+
+    private boolean reauthorize(WebSocketSession session, String runId) {
+        Object principal = session.getAttributes().get(WebSocketAuthInterceptor.ATTR_USER_ID);
+        Long userId = principal instanceof Long ? (Long) principal : null;
+        if (userId != null && runId != null && canAccessRun(userId, roleOf(session), runId)) return true;
+        log.warn("Revoked workflow run WebSocket: user {} run {}", userId, runId);
+        auditDenial(userId, runId);
+        var sessions = runId == null ? null : runSessions.get(runId);
+        if (sessions != null) sessions.remove(session);
+        closeQuietly(session, CloseStatus.POLICY_VIOLATION);
+        return false;
     }
 
     private static String roleOf(WebSocketSession session) {

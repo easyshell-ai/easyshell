@@ -24,8 +24,15 @@ public class WorkflowDraftSaveRequest {
     @Size(max = 512)
     private String changelog;
 
-    /** 乐观锁令牌：加载草稿时返回的 base_version；缺省 0（首次保存） */
+    /** 已加载或确认的目标草稿快照；更新时三项均必填。 */
+    private Long draftId;
+
     private Integer baseVersion;
+
+    private String definitionSha256;
+
+    /** 仅在确认不存在草稿时首次创建，必须显式为 true 且 baseVersion 为 0。 */
+    private Boolean expectedAbsent;
 
     /** reject(默认) / overwrite / copy */
     private String onConflict;

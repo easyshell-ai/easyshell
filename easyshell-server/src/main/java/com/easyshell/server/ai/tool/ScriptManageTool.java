@@ -3,7 +3,8 @@ package com.easyshell.server.ai.tool;
 import com.easyshell.server.model.dto.ScriptRequest;
 import com.easyshell.server.model.entity.Script;
 import com.easyshell.server.service.ScriptService;
-import lombok.RequiredArgsConstructor;
+import com.easyshell.server.security.ScriptAccess;
+import com.easyshell.server.common.exception.BusinessException;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
@@ -11,24 +12,38 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 @Component
-@RequiredArgsConstructor
 public class ScriptManageTool {
 
     private final ScriptService scriptService;
 
-    /**
-     * 当前会话的发起用户，由 AiChatService / OrchestratorEngine 在工具回调前注入。
-     * 缺失时拒绝创建：脚本库记录不能落到臆造的用户头上（B1-a）。
-     */
-    private Long currentUserId;
+    private final Long currentUserId;
+    private final ScriptAccess access;
 
-    public void setContext(Long userId, String sourceIp) {
+    @org.springframework.beans.factory.annotation.Autowired
+    public ScriptManageTool(ScriptService scriptService, ScriptAccess access) {
+        this(scriptService, access, null);
+    }
+
+    private ScriptManageTool(ScriptService scriptService, ScriptAccess access, Long userId) {
+        this.scriptService = scriptService;
+        this.access = access;
         this.currentUserId = userId;
+    }
+
+    public ScriptManageTool forUser(Long userId, String sourceIp) {
+        return new ScriptManageTool(scriptService, access, userId);
     }
 
     @Tool(description = "查询脚本库中的所有脚本列表，包括名称、类型、描述等信息")
     public String listScripts() {
-        List<Script> scripts = scriptService.findAll();
+        if (currentUserId == null || currentUserId <= 0) return "错误：无法确定当前用户身份，已拒绝查询。";
+        com.easyshell.server.model.entity.User user;
+        try {
+            user = access.requireActiveUser(currentUserId);
+        } catch (BusinessException e) {
+            return "错误：无法确定当前用户身份，已拒绝查询。";
+        }
+        List<Script> scripts = scriptService.findAll().stream().filter(s -> access.canRead(user, s)).toList();
         if (scripts.isEmpty()) {
             return "脚本库中暂无脚本";
         }
@@ -46,14 +61,18 @@ public class ScriptManageTool {
 
     @Tool(description = "查询指定脚本的详细信息，包括完整的脚本内容")
     public String getScriptDetail(@ToolParam(description = "脚本 ID") Long id) {
-        return scriptService.findById(id)
-                .map(s -> String.format("脚本详情:\n名称: %s\nID: %d\n类型: %s\n描述: %s\n是否公开: %s\n创建时间: %s\n\n脚本内容:\n%s",
+        if (currentUserId == null || currentUserId <= 0) return "错误：无法确定当前用户身份，已拒绝查询。";
+        try {
+            Script s = access.requireRead(currentUserId, id);
+            return String.format("脚本详情:\n名称: %s\nID: %d\n类型: %s\n描述: %s\n是否公开: %s\n创建时间: %s\n\n脚本内容:\n%s",
                         s.getName(), s.getId(), s.getScriptType(),
                         s.getDescription() != null ? s.getDescription() : "无",
                         s.getIsPublic() != null && s.getIsPublic() ? "是" : "否",
                         s.getCreatedAt(),
-                        s.getContent()))
-                .orElse("未找到 ID 为 " + id + " 的脚本");
+                        s.getContent());
+        } catch (BusinessException e) {
+            return "未找到 ID 为 " + id + " 的脚本";
+        }
     }
 
     @Tool(description = "创建一个新的脚本并保存到脚本库中")
@@ -62,7 +81,7 @@ public class ScriptManageTool {
             @ToolParam(description = "脚本内容") String content,
             @ToolParam(description = "脚本描述") String description) {
         try {
-            if (currentUserId == null) {
+            if (currentUserId == null || currentUserId <= 0) {
                 return "错误：无法确定当前用户身份，已拒绝创建脚本。";
             }
             ScriptRequest request = new ScriptRequest();

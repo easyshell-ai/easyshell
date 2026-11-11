@@ -4,6 +4,7 @@ import com.easyshell.server.ai.risk.CommandRiskEngine;
 import com.easyshell.server.ai.security.SensitiveDataFilter;
 import com.easyshell.server.model.entity.Workflow;
 import com.easyshell.server.model.entity.WorkflowRun;
+import com.easyshell.server.model.entity.WorkflowVersion;
 import com.easyshell.server.model.vo.WorkflowTestRunVO;
 import com.easyshell.server.repository.WorkflowRunRepository;
 import com.easyshell.server.repository.WorkflowVersionRepository;
@@ -49,13 +50,17 @@ class WorkflowTestRunServiceTest {
     private WorkflowTestRunService service;
     private WorkflowRun run;
     private Workflow workflow;
+    private WorkflowVersionRepository versionRepository;
 
     @BeforeEach
     void setUp() {
         ObjectMapper objectMapper = new ObjectMapper();
         WorkflowRunRepository runRepository = mock(WorkflowRunRepository.class);
-        WorkflowVersionRepository versionRepository = mock(WorkflowVersionRepository.class);
-        when(versionRepository.findDefinition(1L)).thenReturn(Optional.of(DEFINITION));
+        versionRepository = mock(WorkflowVersionRepository.class);
+        WorkflowVersion version = new WorkflowVersion();
+        version.setIsValid(true);
+        version.setDefinitionJson(DEFINITION);
+        when(versionRepository.findByIdAndWorkflowId(1L, 1L)).thenReturn(Optional.of(version));
 
         service = new WorkflowTestRunService(runRepository, versionRepository,
                 new ExpressionEvaluator(objectMapper), mock(CommandRiskEngine.class),
@@ -71,11 +76,22 @@ class WorkflowTestRunServiceTest {
         run.setInputJson("{\"threshold\":95,\"secret\":\"token=abc123\"}");
 
         workflow = new Workflow();
+        workflow.setId(1L);
         workflow.setName("preview");
     }
 
     private WorkflowTestRunVO test(String nodeKey) {
         return service.testRun(run, workflow, nodeKey, 42L, "tester");
+    }
+
+    @Test
+    void rejectsUnpublishedVersionEvenWhenItContainsAClaimedSnapshot() {
+        WorkflowVersion draft = new WorkflowVersion();
+        draft.setIsValid(false);
+        draft.setDefinitionJson(DEFINITION);
+        when(versionRepository.findByIdAndWorkflowId(1L, 1L)).thenReturn(Optional.of(draft));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> test("begin"))
+                .isInstanceOf(com.easyshell.server.common.exception.BusinessException.class);
     }
 
     @Test
@@ -114,14 +130,24 @@ class WorkflowTestRunServiceTest {
     }
 
     @Test
-    @DisplayName("llm / classifier / code：试运行不调用模型、不执行代码")
+    @DisplayName("llm / classifier：试运行不调用模型")
     void newAiAndCodePreviewsAreSideEffectFree() {
-        for (String nodeKey : new String[]{"llm", "classify", "code"}) {
+        for (String nodeKey : new String[]{"llm", "classify"}) {
             WorkflowTestRunVO result = test(nodeKey);
             assertThat(result.getStatus()).isEqualTo("ok");
             assertThat(result.getNodeType()).isEqualTo(
                     "classify".equals(nodeKey) ? "classifier" : nodeKey);
             assertThat(result.getWarnings()).containsExactly("试运行不会调用模型/执行代码");
         }
+    }
+
+    @Test
+    void codePreviewExplicitlyReportsUnavailableAndNotExecuted() {
+        WorkflowTestRunVO result = test("code");
+        assertThat(result.getNodeType()).isEqualTo("code");
+        assertThat(result.getStatus()).isEqualTo("unavailable");
+        assertThat(result.getWarnings()).containsExactly(
+                "CODE_RUNTIME_UNAVAILABLE: code 节点运行时不可用，试运行未执行代码");
+        assertThat(result.getRiskLevel()).isNull();
     }
 }

@@ -36,7 +36,7 @@ public class ReviewerAgent {
         this.messageSource = messageSource;
     }
 
-    public String review(ExecutionPlan plan, String userMsg) {
+    public String review(ExecutionPlan plan, String userMsg, Long userId, String sourceIp) {
         boolean reviewEnabled = agenticConfigService.getBoolean("ai.review.enabled", true);
         if (!reviewEnabled) {
             log.debug("Review is disabled via config");
@@ -54,7 +54,7 @@ public class ReviewerAgent {
         String reviewPrompt = buildReviewPrompt(plan, userMsg);
 
         try {
-            String result = orchestratorEngine.executeAsSubAgent(reviewer, reviewPrompt, chatModelFactory);
+            String result = orchestratorEngine.executeAsSubAgent(reviewer, reviewPrompt, chatModelFactory, userId, sourceIp);
             log.info("Review completed for plan with {} steps", plan.getSteps().size());
             return result;
         } catch (Exception e) {

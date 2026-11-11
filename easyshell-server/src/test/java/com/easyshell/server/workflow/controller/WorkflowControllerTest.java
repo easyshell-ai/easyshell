@@ -15,8 +15,8 @@ import com.easyshell.server.model.entity.WorkflowRun;
 import com.easyshell.server.model.entity.WorkflowVersion;
 import com.easyshell.server.ai.security.SensitiveDataFilter;
 import com.easyshell.server.model.vo.WorkflowDetailVO;
+import com.easyshell.server.model.vo.WorkflowApprovalVO;
 import com.easyshell.server.model.vo.WorkflowRiskBlockedVO;
-import com.easyshell.server.model.vo.WorkflowRunVO;
 import com.easyshell.server.model.vo.WorkflowTestRunVO;
 import com.easyshell.server.model.vo.WorkflowValidateResultVO;
 import com.easyshell.server.model.vo.WorkflowVersionConflictVO;
@@ -32,6 +32,8 @@ import com.easyshell.server.workflow.service.WorkflowApiPresenter;
 import com.easyshell.server.workflow.service.WorkflowDefinitionService;
 import com.easyshell.server.workflow.service.WorkflowRunService;
 import com.easyshell.server.workflow.service.WorkflowTestRunService;
+import com.easyshell.server.workflow.service.WorkflowCodeSampleService;
+import com.easyshell.server.workflow.service.WorkflowRunProvenanceService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.TextNode;
 import org.junit.jupiter.api.BeforeEach;
@@ -73,7 +75,7 @@ import static org.mockito.Mockito.when;
  * 真正的数据级校验而不是 mock。</p>
  */
 @ExtendWith(MockitoExtension.class)
-@DisplayName("WorkflowController — §6.1 的 17 个端点")
+@DisplayName("WorkflowController — 18 个端点")
 class WorkflowControllerTest {
 
     /** 资源属主 */
@@ -105,6 +107,10 @@ class WorkflowControllerTest {
     private WorkflowApprovalRepository approvalRepository;
     @Mock
     private AuditLogService auditLogService;
+    @Mock
+    private WorkflowCodeSampleService codeSampleService;
+    @Mock
+    private WorkflowRunProvenanceService provenanceService;
 
     private WorkflowController controller;
 
@@ -126,6 +132,7 @@ class WorkflowControllerTest {
                 "POST /{id}/validate",
                 "POST /{id}/publish",
                 "POST /{id}/runs",
+                "POST /{id}/nodes/code/test",
                 "GET /runs/{runId}",
                 "POST /runs/{runId}/cancel",
                 "POST /runs/{runId}/nodes/{nodeKey}/test-run",
@@ -134,7 +141,7 @@ class WorkflowControllerTest {
 
     @ParameterizedTest(name = "[{index}] {0}：非所有者 → 403")
     @MethodSource("pathVariableEndpoints")
-    @DisplayName("13 个路径变量端点：非所有者访问一律 403（C-11 验收硬项）")
+    @DisplayName("14 个路径变量端点：非所有者访问一律 403（C-11 验收硬项）")
     void pathVariableEndpoint_nonOwner_isDenied(String endpoint) {
         assertThatThrownBy(() -> invoke(endpoint, auth(STRANGER, "operator")))
                 .isInstanceOfSatisfying(BusinessException.class,
@@ -144,8 +151,8 @@ class WorkflowControllerTest {
 
     @ParameterizedTest(name = "[{index}] {0}：属主放行")
     @MethodSource("pathVariableEndpoints")
-    @DisplayName("13 个路径变量端点：属主（或 admin）放行，不会 403")
-    void pathVariableEndpoint_owner_isAllowed(String endpoint) {
+    @DisplayName("14 个路径变量端点：属主（或 admin）放行，不会 403")
+    void pathVariableEndpoint_owner_isAllowed(String endpoint) throws Exception {
         // 用 admin 身份：审批端点要求 admin，其余端点 admin 同样放行
         Object result = invoke(endpoint, auth(ADMIN, "admin"));
         assertThat(result).isNotNull();
@@ -161,9 +168,11 @@ class WorkflowControllerTest {
     }
 
     /** 按端点名调用真实 Controller 方法（鉴权在方法内部发生） */
-    private Object invoke(String endpoint, Authentication auth) {
+    private Object invoke(String endpoint, Authentication auth) throws Exception {
         WorkflowDraftSaveRequest draft = new WorkflowDraftSaveRequest();
         draft.setDefinition(new TextNode("{}"));
+        draft.setExpectedAbsent(true);
+        draft.setBaseVersion(0);
         WorkflowValidateRequest validateRequest = new WorkflowValidateRequest();
         validateRequest.setDefinition(new TextNode("{}"));
         return switch (endpoint) {
@@ -177,6 +186,7 @@ class WorkflowControllerTest {
             case "POST /{id}/validate" -> controller.validate(WORKFLOW_ID, validateRequest, auth);
             case "POST /{id}/publish" -> controller.publish(WORKFLOW_ID, null, auth, httpRequest);
             case "POST /{id}/runs" -> controller.triggerRun(WORKFLOW_ID, null, auth);
+            case "POST /{id}/nodes/code/test" -> controller.testCode(WORKFLOW_ID, auth, httpRequest);
             case "GET /runs/{runId}" -> controller.runDetail(RUN_ID, auth);
             case "POST /runs/{runId}/cancel" -> controller.cancelRun(RUN_ID, auth);
             case "POST /runs/{runId}/nodes/{nodeKey}/test-run" ->
@@ -196,16 +206,23 @@ class WorkflowControllerTest {
 
     @BeforeEach
     void setUp() {
+        WorkflowAccess access = new WorkflowAccess(workflowRepository, runRepository, auditLogService);
+        org.springframework.test.util.ReflectionTestUtils.setField(access, "provenanceService", provenanceService);
+        lenient().when(provenanceService.canView(any(), any())).thenReturn(true);
         controller = new WorkflowController(definitionService, runService, testRunService, resumeService,
-                new WorkflowAccess(workflowRepository, runRepository, auditLogService),
+                access,
                 new WorkflowApiPresenter(objectMapper, new SensitiveDataFilter(), workflowRepository,
                         runRepository),
-                runRepository, nodeRunRepository, approvalRepository);
+                runRepository, nodeRunRepository, approvalRepository, codeSampleService, auditLogService);
 
         Workflow workflow = workflowOwnedBy(OWNER);
         WorkflowRun run = runStartedBy(OWNER);
         lenient().when(workflowRepository.findById(WORKFLOW_ID)).thenReturn(Optional.of(workflow));
         lenient().when(runRepository.findById(RUN_ID)).thenReturn(Optional.of(run));
+        WorkflowApproval pending = new WorkflowApproval();
+        pending.setId(5L);
+        pending.setRunId(RUN_ID);
+        lenient().when(approvalRepository.findById(5L)).thenReturn(Optional.of(pending));
         lenient().when(definitionService.saveDraft(eq(WORKFLOW_ID), any(), any(), any(), any()))
                 .thenReturn(draftVersion());
         lenient().when(definitionService.publish(eq(WORKFLOW_ID), any(), any(), any(), any()))
@@ -380,6 +397,7 @@ class WorkflowControllerTest {
         WorkflowDraftSaveRequest request = new WorkflowDraftSaveRequest();
         request.setDefinition(new TextNode("{}"));
         request.setBaseVersion(0);
+        request.setExpectedAbsent(true);
 
         controller.saveDraft(WORKFLOW_ID, request, auth(OWNER, "operator"), httpRequest);
 
@@ -467,8 +485,13 @@ class WorkflowControllerTest {
         published.setIsValid(true);
         when(definitionService.publish(eq(WORKFLOW_ID), any(), eq(OWNER), any(), any())).thenReturn(published);
 
-        assertThat(controller.publish(WORKFLOW_ID, null, auth(OWNER, "operator"), httpRequest)
+        var request = new com.easyshell.server.model.dto.WorkflowPublishRequest();
+        request.setDraftId(VERSION_ID);
+        request.setBaseVersion(0);
+        request.setDefinitionSha256("test-hash");
+        assertThat(controller.publish(WORKFLOW_ID, request, auth(OWNER, "operator"), httpRequest)
                 .getData().getIsValid()).isTrue();
+        verify(definitionService).publish(eq(WORKFLOW_ID), eq(request), eq(OWNER), any(), any());
     }
 
     @Test
@@ -483,9 +506,9 @@ class WorkflowControllerTest {
         request.setIdempotencyKey("idem-1");
         request.setInput(Map.of("env", "prod"));
 
-        WorkflowRunVO run = controller.triggerRun(WORKFLOW_ID, request, auth(OWNER, "operator")).getData();
+        var run = controller.triggerRun(WORKFLOW_ID, request, auth(OWNER, "operator")).getData();
 
-        assertThat(run.getId()).isEqualTo(RUN_ID);
+        assertThat(run.id()).isEqualTo(RUN_ID);
         verify(runService).startRun(eq(WORKFLOW_ID), eq(VERSION_ID), any(), eq(OWNER), eq("idem-1"),
                 eq("manual"));
     }
@@ -566,9 +589,9 @@ class WorkflowControllerTest {
         cancelled.setStatus("cancelled");
         when(runRepository.findById(RUN_ID)).thenReturn(Optional.of(cancelled));
 
-        WorkflowRunVO result = controller.cancelRun(RUN_ID, auth(OWNER, "operator")).getData();
+        var result = controller.cancelRun(RUN_ID, auth(OWNER, "operator")).getData();
 
-        assertThat(result.getStatus()).isEqualTo("cancelled");
+        assertThat(result.status()).isEqualTo("cancelled");
         verify(runService).requestCancel(RUN_ID, OWNER);
     }
 
@@ -663,8 +686,139 @@ class WorkflowControllerTest {
         request.setDecision("approved");
         request.setComment("ok");
 
-        assertThat(controller.decideApproval(5L, request, auth(ADMIN, "admin")).getData().getStatus())
+        approval.setRunId(RUN_ID);
+        assertThat(((WorkflowApprovalVO) controller.decideApproval(5L, request, auth(ADMIN, "admin")).getData()).getStatus())
                 .isEqualTo("approved");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"approved", "rejected"})
+    void superAdminApproval_rejectsAdminAndAllowsSuperAdmin(String decision) {
+        WorkflowApproval approval = new WorkflowApproval();
+        approval.setId(5L);
+        approval.setApproverRole("SUPER_ADMIN");
+        approval.setRunId(RUN_ID);
+        when(approvalRepository.findById(5L)).thenReturn(Optional.of(approval));
+        WorkflowApprovalDecisionRequest request = new WorkflowApprovalDecisionRequest();
+        request.setDecision(decision);
+
+        assertThatThrownBy(() -> controller.decideApproval(5L, request, auth(ADMIN, "admin")))
+                .isInstanceOfSatisfying(BusinessException.class, e -> assertThat(e.getCode()).isEqualTo(403));
+        verify(auditLogService).logSync(eq(ADMIN), eq("user-7"), eq("WORKFLOW_ACCESS_DENIED"),
+                eq("workflow_approval"), eq("5"), eq("审批需要指定的管理员权限"), eq(null), eq("denied"));
+        verifyNoInteractions(resumeService);
+
+        when(resumeService.decide(5L, decision, ADMIN, null)).thenAnswer(call -> {
+            approval.setStatus(decision);
+            return approval;
+        });
+        assertThat(((WorkflowApprovalVO) controller.decideApproval(5L, request, auth(ADMIN, "super_admin")).getData()).getStatus())
+                .isEqualTo(decision);
+    }
+
+    @Test
+    void controlResponsesNeverExposeSnapshotsEvenOnIdempotentReplayWithoutView() {
+        WorkflowRun run = runStartedBy(OWNER);
+        run.setInputJson("{\"private\":\"input-secret\"}");
+        run.setOutputJson("{\"private\":\"output-secret\"}");
+        run.setVariablesJson("{\"private\":\"variables-secret\"}");
+        run.setErrorMessage("error-secret");
+        run.setCurrentNodes("[\"node-secret\"]");
+        when(provenanceService.canView(OWNER, RUN_ID)).thenReturn(false);
+        when(runRepository.findById(RUN_ID)).thenReturn(Optional.of(run));
+        when(runRepository.findVisibleToUser(eq(OWNER), eq(null), eq(null), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(run)));
+        when(runService.startRun(eq(WORKFLOW_ID), eq(VERSION_ID), any(), eq(OWNER), eq("replay"), eq("manual")))
+                .thenReturn(run);
+        var request = new com.easyshell.server.model.dto.WorkflowRunTriggerRequest();
+        request.setIdempotencyKey("replay");
+        Authentication owner = auth(OWNER, "operator");
+        for (Object response : List.of(controller.triggerRun(WORKFLOW_ID, request, owner).getData(),
+                controller.triggerRun(WORKFLOW_ID, request, owner).getData(),
+                controller.runs(null, null, 0, 20, owner).getData().getContent().get(0),
+                controller.cancelRun(RUN_ID, owner).getData())) {
+            assertThat(json(response)).doesNotContain("secret", "input", "output", "variables", "error", "currentNodes");
+        }
+        verify(runService).requestCancel(RUN_ID, OWNER);
+        assertThatThrownBy(() -> controller.runDetail(RUN_ID, owner))
+                .isInstanceOfSatisfying(BusinessException.class, e -> assertThat(e.getCode()).isEqualTo(403));
+        assertThatThrownBy(() -> controller.testRun(RUN_ID, NODE_KEY, owner))
+                .isInstanceOfSatisfying(BusinessException.class, e -> assertThat(e.getCode()).isEqualTo(403));
+        verifyNoInteractions(testRunService);
+    }
+
+    @Test
+    void approvalsWithoutViewAllowOnlyRestrictedReject() {
+        WorkflowApproval approval = new WorkflowApproval();
+        approval.setId(5L);
+        approval.setRunId(RUN_ID);
+        approval.setDetailJson("{\"sensitive\":\"secret\"}");
+        when(approvalRepository.findById(5L)).thenReturn(Optional.of(approval));
+        when(approvalRepository.findByStatusAndExpiresAtAfter(eq("pending"), any())).thenReturn(List.of(approval));
+        when(provenanceService.canView(ADMIN, RUN_ID)).thenReturn(false);
+        Authentication admin = auth(ADMIN, "admin");
+        assertRestricted(controller.pendingApprovals(admin).getData().get(0), "pending");
+        WorkflowApprovalDecisionRequest request = new WorkflowApprovalDecisionRequest();
+        request.setDecision("approved");
+        assertThatThrownBy(() -> controller.decideApproval(5L, request, admin))
+                .isInstanceOfSatisfying(BusinessException.class, e -> assertThat(e.getCode()).isEqualTo(403));
+        verifyNoInteractions(resumeService);
+        request.setDecision("rejected");
+        when(resumeService.decide(5L, "rejected", ADMIN, null)).thenAnswer(call -> {
+            approval.setStatus("rejected");
+            return approval;
+        });
+        assertRestricted(controller.decideApproval(5L, request, admin).getData(), "rejected");
+    }
+
+    @Test
+    void pendingMixedVisibilityAndRolesAreIndependent() {
+        WorkflowApproval hidden = new WorkflowApproval();
+        hidden.setId(5L);
+        hidden.setRunId(RUN_ID);
+        hidden.setTitle("secret-title");
+        hidden.setDetailJson("{\"secret\":\"secret-detail\"}");
+        hidden.setRiskMatches("secret-risk");
+        WorkflowApproval visible = new WorkflowApproval();
+        visible.setId(6L);
+        visible.setRunId("visible");
+        visible.setTitle("visible-title");
+        WorkflowApproval superOnly = new WorkflowApproval();
+        superOnly.setId(7L);
+        superOnly.setRunId("super");
+        superOnly.setApproverRole("SUPER_ADMIN");
+        WorkflowApproval unknown = new WorkflowApproval();
+        unknown.setApproverRole("UNKNOWN");
+        when(approvalRepository.findByStatusAndExpiresAtAfter(eq("pending"), any()))
+                .thenReturn(List.of(hidden, visible, superOnly, unknown));
+        when(provenanceService.canView(ADMIN, RUN_ID)).thenThrow(new IllegalStateException("db"));
+        var results = controller.pendingApprovals(auth(ADMIN, "admin")).getData();
+        assertThat(results).hasSize(2);
+        assertRestricted(results.get(0), "pending");
+        assertThat(json(results.get(0))).doesNotContain("secret", "title", "detail", "risk", "node", "workflow");
+        assertThat(((WorkflowApprovalVO) results.get(1)).getTitle()).isEqualTo("visible-title");
+        assertThat(controller.pendingApprovals(auth(ADMIN, "super_admin")).getData()).hasSize(3);
+    }
+
+    @Test
+    void restrictedRejectionPropagatesAuditFailure() {
+        when(provenanceService.canView(ADMIN, RUN_ID)).thenReturn(false);
+        when(resumeService.decide(5L, "rejected", ADMIN, null)).thenThrow(new IllegalStateException("audit failed"));
+        WorkflowApprovalDecisionRequest request = new WorkflowApprovalDecisionRequest();
+        request.setDecision("rejected");
+        assertThatThrownBy(() -> controller.decideApproval(5L, request, auth(ADMIN, "admin")))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("audit failed");
+    }
+
+    private void assertRestricted(Object value, String status) {
+        var tree = objectMapper.valueToTree(value);
+        var fields = new java.util.ArrayList<String>();
+        tree.fieldNames().forEachRemaining(fields::add);
+        assertThat(fields)
+                .containsExactlyInAnyOrder("id", "status", "expiresAt", "canReject", "canApprove");
+        assertThat(tree.path("status").asText()).isEqualTo(status);
+        assertThat(tree.path("canReject").asBoolean()).isTrue();
+        assertThat(tree.path("canApprove").asBoolean()).isFalse();
     }
 
     // ------------------------------------------------------------------
@@ -678,7 +832,7 @@ class WorkflowControllerTest {
     }
 
     @Test
-    @DisplayName("清单哨兵：17 端点 / 13 路径变量与 §6.1 一致（防未来误加 POST /runs）")
+    @DisplayName("清单哨兵：18 端点 / 14 路径变量（防未来误加 POST /runs）")
     void endpointInventory_matchesDesign() {
         // POST /runs（body 带 workflowId 的重复触发路径）按 N7-d 永久删除，
         // 触发运行的唯一路径是 POST /{id}/runs。这里用映射表把清单钉死。
@@ -694,14 +848,15 @@ class WorkflowControllerTest {
                 Map.entry("POST /{id}/validate", "OPERATOR+"),
                 Map.entry("POST /{id}/publish", "OPERATOR+"),
                 Map.entry("POST /{id}/runs", "OPERATOR+"),
+                Map.entry("POST /{id}/nodes/code/test", "OPERATOR+"),
                 Map.entry("GET /runs", "认证"),
                 Map.entry("GET /runs/{runId}", "认证"),
                 Map.entry("POST /runs/{runId}/cancel", "OPERATOR+"),
                 Map.entry("POST /runs/{runId}/nodes/{nodeKey}/test-run", "OPERATOR+"),
                 Map.entry("GET /approvals/pending", "ADMIN+"),
                 Map.entry("POST /approvals/{approvalId}/decision", "ADMIN+"));
-        assertThat(expected).hasSize(17);
-        assertThat(pathVariableEndpoints()).hasSize(13);
+        assertThat(expected).hasSize(18);
+        assertThat(pathVariableEndpoints()).hasSize(14);
     }
 
     @Test
@@ -712,6 +867,16 @@ class WorkflowControllerTest {
         verify(definitionService, org.mockito.Mockito.never()).listVersions(any());
         verify(definitionService, org.mockito.Mockito.never()).updateMeta(any(), any(), any(), any(), any());
         verify(runService, org.mockito.Mockito.never()).startRun(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void codeSample_doesNotStartOrAdvanceRunsAndAuditsWithoutPayload() throws Exception {
+        when(codeSampleService.execute(any())).thenReturn(Map.of("value", 3));
+        assertThat(controller.testCode(WORKFLOW_ID, auth(OWNER, "operator"), httpRequest).getData())
+                .isEqualTo(Map.of("value", 3));
+        verifyNoInteractions(runService, testRunService, resumeService, nodeRunRepository, approvalRepository);
+        verify(auditLogService).logSync(eq(OWNER), eq("user-42"), eq("WORKFLOW_CODE_SAMPLE_TEST"),
+                eq("workflow"), eq("1"), eq(null), any(), eq("attempted"));
     }
 
     @Test

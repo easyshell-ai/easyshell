@@ -4,7 +4,8 @@ import com.easyshell.server.model.entity.Agent;
 import com.easyshell.server.model.entity.MetricSnapshot;
 import com.easyshell.server.repository.AgentRepository;
 import com.easyshell.server.repository.MetricSnapshotRepository;
-import lombok.RequiredArgsConstructor;
+import com.easyshell.server.service.HostAclService;
+import com.easyshell.server.repository.UserRepository;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
@@ -13,15 +14,36 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 @Component
-@RequiredArgsConstructor
 public class MonitoringTool {
 
     private final AgentRepository agentRepository;
     private final MetricSnapshotRepository metricSnapshotRepository;
 
+    private final HostAclService hostAclService;
+    private final UserRepository users;
+    private Long currentUserId;
+
+    public MonitoringTool(AgentRepository agentRepository, MetricSnapshotRepository metricSnapshotRepository, HostAclService hostAclService, UserRepository users) {
+        this.agentRepository = agentRepository;
+        this.metricSnapshotRepository = metricSnapshotRepository;
+        this.hostAclService = hostAclService;
+        this.users = users;
+    }
+
+    public MonitoringTool forUser(Long userId, String sourceIp) {
+        MonitoringTool bound = new MonitoringTool(agentRepository, metricSnapshotRepository, hostAclService, users);
+        bound.currentUserId = userId;
+        return bound;
+    }
+
+    private boolean canView(String agentId) {
+        return currentUserId != null && currentUserId > 0 && hostAclService.allowed(currentUserId, agentId, HostAclService.Permission.VIEW);
+    }
+
     @Tool(description = "获取平台总览统计数据，包括主机总数、在线/离线数量、平均 CPU 和内存使用率等")
     public String getDashboardStats() {
-        List<Agent> allAgents = agentRepository.findAll();
+        if (currentUserId == null || currentUserId <= 0) return "错误：无法确定当前用户身份，已拒绝查询。";
+        List<Agent> allAgents = agentRepository.findAll().stream().filter(a -> canView(a.getId())).toList();
         if (allAgents.isEmpty()) {
             return "当前没有注册任何主机";
         }
@@ -91,6 +113,7 @@ public class MonitoringTool {
     public String getHostMetrics(
             @ToolParam(description = "目标主机的 Agent ID。必须是真实存在的主机 ID，如果上下文中用户已指定目标主机则直接使用其 ID，否则请先调用 listHosts 工具获取") String agentId,
             @ToolParam(description = "查询最近多少小时的数据，默认 1 小时") int hours) {
+        if (!canView(agentId)) return "错误：无权查看该主机。";
         final int h = (hours <= 0) ? 1 : Math.min(hours, 168);
 
         LocalDateTime end = LocalDateTime.now();

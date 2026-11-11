@@ -203,24 +203,13 @@ public class HostProvisionServiceImpl implements HostProvisionService {
     @Override
     @Transactional
     public HostCredentialVO uninstall(String agentId) {
-        Agent agent = agentRepository.findById(agentId)
-                .orElseThrow(() -> new BusinessException(404, "Agent不存在: " + agentId));
-
-        HostCredential credential = credentialRepository.findByIp(agent.getIp())
-                .orElseThrow(() -> new BusinessException(404,
-                        "未找到该主机的SSH凭证，无法远程卸载。请使用删除功能直接从数据库移除。"));
-
-        credential.setProvisionStatus("UNINSTALLING");
-        credential.setProvisionLog("");
-        credential.setErrorMessage(null);
-        credentialRepository.save(credential);
-        return toVO(credential);
+        throw new BusinessException(409, "远程卸载已暂停：无法安全绑定主机身份代次。请使用删除功能。");
     }
 
     @Async
     @Override
     public void startUninstallAsync(Long credentialId) {
-        executeUninstall(credentialId);
+        throw new IllegalStateException("Remote uninstall disabled: no generation-bound operation");
     }
 
     private void executeUninstall(Long credentialId) {
@@ -683,57 +672,6 @@ public class HostProvisionServiceImpl implements HostProvisionService {
     }
 
     /**
-     * Build a HostCredentialVO that merges Agent data when available.
-     */
-    private HostCredentialVO toUnifiedVO(HostCredential entity, Agent agent) {
-        // hostName 与 hostname 在 Jackson 中是两个 JavaBean 属性；两者都填同一个显示名，
-        // 才能同时满足旧前端（hostName）与新统一列表（hostname）。优先 agent.hostname。
-        String displayName = agent != null && agent.getHostname() != null
-                && !agent.getHostname().isBlank()
-                ? agent.getHostname()
-                : entity.getHostName();
-        if (displayName == null || displayName.isBlank()) {
-            displayName = entity.getIp();
-        }
-        HostCredentialVO.HostCredentialVOBuilder builder = HostCredentialVO.builder()
-                .id(entity.getId())
-                .ip(entity.getIp())
-                .sshPort(entity.getSshPort())
-                .sshUsername(entity.getSshUsername())
-                .authType(entity.getAuthType())
-                .hostName(displayName)
-                .hostname(displayName)
-                .agentId(entity.getAgentId())
-                .provisionStatus(entity.getProvisionStatus())
-                .provisionLog(entity.getProvisionLog())
-                .errorMessage(entity.getErrorMessage())
-                .createdAt(entity.getCreatedAt() != null ? entity.getCreatedAt().format(FMT) : null)
-                .updatedAt(entity.getUpdatedAt() != null ? entity.getUpdatedAt().format(FMT) : null);
-
-        if (agent != null) {
-            // Override agentId from matched agent when credential doesn't have it
-            if (entity.getAgentId() == null) {
-                builder.agentId(agent.getId());
-            }
-            builder.os(agent.getOs())
-                    .arch(agent.getArch())
-                    .kernel(agent.getKernel())
-                    .cpuModel(agent.getCpuModel())
-                    .cpuCores(agent.getCpuCores())
-                    .memTotal(agent.getMemTotal())
-                    .agentVersion(agent.getAgentVersion())
-                    .agentStatus(agent.getStatus())
-                    .lastHeartbeat(agent.getLastHeartbeat() != null ? agent.getLastHeartbeat().format(FMT) : null)
-                    .cpuUsage(agent.getCpuUsage())
-                    .memUsage(agent.getMemUsage())
-                    .diskUsage(agent.getDiskUsage())
-                    .registeredAt(agent.getRegisteredAt() != null ? agent.getRegisteredAt().format(FMT) : null);
-        }
-
-        return builder.build();
-    }
-
-    /**
      * Create SSH session supporting both password and key authentication.
      */
     private Session createSshSession(JSch jsch, HostCredential credential) throws Exception {
@@ -765,62 +703,9 @@ public class HostProvisionServiceImpl implements HostProvisionService {
 
     @Override
     public List<HostCredentialVO> listUnified() {
-        List<HostCredential> credentials = credentialRepository.findAllByOrderByCreatedAtDesc();
-        // Build agent lookup map by IP
-        List<Agent> agents = agentRepository.findAll();
-        Map<String, Agent> agentByIp = new HashMap<>();
-        Map<String, Agent> agentById = new HashMap<>();
-        for (Agent agent : agents) {
-            if (agent.getIp() != null) agentByIp.put(agent.getIp(), agent);
-            agentById.put(agent.getId(), agent);
-        }
-
-        // Track which agent IPs are covered by credentials
-        Set<String> coveredIps = new HashSet<>();
-
-        List<HostCredentialVO> result = new ArrayList<>();
-        for (HostCredential cred : credentials) {
-            Agent agent = null;
-            if (cred.getAgentId() != null) {
-                agent = agentById.get(cred.getAgentId());
-            }
-            if (agent == null && cred.getIp() != null) {
-                agent = agentByIp.get(cred.getIp());
-            }
-            result.add(toUnifiedVO(cred, agent));
-            coveredIps.add(cred.getIp());
-        }
-
-        // Add agents that have no corresponding credential (legacy agents registered before this feature)
-        for (Agent agent : agents) {
-            if (agent.getIp() != null && !coveredIps.contains(agent.getIp())) {
-                String displayName = agent.getHostname() == null || agent.getHostname().isBlank()
-                        ? agent.getIp() : agent.getHostname();
-                HostCredentialVO vo = HostCredentialVO.builder()
-                        .ip(agent.getIp())
-                        .agentId(agent.getId())
-                        .provisionStatus("SUCCESS")
-                        .hostName(displayName)
-                        .hostname(displayName)
-                        .os(agent.getOs())
-                        .arch(agent.getArch())
-                        .kernel(agent.getKernel())
-                        .cpuModel(agent.getCpuModel())
-                        .cpuCores(agent.getCpuCores())
-                        .memTotal(agent.getMemTotal())
-                        .agentVersion(agent.getAgentVersion())
-                        .agentStatus(agent.getStatus())
-                        .lastHeartbeat(agent.getLastHeartbeat() != null ? agent.getLastHeartbeat().format(FMT) : null)
-                        .cpuUsage(agent.getCpuUsage())
-                        .memUsage(agent.getMemUsage())
-                        .diskUsage(agent.getDiskUsage())
-                        .registeredAt(agent.getRegisteredAt() != null ? agent.getRegisteredAt().format(FMT) : null)
-                        .build();
-                result.add(vo);
-            }
-        }
-
-        return result;
+        // Historical credentials have neither an owner nor a generation-bound agent link.
+        // Even an agent ID can refer to a different incarnation; IP is not an identity.
+        throw new BusinessException(503, "Unified host list unavailable: credential ownership and agent generation cannot be verified");
     }
 
     @Override

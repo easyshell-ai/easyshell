@@ -26,6 +26,7 @@ import com.easyshell.server.model.entity.Agent;
 import com.easyshell.server.repository.AgentRepository;
 import com.easyshell.server.common.exception.BusinessException;
 import com.easyshell.server.service.AuditLogService;
+import com.easyshell.server.service.HostAclService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -67,6 +68,7 @@ public class AiChatService {
     private final AiQuotaService quotaService;
     private final AuditLogService auditLogService;
     private final AgentRepository agentRepository;
+    private final HostAclService hostAclService;
     private final OrchestratorEngine orchestratorEngine;
     private final AgenticConfigService agenticConfigService;
     private final TokenEstimator tokenEstimator;
@@ -76,6 +78,8 @@ public class AiChatService {
     private static final DateTimeFormatter FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     public Flux<AgentEvent> chatStream(AiChatRequest request, Long userId, String sourceIp) {
+        if (userId == null || userId <= 0) throw new BusinessException(403, "无法确定当前用户身份");
+        requireTargetAccess(request.getTargetAgentIds(), userId);
         quotaService.checkAndIncrement(userId, "chat");
 
         String filteredMessage = sensitiveDataFilter.filter(request.getMessage());
@@ -161,12 +165,9 @@ public class AiChatService {
     }
 
     public AiChatResponseVO chat(AiChatRequest request, Long userId, String sourceIp) {
+        if (userId == null || userId <= 0) throw new BusinessException(403, "无法确定当前用户身份");
+        requireTargetAccess(request.getTargetAgentIds(), userId);
         quotaService.checkAndIncrement(userId, "chat");
-
-        scriptExecuteTool.setContext(userId, sourceIp);
-        softwareDetectTool.setContext(userId, sourceIp);
-        taskManageTool.setContext(userId, sourceIp);
-        scriptManageTool.setContext(userId, sourceIp);
 
         final String sid;
         AiChatSession session;
@@ -210,7 +211,7 @@ public class AiChatService {
         }
 
         boolean enableTools = request.getEnableTools() == null || request.getEnableTools();
-        Object[] tools = enableTools ? getAllTools() : new Object[0];
+        Object[] tools = enableTools ? getAllTools(userId, sourceIp) : new Object[0];
 
         ChatClient.Builder clientBuilder = ChatClient.builder(chatModel)
                 .defaultSystem(SystemPrompts.OPS_ASSISTANT);
@@ -243,13 +244,21 @@ public class AiChatService {
                 .build();
     }
 
-    private Object[] getAllTools() {
+    private Object[] getAllTools(Long userId, String sourceIp) {
         return new Object[]{
-                hostListTool, hostTagTool, scriptExecuteTool, softwareDetectTool,
-                taskManageTool, scriptManageTool, clusterManageTool,
-                monitoringTool, auditQueryTool, scheduledTaskTool, subAgentTool,
-                delegateTaskTool, getTaskResultTool
+                hostListTool.forUser(userId, sourceIp), hostTagTool.forUser(userId, sourceIp), scriptExecuteTool.forUser(userId, sourceIp), softwareDetectTool.forUser(userId, sourceIp),
+                taskManageTool.forUser(userId, sourceIp), scriptManageTool.forUser(userId, sourceIp), clusterManageTool.forUser(userId, sourceIp),
+                monitoringTool.forUser(userId, sourceIp), auditQueryTool.forUser(userId, sourceIp), scheduledTaskTool.forUser(userId, sourceIp), subAgentTool,
+                delegateTaskTool.forUser(userId, sourceIp), getTaskResultTool.forUser(userId, sourceIp)
         };
+    }
+
+    private void requireTargetAccess(List<String> ids, Long userId) {
+        if (ids == null) return;
+        for (String id : ids) {
+            if (!hostAclService.allowed(userId, id, HostAclService.Permission.VIEW))
+                throw new BusinessException(403, "无权访问目标主机");
+        }
     }
 
     public List<AiChatSessionVO> listSessions(Long userId) {
@@ -471,15 +480,17 @@ public class AiChatService {
         }
     }
 
-    public int triggerAllSessionSummarization() {
-        List<AiChatSession> allSessions = sessionRepository.findAll();
+    public int triggerAllSessionSummarization(Long userId) {
+        if (userId == null || userId <= 0) throw new BusinessException(403, "无法确定当前用户身份");
+        List<AiChatSession> userSessions = sessionRepository.findByUserIdOrderByUpdatedAtDesc(userId);
         int triggered = 0;
-        for (AiChatSession s : allSessions) {
+        for (AiChatSession s : userSessions) {
+            if (!userId.equals(s.getUserId())) continue;
             if (Boolean.TRUE.equals(s.getSummaryGenerated())) continue;
             if (s.getMessageCount() != null && s.getMessageCount() >= 3) {
                 log.info("[Memory] Manual trigger: summarizing session {} (user={}, msgCount={})",
                         s.getId(), s.getUserId(), s.getMessageCount());
-                sessionSummarizer.summarizeSession(s.getId(), s.getUserId());
+                sessionSummarizer.summarizeSession(s.getId(), userId);
                 triggered++;
             }
         }

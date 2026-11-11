@@ -142,6 +142,53 @@ class ClassifierNodeExecutorTest {
     }
 
     @Test
+    void masksInstructionsAndClassDescriptionsInModelRequest() {
+        when(chatModel.call(any(Prompt.class))).thenReturn(response("{\"class\":\"disk\",\"reason\":\"ok\"}"));
+        WorkflowNode node = node();
+        node.getConfig().put("instructions", "password=instructionsecret");
+        node.getConfig().put("classes", List.of(Map.of("name", "disk", "description", "token=descriptionsecret")));
+        VariableStore variables = new VariableStore();
+        variables.putNodeOutput("up", null, "password=inputsecret");
+        assertThat(executor.execute(context(node, variables))).isEqualTo(NodeOutcome.SUCCEEDED);
+        ArgumentCaptor<Prompt> prompt = ArgumentCaptor.forClass(Prompt.class);
+        verify(chatModel).call(prompt.capture());
+        String text = String.join("\n", prompt.getValue().getInstructions().stream().map(Message::getText).toList());
+        assertThat(text).contains("disk", "***").doesNotContain("instructionsecret", "descriptionsecret", "inputsecret");
+    }
+
+    @Test
+    void jsonInputAndRawOutputAreMaskedRecursively() throws Exception {
+        when(chatModel.call(any(Prompt.class))).thenReturn(response(
+                "{\"class\":\"disk\",\"reason\":\"ok\",\"nested\":[{\"password\":\"tiny\",\"sk-abcdefghijklmnopqrst\":\"value\"}]}"));
+        VariableStore variables = new VariableStore();
+        variables.putNodeOutput("up", null, "{\"password\":\"short\",\"nested\":[{\"token\":\"abc\"}]}");
+        executor.execute(context(node(), variables));
+        Map<?, ?> output = (Map<?, ?>) variables.nodeOutput("classify").value();
+        assertThat(output.get("class")).isEqualTo("disk");
+        assertThat(output.get("reason")).isEqualTo("ok");
+        String raw = (String) output.get("raw");
+        assertThat(raw).doesNotContain("tiny", "abcdefghijklmnopqrst");
+        assertThat(new ObjectMapper().readTree(raw).get("nested").get(0).get("password").asText()).isEqualTo("***");
+        ArgumentCaptor<Prompt> prompt = ArgumentCaptor.forClass(Prompt.class);
+        verify(chatModel).call(prompt.capture());
+        assertThat(prompt.getValue().getInstructions().toString()).doesNotContain("short", "abc");
+    }
+
+    @Test
+    void conflictingMaskedKeysFailWithoutEchoingModelOutput() {
+        when(chatModel.call(any(Prompt.class))).thenReturn(response(
+                "{\"class\":\"disk\",\"sk-abcdefghijklmnopqrst\":1,\"sk-abcdefghijklmnopqrstu\":2}"));
+        VariableStore variables = new VariableStore();
+        variables.putNodeOutput("up", null, "input");
+        assertThatThrownBy(() -> executor.execute(context(node(), variables)))
+                .isInstanceOfSatisfying(NodeFailedException.class, e -> {
+                    assertThat(e.getCode()).isEqualTo("AI_CLASSIFY_INVALID");
+                    assertThat(e.getMessage()).doesNotContain("abcdefghijkl");
+                });
+        assertThat(variables.nodeOutput("classify")).isNull();
+    }
+
+    @Test
     @DisplayName("class 不在配置类别：AI_CLASSIFY_INVALID（fail-closed，不产出输出）")
     void unknownClassFailsClosed() {
         when(chatModel.call(any(Prompt.class)))

@@ -6,6 +6,8 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import org.springframework.data.jpa.repository.Lock;
+import jakarta.persistence.LockModeType;
 
 import java.time.LocalDateTime;
 import java.util.Collection;
@@ -21,12 +23,30 @@ public interface WorkflowNodeRunRepository extends JpaRepository<WorkflowNodeRun
 
     List<WorkflowNodeRun> findByTaskId(String taskId);
 
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select n from WorkflowNodeRun n where n.id = :id and n.runId = :runId " +
+            "and n.nodeKey = :nodeKey and n.attempt = :attempt and n.status = 'running'")
+    Optional<WorkflowNodeRun> lockRunningAttempt(@Param("id") String id, @Param("runId") String runId,
+                                                @Param("nodeKey") String nodeKey, @Param("attempt") Integer attempt);
+
+    @Modifying(flushAutomatically = true)
+    @Query("update WorkflowNodeRun n set n.taskId = :taskId where n.id = :id and n.status = 'running' and n.taskId is null")
+    int bindTask(@Param("id") String id, @Param("taskId") String taskId);
+
     Optional<WorkflowNodeRun> findByRunIdAndNodeKeyAndAttempt(String runId, String nodeKey, Integer attempt);
+
+    Optional<WorkflowNodeRun> findFirstByRunIdAndNodeKeyOrderByAttemptDesc(String runId, String nodeKey);
 
     /**
      * waiting 集合从 node_run 派生（MF-9：run 级不落 waiting_node_key 字段）。
      */
     List<WorkflowNodeRun> findByRunIdAndStatus(String runId, String status);
+
+    /** Bounded discovery only; the engine must revalidate ownership under the run lock. */
+    @Query("select distinct n.runId from WorkflowNodeRun n where n.status = 'waiting' " +
+            "and (:after is null or n.runId > :after) order by n.runId")
+    List<String> findWaitingRunIdsAfter(@Param("after") String after,
+                                      org.springframework.data.domain.Pageable pageable);
 
     List<WorkflowNodeRun> findByRunIdAndStatusIn(String runId, Collection<String> statuses);
 
@@ -47,21 +67,27 @@ public interface WorkflowNodeRunRepository extends JpaRepository<WorkflowNodeRun
      */
     @Modifying(flushAutomatically = true)
     @Query("update WorkflowNodeRun n set n.status = 'failed', n.errorMessage = :reason, " +
-            "n.finishedAt = :finishedAt where n.runId = :runId and n.nodeKey = :nodeKey and n.attempt = :attempt")
+            "n.finishedAt = :finishedAt where n.runId = :runId and n.nodeKey = :nodeKey and n.attempt = :attempt and n.status = 'running'")
     int markFailedIfPresent(@Param("runId") String runId,
                             @Param("nodeKey") String nodeKey,
                             @Param("attempt") int attempt,
                             @Param("reason") String reason,
                             @Param("finishedAt") LocalDateTime finishedAt);
 
-    /**
-     * 审批唤醒：waiting -> running（§3.8 resume 第二步）。
-     *
-     * @return 受影响行数：本 run 下被唤醒的 waiting 节点数
-     */
+    /** 仅唤醒指定 attempt，且在更新时重新验证其审批绑定及决策。 */
     @Modifying(flushAutomatically = true)
-    @Query("update WorkflowNodeRun n set n.status = 'running' where n.runId = :runId and n.status = 'waiting'")
-    int resumeWaitingNodes(@Param("runId") String runId);
+    @Query(value = "update workflow_node_run n set status = 'running' where n.id = :id " +
+            "and n.run_id = :runId and n.status = 'waiting' and n.approval_id = :approvalId " +
+            // GROUP BY prevents MySQL from merging the derived table back into the UPDATE target (1093).
+            "and not exists (select other.id from (select id, run_id, node_key, attempt, status " +
+            "from workflow_node_run where run_id = :runId group by id, run_id, node_key, attempt, status) other where other.run_id = n.run_id " +
+            "and other.node_key = n.node_key and other.id <> n.id " +
+            "and (other.status = 'waiting' or other.attempt > n.attempt)) " +
+            "and exists (select a.id from workflow_approval a where a.id = n.approval_id " +
+            "and a.run_id = n.run_id and a.node_key = n.node_key and a.node_type = n.node_type " +
+            "and a.status in ('approved', 'rejected', 'timeout', 'cancelled'))", nativeQuery = true)
+    int resumeWaitingAttempt(@Param("id") String id, @Param("runId") String runId,
+                             @Param("approvalId") Long approvalId);
 
     /**
      * 取消传播（§3.10）：未开始与等待中的节点批量置 cancelled(reason)。
@@ -78,6 +104,29 @@ public interface WorkflowNodeRunRepository extends JpaRepository<WorkflowNodeRun
      * 看门狗：按状态扫 attempt 行（僵尸/超时 attempt 的兜底判定）。
      */
     List<WorkflowNodeRun> findByStatus(String status);
+
+    /** 迟到或看门狗收尾只更新收尾字段，保留已持久化的审批、任务及其他执行记录。 */
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("update WorkflowNodeRun n set n.status = :status, " +
+            "n.inputJson = coalesce(n.inputJson, :inputJson), n.taskId = coalesce(n.taskId, :taskId), " +
+            "n.errorMessage = :errorMessage, n.finishedAt = :finishedAt, n.durationMs = :durationMs " +
+            "where n.id = :id and n.status = 'running'")
+    int closeStaleAttempt(@Param("id") String id, @Param("status") String status,
+                          @Param("inputJson") String inputJson, @Param("taskId") String taskId,
+                          @Param("errorMessage") String errorMessage,
+                           @Param("finishedAt") LocalDateTime finishedAt, @Param("durationMs") Long durationMs);
+
+    /** Resume dispatch rejection: close only the exact claimed running attempt. */
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("update WorkflowNodeRun n set n.status = 'cancelled', n.errorMessage = :errorMessage, " +
+            "n.finishedAt = :finishedAt, n.durationMs = :durationMs " +
+            "where n.id = :id and n.runId = :runId and n.nodeKey = :nodeKey " +
+            "and n.attempt = :attempt and n.status = 'running'")
+    int closeResumeAbortedAttempt(@Param("id") String id, @Param("runId") String runId,
+                                  @Param("nodeKey") String nodeKey, @Param("attempt") Integer attempt,
+                                  @Param("errorMessage") String errorMessage,
+                                  @Param("finishedAt") LocalDateTime finishedAt,
+                                  @Param("durationMs") Long durationMs);
 
     /**
      * finishAttempt（§3.2.2 第二类事务边界）：attempt 行的终态写入。
@@ -99,8 +148,9 @@ public interface WorkflowNodeRunRepository extends JpaRepository<WorkflowNodeRun
             "n.outputJson = :outputJson, " +
             "n.outputSha256 = :outputSha256, n.previewSha256 = :previewSha256, n.rawParams = :rawParams, " +
             "n.artifactIds = :artifactIds, n.errorMessage = :errorMessage, " +
-            "n.warningMessage = :warningMessage, n.agentVersions = :agentVersions, n.taskId = :taskId, " +
-            "n.approvalId = :approvalId, n.cancelDelivered = :cancelDelivered, " +
+            "n.warningMessage = :warningMessage, n.agentVersions = :agentVersions, n.taskId = coalesce(n.taskId, :taskId), " +
+            "n.approvalId = case when :preserveApprovalBinding = true then n.approvalId else :approvalId end, " +
+            "n.cancelDelivered = :cancelDelivered, " +
             "n.finishedAt = :finishedAt, n.durationMs = :durationMs " +
             "where n.id = :id and n.status = 'running'")
     int finishAttemptAtomically(@Param("id") String nodeRunId,
@@ -116,17 +166,28 @@ public interface WorkflowNodeRunRepository extends JpaRepository<WorkflowNodeRun
                                 @Param("agentVersions") String agentVersions,
                                 @Param("taskId") String taskId,
                                 @Param("approvalId") Long approvalId,
+                                @Param("preserveApprovalBinding") boolean preserveApprovalBinding,
                                 @Param("cancelDelivered") boolean cancelDelivered,
                                 @Param("finishedAt") LocalDateTime finishedAt,
                                 @Param("durationMs") Long durationMs);
 
-    /**
-     * 挂起（§3.8）：attempt 行 running -> waiting，回填 approvalId。
-     *
-     * @return 1 = 已挂起；0 = 行不存在或已不是 running（被取消/超时抢先）
-     */
+    /** 仅挂起尚未绑定任务或审批的指定 script-exec attempt。 */
     @Modifying(flushAutomatically = true)
     @Query("update WorkflowNodeRun n set n.status = 'waiting', n.approvalId = :approvalId " +
-            "where n.id = :id and n.status = 'running'")
-    int suspendAttemptAtomically(@Param("id") String nodeRunId, @Param("approvalId") Long approvalId);
+            "where n.id = :id and n.runId = :runId and n.nodeKey = :nodeKey " +
+            "and n.attempt = :attempt and n.nodeType = 'script-exec' and n.status = 'running' " +
+            "and n.taskId is null and n.approvalId is null")
+    int suspendDispatchAttempt(@Param("id") String id, @Param("runId") String runId,
+                               @Param("nodeKey") String nodeKey, @Param("attempt") int attempt,
+                               @Param("approvalId") Long approvalId);
+
+    /** 普通审批专用：只绑定尚未产生副作用的指定 running attempt。 */
+    @Modifying(flushAutomatically = true)
+    @Query("update WorkflowNodeRun n set n.status = 'waiting', n.approvalId = :approvalId " +
+            "where n.id = :id and n.runId = :runId and n.nodeKey = :nodeKey " +
+            "and n.attempt = :attempt and n.nodeType = 'approval' and n.status = 'running' " +
+            "and n.taskId is null and n.approvalId is null")
+    int suspendApprovalAttempt(@Param("id") String id, @Param("runId") String runId,
+                               @Param("nodeKey") String nodeKey, @Param("attempt") int attempt,
+                               @Param("approvalId") Long approvalId);
 }

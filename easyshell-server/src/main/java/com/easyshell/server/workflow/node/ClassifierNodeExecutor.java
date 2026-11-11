@@ -164,7 +164,6 @@ public class ClassifierNodeExecutor implements NodeExecutor {
         }
 
         String rawText = raw == null ? "" : raw;
-        String maskedRaw = sensitiveDataFilter.filter(rawText);
         Object parsed;
         try {
             // 先解析原文再脱敏：掩码不应改变模型输出的 JSON 结构
@@ -183,11 +182,20 @@ public class ClassifierNodeExecutor implements NodeExecutor {
                     "分类器返回的 class 不在配置类别中（fail-closed）");
         }
         Object rawReason = map.get("reason");
-        String reason = rawReason == null ? "" : String.valueOf(rawReason);
+        String reason;
+
+        String maskedRaw;
+        try {
+            maskedRaw = objectMapper.writeValueAsString(AiStructuredOutput.maskJson(parsed, sensitiveDataFilter));
+            Object safeReason = AiStructuredOutput.maskJson(rawReason, sensitiveDataFilter);
+            reason = safeReason == null ? "" : String.valueOf(safeReason);
+        } catch (Exception e) {
+            throw new NodeFailedException("AI_CLASSIFY_INVALID", "分类器输出无法安全处理（fail-closed）");
+        }
 
         Map<String, Object> output = new LinkedHashMap<>();
         output.put("class", selected);
-        output.put("reason", sensitiveDataFilter.filter(reason));
+        output.put("reason", reason);
         output.put("raw", maskedRaw);
         ctx.variables().putNodeOutput(node.getKey(), node.getOutputVar(), output);
         return NodeOutcome.SUCCEEDED;
@@ -195,11 +203,11 @@ public class ClassifierNodeExecutor implements NodeExecutor {
 
     private String buildSystemPrompt(String instructions, List<ClassSpec> classes) {
         StringBuilder sb = new StringBuilder();
-        sb.append("你是问题分类器。\n").append(instructions).append("\n\n可选类别：\n");
+        sb.append("你是问题分类器。\n").append(sensitiveDataFilter.filter(instructions)).append("\n\n可选类别：\n");
         for (ClassSpec spec : classes) {
-            sb.append("- ").append(spec.name());
+            sb.append("- ").append(sensitiveDataFilter.filter(spec.name()));
             if (spec.description() != null && !spec.description().isBlank()) {
-                sb.append(": ").append(spec.description());
+                sb.append(": ").append(sensitiveDataFilter.filter(spec.description()));
             }
             sb.append('\n');
         }

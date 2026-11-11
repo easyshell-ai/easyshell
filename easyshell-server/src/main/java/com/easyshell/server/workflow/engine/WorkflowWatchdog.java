@@ -18,6 +18,8 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -30,7 +32,7 @@ import java.util.Optional;
  *
  * <p>扫描项：① run 级超时（{@code started_at + timeout < now}，默认 3600s）；
  * ② 审批超时（{@code expires_at} 到点，按 onTimeout 语义由 resume 收尾）；
- * ③ 节点 attempt 超时（线程池线程死掉后没人收尾的 running 行，兜底置 timeout 再驱动）。
+ * ③ 节点 attempt 超时（兜底置 timeout 再驱动，因未知副作用默认关闭）。
  * ④ Task 级超时零成本继承 {@code TaskServiceImpl.timeoutStaleJobs()}——本类不重复实现。</p>
  */
 @Slf4j
@@ -82,10 +84,30 @@ public class WorkflowWatchdog {
     public void scan() {
         try {
             timeoutRuns();
-            expireApprovals();
-            timeoutStaleAttempts();
+            expireDispatchApprovals();
+            if (properties.getEngine().isAutomaticRecoveryEnabled()) {
+                expireApprovals();
+                if (!properties.getEngine().isDurableResumeEnabled()) {
+                    timeoutStaleAttempts();
+                }
+            }
         } catch (Exception e) {
             log.error("看门狗扫描异常: {}", e.getMessage(), e);
+        }
+    }
+
+    /** Known unexecuted approval waits can expire without enabling recovery of unknown work. */
+    private void expireDispatchApprovals() {
+        if (!properties.getApproval().isDispatchEnabled()) return;
+        for (WorkflowApproval approval : approvalRepository.findByStatusAndExpiresAtBefore("pending", LocalDateTime.now())) {
+            if (!"script-exec".equals(approval.getNodeType())) continue;
+            transactionTemplate.executeWithoutResult(tx -> {
+                WorkflowRun run = runRepository.lockById(approval.getRunId()).orElse(null);
+                if (run == null || !List.of("running", "waiting").contains(run.getStatus())) return;
+                if (approvalStore.expire(approval.getId())) {
+                    engine.cancelRun(run, "timeout", "dispatch_approval_timeout", "派发审批已过期，命令未执行");
+                }
+            });
         }
     }
 
@@ -108,7 +130,11 @@ public class WorkflowWatchdog {
             if (approvalStore.expire(approval.getId())) {
                 log.warn("审批超时: approval={} run={} node={}", approval.getId(), approval.getRunId(),
                         approval.getNodeKey());
-                engine.resumeRun(approval.getRunId());
+                if (properties.getEngine().isDurableResumeEnabled()) {
+                    engine.submitResume(approval.getRunId());
+                } else {
+                    engine.resumeRun(approval.getRunId());
+                }
             }
         }
     }
@@ -127,7 +153,7 @@ public class WorkflowWatchdog {
         for (Map.Entry<String, List<WorkflowNodeRun>> entry : byRun.entrySet()) {
             String runId = entry.getKey();
             Optional<WorkflowRun> runOpt = runRepository.findById(runId);
-            if (runOpt.isEmpty() || !ACTIVE_RUN.contains(runOpt.get().getStatus())) {
+            if (runOpt.isEmpty()) {
                 continue;
             }
             WorkflowDefinition def = loadDefinition(runOpt.get().getVersionId());
@@ -146,14 +172,30 @@ public class WorkflowWatchdog {
                 }
                 String rowId = row.getId();
                 long durationMs = Duration.between(row.getStartedAt(), now).toMillis();
-                Integer marked = transactionTemplate.execute(tx ->
-                        nodeRunRepository.finishAttemptAtomically(rowId, "timeout",
-                                row.getInputJson(), null, null, null, null, null,
-                                "attempt 超过 " + timeoutSec + "s 未终态（看门狗兜底）", null, null, null, null,
-                                false, now, durationMs));
-                if (marked == 1) {
-                    anyTimedOut = true;
-                    log.warn("僵尸 attempt 已置 timeout: run={} node={} attempt={}",
+                Integer marked = transactionTemplate.execute(tx -> {
+                    WorkflowRun locked = runRepository.lockById(runId).orElse(null);
+                    if (locked == null) return 0;
+                    boolean active = "running".equals(locked.getStatus())
+                            && Boolean.FALSE.equals(locked.getCancelRequested());
+                    String outcome = active || "timeout".equals(locked.getStatus()) ? "timeout" : "cancelled";
+                    int updated = nodeRunRepository.closeStaleAttempt(rowId, outcome,
+                                null, null,
+                                active ? "attempt 超过 " + timeoutSec + "s 未终态（看门狗兜底）"
+                                        : "run 已结束或取消；外部执行可能仍在运行",
+                                 now, durationMs);
+                    if (updated == 1) {
+                        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                            @Override
+                            public void afterCommit() {
+                                engine.publishStaleNode(runId, row.getNodeKey(), outcome);
+                            }
+                        });
+                    }
+                    return updated == 1 && active ? 2 : updated;
+                });
+                if (marked != null && marked > 0) {
+                    anyTimedOut |= marked == 2;
+                    log.warn("僵尸 attempt 已收尾: run={} node={} attempt={}",
                             runId, row.getNodeKey(), row.getAttempt());
                 }
             }

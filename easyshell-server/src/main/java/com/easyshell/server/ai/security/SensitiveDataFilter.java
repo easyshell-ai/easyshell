@@ -2,8 +2,12 @@ package com.easyshell.server.ai.security;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Pattern;
 
 /**
@@ -14,6 +18,20 @@ import java.util.regex.Pattern;
 public class SensitiveDataFilter {
 
     private static final String MASK = "***";
+    private static final ObjectMapper JSON = new ObjectMapper()
+            .enable(com.fasterxml.jackson.core.JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
+
+    private static final Pattern SENSITIVE_FIELD = Pattern.compile(
+            "(?i).*(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential).*" );
+
+    /** Structured field names carry context that is lost when values are filtered alone. */
+    public boolean isSensitiveField(String name) {
+        return name != null && SENSITIVE_FIELD.matcher(name).matches();
+    }
+
+    public Object filterField(String name, Object value) {
+        return isSensitiveField(name) && value != null ? MASK : value;
+    }
 
     private static final List<Pattern> PATTERNS = List.of(
             // password=xxx, passwd:xxx, pwd=xxx (key-value pairs, various delimiters)
@@ -60,6 +78,18 @@ public class SensitiveDataFilter {
             return text;
         }
 
+        String trimmed = text.trim();
+        if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+            try {
+                Object parsed = JSON.readerFor(Object.class)
+                        .with(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+                        .readValue(trimmed);
+                return JSON.writeValueAsString(filterJson(parsed));
+            } catch (Exception e) {
+                // Never return malformed or ambiguous JSON containing unfiltered data.
+                return MASK;
+            }
+        }
         String filtered = text;
         int replacements = 0;
 
@@ -79,6 +109,34 @@ public class SensitiveDataFilter {
         }
 
         return filtered;
+    }
+
+    /** Filter structured data before serialization, including keys and sensitive fields. */
+    public Object filterJson(Object value) {
+        if (value instanceof String text) {
+            return filter(text);
+        }
+        if (value instanceof Map<?, ?> map) {
+            Map<String, Object> result = new LinkedHashMap<>();
+            for (var entry : map.entrySet()) {
+                String name = String.valueOf(entry.getKey());
+                String safeName = filter(name);
+                if (result.containsKey(safeName)) {
+                    throw new IllegalArgumentException("Filtered JSON keys conflict");
+                }
+                Object item = entry.getValue();
+                result.put(safeName, isSensitiveField(name) && item != null ? MASK : filterJson(item));
+            }
+            return result;
+        }
+        if (value instanceof List<?> list) {
+            List<Object> result = new ArrayList<>();
+            for (Object item : list) {
+                result.add(filterJson(item));
+            }
+            return result;
+        }
+        return value;
     }
 
     private String applyPattern(String text, Pattern pattern) {

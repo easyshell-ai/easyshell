@@ -2,12 +2,12 @@
 -- workflow_trigger / workflow_artifact 按 SF-19 属 M2，本版本不建。
 --
 -- 三条硬约束（MF-6 / MF-7）：
---   ① 只新增表，绝不 ALTER / DROP 任何存量表——回退 = 停服 DROP 本脚本的五张表 + 隐藏路由；
+--   ① 只新增表，绝不 ALTER / DROP 任何存量表；回退不得删除历史数据；
 --   ② 全软关联、零外键（与 Job.taskId 风格一致），workflow_node_run.task_id 等列不建 FK；
 --   ③ workflow_run / workflow_node_run / workflow_approval / audit_log 永久保留，禁止未来加自动清理。
 --
 -- 方言取舍：同一份脚本在 MySQL 8 与 H2(MODE=MySQL) 上均已实测可跑——
---   ENGINE=InnoDB / DEFAULT CHARSET=utf8mb4 在 H2(MODE=MySQL) 下被安全忽略；
+--   ENGINE=InnoDB 在 H2(MODE=MySQL) 下被安全忽略；表继承数据库字符集和排序规则；
 --   AUTO_INCREMENT / TINYINT / DATETIME / MEDIUMTEXT / CHAR(64) / UNIQUE KEY / KEY 两边通用；
 --   布尔语义列一律 TINYINT NOT NULL DEFAULT 0（与存量实体的 Boolean 映射一致）；
 --   时间列不设 DEFAULT CURRENT_TIMESTAMP——由 JPA Auditing（BaseEntity）在应用侧写入。
@@ -33,7 +33,7 @@ CREATE TABLE workflow (
     KEY idx_wf_category (category),
     KEY idx_wf_status_visibility (status, visibility),
     KEY idx_wf_created_by (created_by)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 -- workflow_version 不可变：发布后本行永不更新（定义指纹的唯一书面载体，§7.2.1 要素①）
 CREATE TABLE workflow_version (
@@ -52,7 +52,7 @@ CREATE TABLE workflow_version (
     updated_at DATETIME,
     PRIMARY KEY (id),
     UNIQUE KEY uk_wv_workflow_version (workflow_id, version)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 -- uk_wfr_idem 的 userId 维度取 started_by（设计 §3.5 幂等①：key 必须带 userId 维度）
 CREATE TABLE workflow_run (
@@ -85,7 +85,7 @@ CREATE TABLE workflow_run (
     KEY idx_wfr_status (status),
     KEY idx_wfr_started_at (started_at),
     KEY idx_wfr_owner_heartbeat (owner_instance, heartbeat_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 -- uk_node_run 是 attempt 抢占竞态（MF-10）的兜底：startAttempt 靠它的重复键异常判定"已被接管"
 CREATE TABLE workflow_node_run (
@@ -117,7 +117,7 @@ CREATE TABLE workflow_node_run (
     KEY idx_wnr_run (run_id),
     KEY idx_wnr_status (status),
     KEY idx_wnr_task (task_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;
 
 -- detail_json 创建时渲染一次并永久不可变（§7.1.2）；version 为乐观锁列
 CREATE TABLE workflow_approval (
@@ -142,4 +142,4 @@ CREATE TABLE workflow_approval (
     KEY idx_appr_run (run_id),
     KEY idx_appr_status (status),
     KEY idx_appr_expires (expires_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB;

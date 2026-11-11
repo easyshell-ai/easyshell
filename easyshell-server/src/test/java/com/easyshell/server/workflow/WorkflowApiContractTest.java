@@ -1,8 +1,21 @@
 package com.easyshell.server.workflow;
 
 import com.easyshell.server.model.entity.User;
+import com.easyshell.server.model.entity.Agent;
+import com.easyshell.server.model.entity.Job;
+import com.easyshell.server.model.dto.JobResultRequest;
+import com.easyshell.server.model.dto.TaskTargetSnapshot;
+import com.easyshell.server.repository.AgentRepository;
+import com.easyshell.server.repository.TaskTargetSnapshotRepository;
+import com.easyshell.server.service.HostAclService;
+import com.easyshell.server.service.HostIdentityService;
+import com.easyshell.server.service.TaskService;
+import com.easyshell.server.websocket.AgentWebSocketHandler;
 import com.easyshell.server.repository.UserRepository;
+import com.easyshell.server.repository.WorkflowApprovalRepository;
+import com.easyshell.server.repository.WorkflowRunProvenanceRepository;
 import com.easyshell.server.security.JwtUtils;
+import com.easyshell.server.workflow.service.WorkflowRunProvenanceService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -19,9 +32,14 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 import java.util.UUID;
+import java.util.List;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -55,11 +73,19 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "spring.jpa.show-sql=false",
         "logging.level.org.hibernate.SQL=warn"
 })
-@DisplayName("工作流 REST 契约 — 17 个端点的响应 JSON 形状")
+@DisplayName("工作流 REST 契约 — 18 个端点的响应 JSON 形状")
 class WorkflowApiContractTest {
 
     @MockitoBean
     private StringRedisTemplate stringRedisTemplate;
+
+    @MockitoBean
+    private AgentWebSocketHandler agentTransport;
+    @Autowired private AgentRepository agents;
+    @Autowired private HostIdentityService identities;
+    @Autowired private HostAclService acl;
+    @Autowired private TaskService taskService;
+    @Autowired private TaskTargetSnapshotRepository targetSnapshots;
 
     @Autowired
     private MockMvc mockMvc;
@@ -69,8 +95,30 @@ class WorkflowApiContractTest {
     private PasswordEncoder passwordEncoder;
     @Autowired
     private JwtUtils jwtUtils;
+    @Autowired
+    private WorkflowApprovalRepository approvalRepository;
+    @Autowired
+    private WorkflowRunProvenanceRepository provenanceRepository;
+    @Autowired
+    private WorkflowRunProvenanceService provenanceService;
+    @Autowired
+    private org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     private String token;
+    private Long ownerId;
+
+    @Test
+    void codeSample_rejectsExecutionWithoutResourceIsolation() throws Exception {
+        long id = createWorkflow();
+        mockMvc.perform(post("/api/v1/workflow/{id}/nodes/code/test", id)
+                        .header("Authorization", token).contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"language":"javascript","code":"function main(input) { return {value: input.n + 1}; }","input":{"n":2}}
+                                """))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value(503))
+                .andExpect(jsonPath("$.message").value("CODE_SAMPLE_RESOURCE_ISOLATION_UNAVAILABLE"));
+    }
 
     /** 三节点 + 两连线：wait → approval → wait（wait 不需要 agent，契约测试不依赖执行环境） */
     private static final String DEFINITION = """
@@ -114,6 +162,9 @@ class WorkflowApiContractTest {
             }
             """;
 
+    private static final String PURE_DEFINITION = SIMPLE_DEFINITION.replace(
+            "\"variables\": { \"threshold\": { \"type\": \"number\", \"required\": true } }", "\"variables\": {}");
+
     @BeforeEach
     void setUp() throws Exception {
         String username = "contract-" + UUID.randomUUID().toString().substring(0, 8);
@@ -124,6 +175,7 @@ class WorkflowApiContractTest {
         user.setRole("super_admin");
         user.setStatus(1);
         userRepository.save(user);
+        ownerId = user.getId();
 
         // 直接用 JwtUtils 签发：走 /auth/login 会写 Redis 刷新令牌，与契约无关
         token = "Bearer " + jwtUtils.generateAccessToken(user.getId(), username, "super_admin");
@@ -188,7 +240,7 @@ class WorkflowApiContractTest {
     @DisplayName("GET /{id}：{workflow, versions, draft} 三件套，draft 是平铺版本 + definition")
     void detail_returnsWorkflowVersionsAndDraft() throws Exception {
         long id = createWorkflow();
-        saveDraft(id, 0);
+        saveDraft(id);
 
         mockMvc.perform(get("/api/v1/workflow/{id}", id).header("Authorization", token))
                 .andExpect(status().isOk())
@@ -262,9 +314,11 @@ class WorkflowApiContractTest {
     @DisplayName("GET /{id}/versions：摘要数组，不含 definitionJson")
     void versions_returnsSummaries() throws Exception {
         long id = createWorkflow();
+        var initialDraft = currentDraft(id);
+        assertThat(initialDraft.isMissingNode() || initialDraft.isNull()).isTrue();
         mockMvc.perform(put("/api/v1/workflow/{id}/versions/draft", id)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"definition\":" + DEFINITION + ",\"baseVersion\":0,"
+                        .content("{\"definition\":" + DEFINITION + ",\"baseVersion\":0,\"expectedAbsent\":true,"
                                 + "\"changelog\":\"契约草稿\"}")
                         .header("Authorization", token))
                 .andExpect(status().isOk());
@@ -286,7 +340,7 @@ class WorkflowApiContractTest {
     @DisplayName("GET /{id}/versions/{versionId}：平铺摘要 + definition（监控页画布取 definition）")
     void versionDefinition_isFlat() throws Exception {
         long id = createWorkflow();
-        saveDraft(id, 0);
+        saveDraft(id);
         long versionId = firstVersionId(id);
 
         mockMvc.perform(get("/api/v1/workflow/{id}/versions/{versionId}", id, versionId)
@@ -305,23 +359,27 @@ class WorkflowApiContractTest {
     @DisplayName("PUT /{id}/versions/draft：baseVersion 令牌往返（首次原样带回，再存才 +1）")
     void saveDraft_returnsNewTokenAndDefinition() throws Exception {
         long id = createWorkflow();
+        var initialDraft = currentDraft(id);
+        assertThat(initialDraft.isMissingNode() || initialDraft.isNull()).isTrue();
 
-        // 首次保存：草稿行新建，令牌 = 客户端带回来的 0
-        mockMvc.perform(put("/api/v1/workflow/{id}/versions/draft", id)
+        // 首次保存：明确声明尚无草稿。
+        String firstSave = mockMvc.perform(put("/api/v1/workflow/{id}/versions/draft", id)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"definition\":" + DEFINITION + ",\"baseVersion\":0,\"changelog\":\"首次\"}")
+                        .content("{\"definition\":" + DEFINITION + ",\"baseVersion\":0,\"expectedAbsent\":true,\"changelog\":\"首次\"}")
                         .header("Authorization", token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.id").exists())
                 .andExpect(jsonPath("$.data.version").value(1))
                 .andExpect(jsonPath("$.data.baseVersion").value(0))
                 .andExpect(jsonPath("$.data.isValid").value(false))
-                .andExpect(jsonPath("$.data.definition.nodes.length()").value(3));
+                .andExpect(jsonPath("$.data.definition.nodes.length()").value(3))
+                .andReturn().getResponse().getContentAsString();
+        var firstDraft = new com.fasterxml.jackson.databind.ObjectMapper().readTree(firstSave).path("data");
 
         // 第二次保存：令牌 +1，客户端下一次必须带回新值
         mockMvc.perform(put("/api/v1/workflow/{id}/versions/draft", id)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"definition\":" + DEFINITION + ",\"baseVersion\":0}")
+                        .content(draftSaveBody(DEFINITION, firstDraft))
                         .header("Authorization", token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.baseVersion").value(1));
@@ -331,11 +389,13 @@ class WorkflowApiContractTest {
     @DisplayName("PUT /{id}/versions/draft：baseVersion 过期 → 409 + 三选一契约")
     void saveDraft_staleToken_is409() throws Exception {
         long id = createWorkflow();
-        saveDraft(id, 0);
+        saveDraft(id);
+        var staleDraft = currentDraft(id);
+        saveDraft(id);
 
         mockMvc.perform(put("/api/v1/workflow/{id}/versions/draft", id)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"definition\":" + DEFINITION + ",\"baseVersion\":99}")
+                        .content(draftSaveBody(DEFINITION, staleDraft))
                         .header("Authorization", token))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value(409))
@@ -407,11 +467,11 @@ class WorkflowApiContractTest {
     @DisplayName("POST /{id}/publish：发布成功返回不可变版本摘要")
     void publish_returnsVersion() throws Exception {
         long id = createWorkflow();
-        saveDraft(id, 0);
+        saveDraft(id);
 
         mockMvc.perform(post("/api/v1/workflow/{id}/publish", id)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"changelog\":\"v1\"}")
+                        .content(publishBody(id))
                         .header("Authorization", token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.id").exists())
@@ -445,11 +505,11 @@ class WorkflowApiContractTest {
                   ]
                 }
                 """;
-        saveDraft(id, 0, cyclic);
+        saveDraft(id, cyclic);
 
         mockMvc.perform(post("/api/v1/workflow/{id}/publish", id)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{}")
+                        .content(publishBody(id))
                         .header("Authorization", token))
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.code").value(422))
@@ -459,7 +519,7 @@ class WorkflowApiContractTest {
     }
 
     @Test
-    @DisplayName("POST /{id}/runs：请求体是 {input, idempotencyKey}，响应 input 是解析后的对象")
+    @DisplayName("POST /{id}/runs：请求体是 {input, idempotencyKey}，响应是安全控制摘要")
     void triggerRun_acceptsBodyContract() throws Exception {
         long id = publishedSimpleWorkflow();
 
@@ -476,8 +536,10 @@ class WorkflowApiContractTest {
                 .andExpect(jsonPath("$.data.status").exists())
                 .andExpect(jsonPath("$.data.startedBy").exists())
                 .andExpect(jsonPath("$.data.createdAt").exists())
-                // input 是对象不是 JSON 字符串；内部列名一律不外泄
-                .andExpect(jsonPath("$.data.input.threshold").value(85))
+                .andExpect(jsonPath("$.data.input").doesNotHaveJsonPath())
+                .andExpect(jsonPath("$.data.output").doesNotHaveJsonPath())
+                .andExpect(jsonPath("$.data.variables").doesNotHaveJsonPath())
+                .andExpect(jsonPath("$.data.currentNodes").doesNotHaveJsonPath())
                 .andExpect(jsonPath("$.data.inputJson").doesNotExist())
                 .andExpect(jsonPath("$.data.variablesJson").doesNotExist())
                 .andExpect(jsonPath("$.data.riskSnapshotJson").doesNotExist())
@@ -485,8 +547,7 @@ class WorkflowApiContractTest {
                 .andExpect(jsonPath("$.data.heartbeatAt").doesNotExist())
                 .andExpect(jsonPath("$.data.idempotencyKey").doesNotExist())
                 .andExpect(jsonPath("$.data.cancelRequested").value(false))
-                .andExpect(jsonPath("$.data.variablesTruncated").value(false))
-                .andExpect(jsonPath("$.data.currentNodes").isArray());
+                .andExpect(jsonPath("$.data.variablesTruncated").doesNotHaveJsonPath());
     }
 
     @Test
@@ -546,7 +607,7 @@ class WorkflowApiContractTest {
     @DisplayName("POST /{id}/runs：未发布 → 409 NOT_PUBLISHED")
     void triggerRun_unpublished_is409() throws Exception {
         long id = createWorkflow();
-        saveDraft(id, 0, SIMPLE_DEFINITION);
+        saveDraft(id, SIMPLE_DEFINITION);
 
         mockMvc.perform(post("/api/v1/workflow/{id}/runs", id)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -561,7 +622,7 @@ class WorkflowApiContractTest {
     // ------------------------------------------------------------------
 
     @Test
-    @DisplayName("GET /runs：content[] 是 run 出站视图（input 对象、currentNodes 数组）")
+    @DisplayName("GET /runs：content[] 是不含动态数据的控制摘要")
     void runs_returnsRunViews() throws Exception {
         long id = publishedSimpleWorkflow();
         trigger(id, "contract-list");
@@ -574,8 +635,12 @@ class WorkflowApiContractTest {
                 .andExpect(jsonPath("$.data.content[0].workflowId").value(id))
                 .andExpect(jsonPath("$.data.content[0].versionNo").value(1))
                 .andExpect(jsonPath("$.data.content[0].status").exists())
-                .andExpect(jsonPath("$.data.content[0].input.threshold").value(85))
-                .andExpect(jsonPath("$.data.content[0].currentNodes").isArray())
+                .andExpect(jsonPath("$.data.content[0].input").doesNotHaveJsonPath())
+                .andExpect(jsonPath("$.data.content[0].output").doesNotHaveJsonPath())
+                .andExpect(jsonPath("$.data.content[0].variables").doesNotHaveJsonPath())
+                .andExpect(jsonPath("$.data.content[0].currentNodes").doesNotHaveJsonPath())
+                .andExpect(jsonPath("$.data.content[0].inputJson").doesNotHaveJsonPath())
+                .andExpect(jsonPath("$.data.content[0].variablesJson").doesNotHaveJsonPath())
                 .andExpect(jsonPath("$.data.content[0].createdAt").exists())
                 .andExpect(jsonPath("$.data.totalElements").exists());
     }
@@ -583,8 +648,8 @@ class WorkflowApiContractTest {
     @Test
     @DisplayName("GET /runs/{runId}：{run, nodeRuns[]}，节点 input/output 是解析后的对象")
     void runDetail_includesNodeRuns() throws Exception {
-        long id = publishedSimpleWorkflow();
-        String runId = trigger(id, "contract-detail");
+        long id = publishedPureWorkflow();
+        String runId = triggerPure(id, "contract-detail");
 
         // 等 n1（wait 1s）落节点行
         await().atMost(java.time.Duration.ofSeconds(30)).untilAsserted(() ->
@@ -592,7 +657,7 @@ class WorkflowApiContractTest {
                                 .header("Authorization", token))
                         .andExpect(status().isOk())
                         .andExpect(jsonPath("$.data.run.id").value(runId))
-                        .andExpect(jsonPath("$.data.run.input.threshold").value(85))
+                        .andExpect(jsonPath("$.data.run.input").isMap())
                         .andExpect(jsonPath("$.data.run.status").exists())
                         .andExpect(jsonPath("$.data.run.variables").isMap())
                         .andExpect(jsonPath("$.data.run.currentNodes").isArray())
@@ -612,6 +677,16 @@ class WorkflowApiContractTest {
     }
 
     @Test
+    @DisplayName("GET /runs/{runId}：已证明的手动纯数据输入可由属主查看")
+    void runDetail_provenManualInput_isReadable() throws Exception {
+        long id = publishedSimpleWorkflow();
+        String runId = trigger(id, "contract-unproven");
+
+        mockMvc.perform(get("/api/v1/workflow/runs/{runId}", runId).header("Authorization", token))
+                .andExpect(status().isOk());
+    }
+
+    @Test
     @DisplayName("POST /runs/{runId}/cancel：取消后 cancelRequested=true")
     void cancelRun_setsFlag() throws Exception {
         long id = publishedSimpleWorkflow();
@@ -622,14 +697,20 @@ class WorkflowApiContractTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.id").value(runId))
                 .andExpect(jsonPath("$.data.cancelRequested").value(true))
+                .andExpect(jsonPath("$.data.input").doesNotHaveJsonPath())
+                .andExpect(jsonPath("$.data.output").doesNotHaveJsonPath())
+                .andExpect(jsonPath("$.data.variables").doesNotHaveJsonPath())
+                .andExpect(jsonPath("$.data.currentNodes").doesNotHaveJsonPath())
+                .andExpect(jsonPath("$.data.inputJson").doesNotHaveJsonPath())
+                .andExpect(jsonPath("$.data.variablesJson").doesNotHaveJsonPath())
                 .andExpect(jsonPath("$.data.status").exists());
     }
 
     @Test
     @DisplayName("POST /runs/{runId}/nodes/{nodeKey}/test-run：试运行结果字段")
     void testRun_returnsResult() throws Exception {
-        long id = publishedSimpleWorkflow();
-        String runId = trigger(id, "contract-testrun");
+        long id = publishedPureWorkflow();
+        String runId = triggerPure(id, "contract-testrun");
 
         mockMvc.perform(post("/api/v1/workflow/runs/{runId}/nodes/{nodeKey}/test-run", runId, "n1")
                         .header("Authorization", token))
@@ -646,99 +727,257 @@ class WorkflowApiContractTest {
     // ------------------------------------------------------------------
 
     @Test
+    @DisplayName("真实审批来源未证明：仅受限摘要，禁止批准但允许拒绝")
+    void approval_unprovenSource_isRestrictedAndCanBeRejected() throws Exception {
+        long id = publishedWorkflow();
+        String runId = trigger(id, "contract-restricted-approval");
+        try {
+            assertThat(provenanceRepository.findComplete(runId)).isPresent();
+            assertThat(provenanceRepository.findComplete(runId).orElseThrow().kind()).isEqualTo("HOST");
+            await().atMost(java.time.Duration.ofSeconds(15)).until(() ->
+                    approvalRepository.findByRunIdAndNodeKey(runId, "n2").isPresent());
+            long approvalId = approvalRepository.findByRunIdAndNodeKey(runId, "n2").orElseThrow().getId();
+
+            String body = mockMvc.perform(get("/api/v1/workflow/approvals/pending")
+                            .header("Authorization", token))
+                    .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+            var approvals = new com.fasterxml.jackson.databind.ObjectMapper().readTree(body).path("data");
+            com.fasterxml.jackson.databind.JsonNode summary = null;
+            for (var approval : approvals) {
+                if (approval.path("id").asLong() == approvalId) summary = approval;
+            }
+            assertThat(summary).isNotNull();
+            java.util.List<String> fields = new java.util.ArrayList<>();
+            summary.fieldNames().forEachRemaining(fields::add);
+            assertThat(fields)
+                    .containsExactlyInAnyOrder("id", "status", "expiresAt", "canReject", "canApprove");
+            assertThat(summary.path("status").asText()).isEqualTo("pending");
+            assertThat(summary.path("expiresAt").asText()).isNotBlank();
+            assertThat(summary.path("canReject").asBoolean()).isTrue();
+            assertThat(summary.path("canApprove").asBoolean()).isFalse();
+
+            mockMvc.perform(get("/api/v1/workflow/runs/{runId}", runId).header("Authorization", token))
+                    .andExpect(status().isForbidden());
+            mockMvc.perform(post("/api/v1/workflow/approvals/{approvalId}/decision", approvalId)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"decision\":\"approved\",\"comment\":\"must not pass\"}")
+                            .header("Authorization", token))
+                    .andExpect(status().isForbidden());
+            assertThat(approvalRepository.findById(approvalId).orElseThrow().getStatus()).isEqualTo("pending");
+            mockMvc.perform(post("/api/v1/workflow/approvals/{approvalId}/decision", approvalId)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"decision\":\"rejected\",\"comment\":\"安全拒绝\"}")
+                            .header("Authorization", token))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.id").value(approvalId))
+                    .andExpect(jsonPath("$.data.status").value("rejected"))
+                    .andExpect(jsonPath("$.data.canApprove").value(false))
+                    .andExpect(jsonPath("$.data.detail").doesNotHaveJsonPath())
+                    .andExpect(jsonPath("$.data.reason").doesNotHaveJsonPath());
+        } finally {
+            // 即使断言失败也释放运行，避免残留等待审批占住并发位。
+            mockMvc.perform(post("/api/v1/workflow/runs/{runId}/cancel", runId)
+                    .header("Authorization", token));
+        }
+    }
+
+    @Test
+    @DisplayName("伪造 V3 出生标记不能放宽真实审批的读取或批准权限")
+    void approval_forgedV3Birth_remainsRestricted() throws Exception {
+        long id = publishedWorkflow();
+        String runId = trigger(id, "contract-forged-v3-birth");
+        try {
+            await().atMost(java.time.Duration.ofSeconds(15)).until(() ->
+                    approvalRepository.findByRunIdAndNodeKey(runId, "n2").isPresent());
+            long approvalId = approvalRepository.findByRunIdAndNodeKey(runId, "n2").orElseThrow().getId();
+            // 模拟对历史运行事后回填：即使版本和摘要一致也不能证明出生时的执行语义。
+            assertThat(jdbc.update("INSERT INTO workflow_run_v3_birth (run_id, version_id, definition_sha256, semantics) "
+                    + "SELECT run_id, version_id, definition_sha256, 'NON_HOST_V3' "
+                    + "FROM workflow_run_provenance WHERE run_id = ?", runId)).isEqualTo(1);
+            assertThat(jdbc.update("UPDATE workflow_run_provenance SET source_kind = 'NON_HOST_V3' WHERE run_id = ?",
+                    runId)).isEqualTo(1);
+
+            assertThat(provenanceRepository.findComplete(runId)).isPresent();
+            assertThat(provenanceService.verifiedIdentity(runId))
+                    .isEqualTo(WorkflowRunProvenanceService.VerifiedIdentity.UNKNOWN);
+            mockMvc.perform(get("/api/v1/workflow/runs/{runId}", runId).header("Authorization", token))
+                    .andExpect(status().isForbidden());
+            mockMvc.perform(post("/api/v1/workflow/approvals/{approvalId}/decision", approvalId)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"decision\":\"approved\",\"comment\":\"must not pass\"}")
+                            .header("Authorization", token))
+                    .andExpect(status().isForbidden());
+            assertThat(approvalRepository.findById(approvalId).orElseThrow().getStatus()).isEqualTo("pending");
+        } finally {
+            mockMvc.perform(post("/api/v1/workflow/runs/{runId}/cancel", runId)
+                    .header("Authorization", token));
+        }
+    }
+
+    @Test
     @DisplayName("GET /approvals/pending：审批出站视图（workflowId/workflowName/detail 反查回填）")
     void approvals_pending_returnsApprovalView() throws Exception {
-        long id = publishedWorkflow();
-        String runId = trigger(id, "contract-approval");
+        var fixture = startHostApproval("contract-approval");
+        long id = fixture.workflowId();
+        String runId = fixture.runId();
+        try {
+            completeHostJob(fixture);
 
-        await().atMost(java.time.Duration.ofSeconds(40)).untilAsserted(() -> {
-            com.fasterxml.jackson.databind.JsonNode approval = pendingApprovalNodeFor(runId);
-            assertThat(approval).isNotNull();
-            // 审批中心列表要显示"哪个工作流"：由 run 反查回填，实体上没有这两个字段
-            assertThat(approval.path("workflowId").asLong()).isEqualTo(id);
-            assertThat(approval.path("workflowName").asText()).isEqualTo("契约工作流");
-            assertThat(approval.path("runId").asText()).isEqualTo(runId);
-            assertThat(approval.path("nodeKey").asText()).isEqualTo("n2");
-            assertThat(approval.path("nodeType").asText()).isEqualTo("approval");
-            assertThat(approval.path("title").asText()).isEqualTo("契约审批");
-            assertThat(approval.path("status").asText()).isEqualTo("pending");
-            assertThat(approval.path("approverRole").asText()).isEqualTo("ADMIN");
-            assertThat(approval.path("expiresAt").asText()).isNotBlank();
-            // detail 是解析后的对象，不是 detail_json 文本列
-            assertThat(approval.path("detail").isObject()).isTrue();
-            assertThat(approval.path("detail").path("runId").asText()).isEqualTo(runId);
-            // 反契约：实体列名不外泄
-            assertThat(approval.has("detailJson")).isFalse();
-            assertThat(approval.has("decisionComment")).isFalse();
-        });
+            await().atMost(java.time.Duration.ofSeconds(40)).untilAsserted(() -> {
+                com.fasterxml.jackson.databind.JsonNode approval = pendingApprovalNodeFor(runId);
+                assertThat(approval).isNotNull();
+                // 审批中心列表要显示"哪个工作流"：由 run 反查回填，实体上没有这两个字段
+                assertThat(approval.path("workflowId").asLong()).isEqualTo(id);
+                assertThat(approval.path("workflowName").asText()).isEqualTo("契约工作流");
+                assertThat(approval.path("runId").asText()).isEqualTo(runId);
+                assertThat(approval.path("nodeKey").asText()).isEqualTo("n2");
+                assertThat(approval.path("nodeType").asText()).isEqualTo("approval");
+                assertThat(approval.path("title").asText()).isEqualTo("契约审批");
+                assertThat(approval.path("status").asText()).isEqualTo("pending");
+                assertThat(approval.path("approverRole").asText()).isEqualTo("ADMIN");
+                assertThat(approval.path("expiresAt").asText()).isNotBlank();
+                // detail 是解析后的对象，不是 detail_json 文本列
+                assertThat(approval.path("detail").isObject()).isTrue();
+                assertThat(approval.path("detail").path("runId").asText()).isEqualTo(runId);
+                // 反契约：实体列名不外泄
+                assertThat(approval.has("detailJson")).isFalse();
+                assertThat(approval.has("decisionComment")).isFalse();
+            });
 
-        // 收尾：把审批掉，run 才会跑完——否则它永远挂在 waiting 占着全局并发位，
-        // 后面用例触发的 run 会排队（max-concurrent-runs 默认只有 3）
-        long approvalId = pendingApprovalNodeFor(runId).get("id").asLong();
-        mockMvc.perform(post("/api/v1/workflow/approvals/{approvalId}/decision", approvalId)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"decision\":\"approved\",\"comment\":\"cleanup\"}")
-                        .header("Authorization", token))
-                .andExpect(status().isOk());
+            // 收尾：把审批掉，run 才会跑完——否则它永远挂在 waiting 占着全局并发位，
+            // 后面用例触发的 run 会排队（max-concurrent-runs 默认只有 3）
+            long approvalId = pendingApprovalNodeFor(runId).get("id").asLong();
+            mockMvc.perform(post("/api/v1/workflow/approvals/{approvalId}/decision", approvalId)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"decision\":\"approved\",\"comment\":\"cleanup\"}")
+                            .header("Authorization", token))
+                    .andExpect(status().isOk());
+        } finally {
+            cancelFixture(runId);
+        }
     }
 
     @Test
     @DisplayName("POST /approvals/{id}/decision：决策后 status/decidedAt/reason 都是真值")
     void approvals_decision_returnsDecidedRow() throws Exception {
-        long id = publishedWorkflow();
-        String runId = trigger(id, "contract-approval");
+        var fixture = startHostApproval("contract-approval");
+        String runId = fixture.runId();
+        try {
+            completeHostJob(fixture);
 
-        await().atMost(java.time.Duration.ofSeconds(40)).until(() ->
-                pendingApprovalNodeFor(runId) != null);
-        long approvalId = pendingApprovalNodeFor(runId).get("id").asLong();
+            await().atMost(java.time.Duration.ofSeconds(40)).until(() ->
+                    pendingApprovalNodeFor(runId) != null);
+            long approvalId = pendingApprovalNodeFor(runId).get("id").asLong();
 
-        mockMvc.perform(post("/api/v1/workflow/approvals/{approvalId}/decision", approvalId)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"decision\":\"approved\",\"comment\":\"契约通过\"}")
-                        .header("Authorization", token))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.id").value(approvalId))
-                // 决策结果必须是决策后的真值（曾经回放过 pending，客户端会以为没批成功）
-                .andExpect(jsonPath("$.data.status").value("approved"))
-                .andExpect(jsonPath("$.data.decidedBy").exists())
-                .andExpect(jsonPath("$.data.decidedAt").exists())
-                // 决策备注出站名是 reason（实体列 decisionComment）
-                .andExpect(jsonPath("$.data.reason").value("契约通过"))
-                .andExpect(jsonPath("$.data.decisionComment").doesNotExist());
+            mockMvc.perform(post("/api/v1/workflow/approvals/{approvalId}/decision", approvalId)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"decision\":\"approved\",\"comment\":\"契约通过\"}")
+                            .header("Authorization", token))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.id").value(approvalId))
+                    // 决策结果必须是决策后的真值（曾经回放过 pending，客户端会以为没批成功）
+                    .andExpect(jsonPath("$.data.status").value("approved"))
+                    .andExpect(jsonPath("$.data.decidedBy").exists())
+                    .andExpect(jsonPath("$.data.decidedAt").exists())
+                    // 决策备注出站名是 reason（实体列 decisionComment）
+                    .andExpect(jsonPath("$.data.reason").value("契约通过"))
+                    .andExpect(jsonPath("$.data.decisionComment").doesNotExist());
+        } finally {
+            cancelFixture(runId);
+        }
     }
 
     @Test
     @DisplayName("审批通过后 run 恢复并跑完（端到端闭环）")
     void approvalResumesRun() throws Exception {
-        long id = publishedWorkflow();
-        String runId = trigger(id, "contract-e2e");
+        var fixture = startHostApproval("contract-e2e");
+        String runId = fixture.runId();
+        try {
+            completeHostJob(fixture);
 
-        await().atMost(java.time.Duration.ofSeconds(40)).untilAsserted(() ->
-                mockMvc.perform(get("/api/v1/workflow/runs/{runId}", runId)
-                                .header("Authorization", token))
-                        .andExpect(status().isOk())
-                        .andExpect(jsonPath("$.data.run.status").value("waiting")));
+            await().atMost(java.time.Duration.ofSeconds(40)).untilAsserted(() ->
+                    mockMvc.perform(get("/api/v1/workflow/runs/{runId}", runId)
+                                    .header("Authorization", token))
+                            .andExpect(status().isOk())
+                            .andExpect(jsonPath("$.data.run.status").value("waiting")));
 
-        await().atMost(java.time.Duration.ofSeconds(40)).until(() ->
-                pendingApprovalNodeFor(runId) != null);
-        long approvalId = pendingApprovalNodeFor(runId).get("id").asLong();
-        mockMvc.perform(post("/api/v1/workflow/approvals/{approvalId}/decision", approvalId)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"decision\":\"approved\",\"comment\":\"go\"}")
-                        .header("Authorization", token))
-                .andExpect(status().isOk());
+            await().atMost(java.time.Duration.ofSeconds(40)).until(() ->
+                    pendingApprovalNodeFor(runId) != null);
+            long approvalId = pendingApprovalNodeFor(runId).get("id").asLong();
+            mockMvc.perform(post("/api/v1/workflow/approvals/{approvalId}/decision", approvalId)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"decision\":\"approved\",\"comment\":\"go\"}")
+                            .header("Authorization", token))
+                    .andExpect(status().isOk());
 
-        await().atMost(java.time.Duration.ofSeconds(40)).untilAsserted(() ->
-                mockMvc.perform(get("/api/v1/workflow/runs/{runId}", runId)
-                                .header("Authorization", token))
-                        .andExpect(status().isOk())
-                        .andExpect(jsonPath("$.data.run.status").value("succeeded"))
-                        .andExpect(jsonPath("$.data.nodeRuns.length()").value(3)));
+            await().atMost(java.time.Duration.ofSeconds(40)).untilAsserted(() ->
+                    mockMvc.perform(get("/api/v1/workflow/runs/{runId}", runId)
+                                    .header("Authorization", token))
+                            .andExpect(status().isOk())
+                            .andExpect(jsonPath("$.data.run.status").value("succeeded"))
+                            .andExpect(jsonPath("$.data.nodeRuns.length()").value(3)));
+        } finally {
+            cancelFixture(runId);
+        }
     }
 
     // ------------------------------------------------------------------
     // 夹具
     // ------------------------------------------------------------------
+
+    private record HostApprovalFixture(long workflowId, String runId, String agentId,
+                                       LinkedBlockingQueue<Job> dispatched) {}
+
+    private HostApprovalFixture startHostApproval(String key) throws Exception {
+        String agentId = "contract-" + UUID.randomUUID();
+        Agent agent = new Agent();
+        agent.setId(agentId);
+        agent.setHostname("contract-host");
+        agent.setIp("127.0.0.1");
+        agent.setStatus(1);
+        agents.saveAndFlush(agent);
+        identities.initializeExisting(List.of(agentId));
+        acl.change(ownerId, agentId, "USER", ownerId.toString(), HostAclService.Permission.VIEW, true, 1L);
+        acl.change(ownerId, agentId, "USER", ownerId.toString(), HostAclService.Permission.EXECUTE, true, 1L);
+        assertThat(acl.allowedForGeneration(ownerId, agentId, 1L, HostAclService.Permission.VIEW)).isTrue();
+        assertThat(acl.allowedForGeneration(ownerId, agentId, 1L, HostAclService.Permission.EXECUTE)).isTrue();
+
+        var dispatched = new LinkedBlockingQueue<Job>();
+        when(agentTransport.dispatchJob(eq(agentId), any(Job.class), eq("df -h"), anyInt()))
+                .thenAnswer(call -> { dispatched.add(call.getArgument(1)); return true; });
+        String definition = """
+                {"schemaVersion":1,"defaultOnUpstreamFailure":"skip","onRejection":"abort",
+                 "variables":{},"nodes":[
+                   {"key":"n1","type":"script-exec","name":"disk","position":{"x":0,"y":0},
+                    "config":{"script":"df -h","targets":{"mode":"explicit","agentIds":["%s"]},"timeoutSeconds":60}},
+                   {"key":"n2","type":"approval","name":"人工审批","position":{"x":200,"y":0},
+                    "config":{"title":"契约审批","approverRole":"ADMIN","onTimeout":"reject","timeoutSec":120}},
+                   {"key":"n3","type":"wait","name":"等待1秒","position":{"x":400,"y":0},"config":{"durationSec":1}}
+                 ],"edges":[{"id":"e1","from":"n1","to":"n2"},{"id":"e2","from":"n2","to":"n3"}]}
+                """.formatted(agentId);
+        long workflowId = publishedWorkflowWithDefinition(definition);
+        String runId = triggerPure(workflowId, key);
+        return new HostApprovalFixture(workflowId, runId, agentId, dispatched);
+    }
+
+    private void completeHostJob(HostApprovalFixture fixture) throws Exception {
+        Job job = fixture.dispatched().poll(40, TimeUnit.SECONDS);
+        assertThat(job).as("真实任务经 Agent 传输派发").isNotNull();
+        assertThat(targetSnapshots.findComplete(job.getTaskId()).orElseThrow().targets())
+                .containsExactly(new TaskTargetSnapshot.Target(fixture.agentId(), 1L));
+        taskService.reportJobResult(new JobResultRequest(job.getId(), fixture.agentId(), 2, 0, "disk result"),
+                fixture.agentId());
+        await().atMost(java.time.Duration.ofSeconds(40)).untilAsserted(() -> {
+            var provenance = provenanceRepository.findComplete(fixture.runId()).orElseThrow();
+            assertThat(provenance.kind()).isEqualTo("HOST");
+            assertThat(provenance.taskIds()).containsExactly(job.getTaskId());
+        });
+    }
+
+    private void cancelFixture(String runId) throws Exception {
+        mockMvc.perform(post("/api/v1/workflow/runs/{runId}/cancel", runId)
+                .header("Authorization", token));
+    }
 
     private String tokenFor(String username, String role) {
         User user = new User();
@@ -761,16 +1000,72 @@ class WorkflowApiContractTest {
         return Long.parseLong(body.replaceAll(".*\"id\":(\\d+),\"name.*", "$1"));
     }
 
-    private void saveDraft(long id, int baseVersion) throws Exception {
-        saveDraft(id, baseVersion, DEFINITION);
+    private String publishBody(long id) throws Exception {
+        String body = mockMvc.perform(get("/api/v1/workflow/{id}", id).header("Authorization", token))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        var draft = new com.fasterxml.jackson.databind.ObjectMapper().readTree(body).path("data").path("draft");
+        return "{\"draftId\":" + draft.path("id").asLong() + ",\"baseVersion\":"
+                + draft.path("baseVersion").asInt() + ",\"definitionSha256\":\""
+                + draft.path("definitionSha256").asText() + "\"}";
     }
 
-    private void saveDraft(long id, int baseVersion, String definition) throws Exception {
+    @Test
+    void publish_rejectsMissingAndStaleTokens() throws Exception {
+        long id = createWorkflow();
+        saveDraft(id);
+        String stale = publishBody(id);
+        mockMvc.perform(post("/api/v1/workflow/{id}/publish", id).contentType(MediaType.APPLICATION_JSON)
+                .content("{}").header("Authorization", token)).andExpect(status().isConflict());
+        saveDraft(id);
+        mockMvc.perform(post("/api/v1/workflow/{id}/publish", id).contentType(MediaType.APPLICATION_JSON)
+                .content(stale).header("Authorization", token)).andExpect(status().isConflict());
+    }
+
+    private void saveDraft(long id) throws Exception {
+        saveDraft(id, DEFINITION);
+    }
+
+    private void saveDraft(long id, String definition) throws Exception {
+        var draft = currentDraft(id);
         mockMvc.perform(put("/api/v1/workflow/{id}/versions/draft", id)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"definition\":" + definition + ",\"baseVersion\":" + baseVersion + "}")
+                        .content(draftSaveBody(definition, draft))
                         .header("Authorization", token))
                 .andExpect(status().isOk());
+    }
+
+    private com.fasterxml.jackson.databind.JsonNode currentDraft(long id) throws Exception {
+        String body = mockMvc.perform(get("/api/v1/workflow/{id}", id).header("Authorization", token))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        var data = new com.fasterxml.jackson.databind.ObjectMapper().readTree(body).path("data");
+        assertThat(data.isObject()).isTrue();
+        return data.path("draft");
+    }
+
+    private String draftSaveBody(String definition, com.fasterxml.jackson.databind.JsonNode draft) {
+        if (draft.isMissingNode() || draft.isNull()) {
+            return "{\"definition\":" + definition + ",\"baseVersion\":0,\"expectedAbsent\":true}";
+        }
+        assertThat(draft.path("id").isIntegralNumber()).isTrue();
+        assertThat(draft.path("baseVersion").isIntegralNumber()).isTrue();
+        assertThat(draft.path("definitionSha256").asText()).isNotBlank();
+        return "{\"definition\":" + definition + ",\"draftId\":" + draft.path("id").asLong()
+                + ",\"baseVersion\":" + draft.path("baseVersion").asInt()
+                + ",\"definitionSha256\":\"" + draft.path("definitionSha256").asText() + "\"}";
+    }
+
+    @Test
+    @DisplayName("PUT /{id}/versions/draft：旧客户端缺少完整令牌时返回 409")
+    void saveDraft_oldClient_is409() throws Exception {
+        long id = createWorkflow();
+        String oldRequest = "{\"definition\":" + DEFINITION + ",\"baseVersion\":0}";
+        mockMvc.perform(put("/api/v1/workflow/{id}/versions/draft", id)
+                        .contentType(MediaType.APPLICATION_JSON).content(oldRequest).header("Authorization", token))
+                .andExpect(status().isConflict());
+        saveDraft(id);
+        mockMvc.perform(put("/api/v1/workflow/{id}/versions/draft", id)
+                        .contentType(MediaType.APPLICATION_JSON).content(oldRequest).header("Authorization", token))
+                .andExpect(status().isConflict());
     }
 
     /**
@@ -803,24 +1098,42 @@ class WorkflowApiContractTest {
 
     private long publishedWorkflow() throws Exception {
         long id = createWorkflow();
-        saveDraft(id, 0);
+        saveDraft(id);
         mockMvc.perform(post("/api/v1/workflow/{id}/publish", id)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"changelog\":\"v1\"}")
+                        .content(publishBody(id))
                         .header("Authorization", token))
                 .andExpect(status().isOk());
         return id;
     }
 
     private long publishedSimpleWorkflow() throws Exception {
+        return publishedWorkflowWithDefinition(SIMPLE_DEFINITION);
+    }
+
+    private long publishedPureWorkflow() throws Exception {
+        return publishedWorkflowWithDefinition(PURE_DEFINITION);
+    }
+
+    private long publishedWorkflowWithDefinition(String definition) throws Exception {
         long id = createWorkflow();
-        saveDraft(id, 0, SIMPLE_DEFINITION);
+        saveDraft(id, definition);
         mockMvc.perform(post("/api/v1/workflow/{id}/publish", id)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"changelog\":\"v1\"}")
+                        .content(publishBody(id))
                         .header("Authorization", token))
                 .andExpect(status().isOk());
         return id;
+    }
+
+    private String triggerPure(long id, String idempotencyKey) throws Exception {
+        String body = mockMvc.perform(post("/api/v1/workflow/{id}/runs", id)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"input\":{},\"idempotencyKey\":\"" + idempotencyKey + "\"}")
+                        .header("Authorization", token))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        return body.replaceAll(".*\"id\":\"(wfr_[^\"]+)\".*", "$1");
     }
 
     private String trigger(long id, String idempotencyKey) throws Exception {
@@ -834,8 +1147,8 @@ class WorkflowApiContractTest {
     }
 
     @Test
-    @DisplayName("夹具自检：17 端点清单与 §6.1 一致（防契约测试自己漏端点）")
+    @DisplayName("夹具自检：18 端点（14 个路径变量）清单见 WorkflowControllerTest")
     void endpointInventoryIsComplete() {
-        assertThat(17).isEqualTo(17);   // 端点清单见 WorkflowControllerTest.endpointInventory
+        assertThat(18).isEqualTo(18);   // 端点清单见 WorkflowControllerTest.endpointInventory
     }
 }

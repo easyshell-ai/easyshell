@@ -14,5 +14,5 @@ public interface FileProxyService {
     void mkdir(String agentId, String path);
     void delete(String agentId, String path);
     void rename(String agentId, String oldPath, String newPath);
-    void handleFileResponse(String requestId, String responseJson);
+    void handleFileResponse(String agentId, String requestId, String responseJson);
 }

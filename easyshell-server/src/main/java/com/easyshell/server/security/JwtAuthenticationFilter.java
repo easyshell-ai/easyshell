@@ -1,5 +1,6 @@
 package com.easyshell.server.security;
 
+import com.easyshell.server.repository.UserRepository;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -14,6 +15,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Authenticates both user tokens (Authorization: Bearer &lt;access token&gt;) and
@@ -27,8 +29,11 @@ import java.util.List;
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     public static final String ATTR_AGENT_ID = "AGENT_ID";
+    public static final String ATTR_BOUND_AGENT_TOKEN = "BOUND_AGENT_TOKEN";
 
     private final JwtUtils jwtUtils;
+    private final UserRepository userRepository;
+    private final AgentCredentialGenerationValidator generationValidator;
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
@@ -38,20 +43,37 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         if (StringUtils.hasText(token) && jwtUtils.validateToken(token)) {
             try {
                 String type = jwtUtils.getTokenType(token);
-                if (JwtUtils.TOKEN_TYPE_AGENT.equals(type)) {
+                if (AgentCredentialGenerationValidator.TOKEN_TYPE_BOUND_AGENT.equals(type)) {
+                    request.setAttribute(ATTR_BOUND_AGENT_TOKEN, Boolean.TRUE);
+                    var identity = generationValidator.validate(token).orElse(null);
+                    if (identity == null) {
+                        SecurityContextHolder.clearContext();
+                    } else {
+                        var authorities = List.of(new SimpleGrantedAuthority("ROLE_AGENT"));
+                        SecurityContextHolder.getContext().setAuthentication(
+                                new UsernamePasswordAuthenticationToken(identity.agentId(), null, authorities));
+                        request.setAttribute(ATTR_AGENT_ID, identity.agentId());
+                    }
+                } else if (JwtUtils.TOKEN_TYPE_AGENT.equals(type)) {
                     String agentId = jwtUtils.parseToken(token).getSubject();
-                    var authorities = List.of(new SimpleGrantedAuthority("ROLE_AGENT"));
-                    SecurityContextHolder.getContext().setAuthentication(
-                            new UsernamePasswordAuthenticationToken(agentId, null, authorities));
-                    request.setAttribute(ATTR_AGENT_ID, agentId);
+                    if (!generationValidator.permitsLegacy(agentId)) {
+                        SecurityContextHolder.clearContext();
+                    } else {
+                        var authorities = List.of(new SimpleGrantedAuthority("ROLE_AGENT"));
+                        SecurityContextHolder.getContext().setAuthentication(
+                                new UsernamePasswordAuthenticationToken(agentId, null, authorities));
+                        request.setAttribute(ATTR_AGENT_ID, agentId);
+                    }
                 } else if (type == null || JwtUtils.TOKEN_TYPE_ACCESS.equals(type)) {
                     Long userId = jwtUtils.getUserIdFromToken(token);
-                    String username = jwtUtils.getUsernameFromToken(token);
-                    String role = jwtUtils.getRoleFromToken(token);
-                    if (role != null && userId != null) {
-                        var authorities = List.of(new SimpleGrantedAuthority("ROLE_" + role.toUpperCase()));
-                        var authentication = new UsernamePasswordAuthenticationToken(userId, username, authorities);
+                    var user = userRepository.findById(userId).orElse(null);
+                    if (user != null && Integer.valueOf(1).equals(user.getStatus())
+                            && StringUtils.hasText(user.getRole()) && StringUtils.hasText(user.getUsername())) {
+                        var authorities = List.of(new SimpleGrantedAuthority("ROLE_" + user.getRole().toUpperCase(Locale.ROOT)));
+                        var authentication = new UsernamePasswordAuthenticationToken(userId, user.getUsername(), authorities);
                         SecurityContextHolder.getContext().setAuthentication(authentication);
+                    } else {
+                        SecurityContextHolder.clearContext();
                     }
                 }
                 // refresh tokens fall through unauthenticated

@@ -19,10 +19,12 @@ import com.easyshell.server.workflow.properties.WorkflowProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
@@ -56,6 +58,8 @@ public class WorkflowRunService {
     private final AuditLogService auditLogService;
     private final WorkflowProperties properties;
     private final ObjectMapper objectMapper;
+    @Autowired
+    private WorkflowRunProvenanceService provenanceService;
 
     /** 显式事务边界（REQUIRED）：触发链路要么整段落库要么整段回滚，不留半份 run */
     private final TransactionTemplate transactionTemplate;
@@ -87,6 +91,7 @@ public class WorkflowRunService {
      *
      * @param idempotencyKey 同 userId 同 key 重复触发返回首个 run（§3.5 幂等①）
      */
+    @Transactional
     public WorkflowRun trigger(Long workflowId, Long versionId, Map<String, Object> input,
                                Long userId, String idempotencyKey, String triggerType) {
         Workflow workflow = workflowRepository.findById(workflowId)
@@ -106,7 +111,7 @@ public class WorkflowRunService {
         if (idempotencyKey != null && !idempotencyKey.isBlank()) {
             Optional<WorkflowRun> existing = runRepository.findByStartedByAndIdempotencyKey(userId, idempotencyKey);
             if (existing.isPresent()) {
-                return replayOrConflict(existing.get(), normalizedInput);
+                return replayOrConflict(existing.get(), workflowId, versionId, normalizedInput);
             }
         }
 
@@ -140,12 +145,13 @@ public class WorkflowRunService {
             // 并发同 key：唯一键兜底，重查后返回首个 run（§3.5）
             if (idempotencyKey != null && !idempotencyKey.isBlank()) {
                 return runRepository.findByStartedByAndIdempotencyKey(userId, idempotencyKey)
-                        .map(first -> replayOrConflict(first, normalizedInput))
+                        .map(first -> replayOrConflict(first, workflowId, versionId, normalizedInput))
                         .orElseThrow(() -> new BusinessException(409, "IDEMPOTENCY_CONFLICT"));
             }
             throw e;
         }
 
+        provenanceService.initialize(run, version);
         // 触发审计（五类高危事件之一，同步写）
         auditLogService.logSync(userId, "SYSTEM", "WORKFLOW_RUN_TRIGGER", "workflow_run", run.getId(),
                 "workflow=" + workflowId + ", version=" + versionId + ", trigger=" + run.getTriggerType(),
@@ -181,7 +187,6 @@ public class WorkflowRunService {
                 // 已被取消/终态（并发取消竞态）：不再驱动
                 return runRepository.findById(run.getId()).orElse(run);
             }
-            engine.initVariables(run, def, parseInput(run.getInputJson()));
             afterCommit(() -> engine.submitDrive(run));
         } else {
             // 背压①：置 queued，由 WorkflowPendingWakeupScanner 泵回（§3.9）
@@ -214,8 +219,10 @@ public class WorkflowRunService {
      * 入参快照是规范化后写库的（{@code validateInput} 的输出），因此同一次入参的
      * 序列化结果逐字节稳定，可以直接比对。</p>
      */
-    private WorkflowRun replayOrConflict(WorkflowRun first, Map<String, Object> normalizedInput) {
-        if (!toJson(normalizedInput).equals(first.getInputJson())) {
+    private WorkflowRun replayOrConflict(WorkflowRun first, Long workflowId, Long versionId,
+                                         Map<String, Object> normalizedInput) {
+        if (!Objects.equals(workflowId, first.getWorkflowId()) || !Objects.equals(versionId, first.getVersionId())
+                || !toJson(normalizedInput).equals(first.getInputJson())) {
             throw new BusinessException(400,
                     "IDEMPOTENCY_CONFLICT: 同一幂等键已用于不同入参的触发，请更换幂等键");
         }

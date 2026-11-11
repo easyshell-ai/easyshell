@@ -54,7 +54,6 @@ public class CommandRiskEngine {
             "chmod 4755", "chmod u+s"
     );
 
-    private static final Set<String> RISK_MODIFIERS_SED = Set.of("-i");
     private static final Set<String> RISK_MODIFIERS_CURL = Set.of("-X", "--request", "-d", "--data", "--upload-file");
 
     /**
@@ -185,6 +184,17 @@ public class CommandRiskEngine {
                 continue;
             }
 
+            // Shell parses substitutions and redirections before executing any command.
+            // Check the whole line before splitting so substitutions containing `;`/`|`
+            // cannot be broken into misleading individually safe segments.
+            if (containsWriteRedirection(trimmed) || containsExecutableSubstitution(trimmed)) {
+                // Keep command text internal to assessment; only the level is exposed by
+                // outbound risk VOs. This check does not create another risk gate.
+                commandRisks.add(CommandRisk.builder().command(trimmed).level(RiskLevel.HIGH)
+                        .reason("包含写重定向或命令替换").build());
+                continue;
+            }
+
             // 引号感知切分: 引号内的 | ; && || 不视为分隔符（避免 grep -E "a|b" file 被误切）
             for (String segment : splitCommandSegments(trimmed)) {
                 String cmd = segment.trim();
@@ -238,6 +248,12 @@ public class CommandRiskEngine {
             }
         }
 
+        // Apply the same write-redirection and substitution guard to bare commands as
+        // to shell -c payloads. A read-only command name does not make its arguments safe.
+        if (containsWriteRedirection(trimmed) || containsExecutableSubstitution(trimmed)) {
+            return RiskLevel.HIGH;
+        }
+
         // Obfuscation / interpreter execution: the classic way to smuggle a payload past a
         // keyword blacklist. Treat as high risk instead of silently trusting it.
         if (isObfuscated(trimmed)) {
@@ -254,7 +270,8 @@ public class CommandRiskEngine {
         }
 
         for (String compound : getAllLowCompoundCommands()) {
-            if (trimmed.startsWith(compound)) {
+            if (trimmed.equals(compound) || trimmed.startsWith(compound + " ")
+                    || trimmed.startsWith(compound + "\t")) {
                 return RiskLevel.LOW;
             }
         }
@@ -658,9 +675,15 @@ public class CommandRiskEngine {
                 continue;
             }
             if (inDouble) {
-                if (c == '"') {
+                if (c == '\\' && i + 1 < command.length()) {
+                    i++;
+                } else if (c == '"') {
                     inDouble = false;
                 }
+                continue;
+            }
+            if (c == '\\' && i + 1 < command.length()) {
+                i++;
                 continue;
             }
             if (c == '\'') {
@@ -675,8 +698,16 @@ public class CommandRiskEngine {
                 continue;
             }
             if (i + 1 < command.length() && command.charAt(i + 1) == '&') {
-                // 2>&1 文件描述符复制，不是写文件
-                i++;
+                // Only numeric descriptor duplication or close is safe. Bash also
+                // accepts >&filename, which opens and truncates a file.
+                int j = i + 2;
+                while (j < command.length() && Character.isWhitespace(command.charAt(j))) j++;
+                int start = j;
+                while (j < command.length() && Character.isDigit(command.charAt(j))) j++;
+                if (j == start && j < command.length() && command.charAt(j) == '-') j++;
+                if (j == start || (j < command.length() && !Character.isWhitespace(command.charAt(j))
+                        && ";|&".indexOf(command.charAt(j)) < 0)) return true;
+                i = j - 1;
                 continue;
             }
             if (i + 1 < command.length() && command.charAt(i + 1) == '>') {
@@ -694,6 +725,23 @@ public class CommandRiskEngine {
                 return true;
             }
             i = j - 1;
+        }
+        return false;
+    }
+
+    /** Shell substitutions execute inside double quotes but are literal inside single quotes. */
+    private boolean containsExecutableSubstitution(String command) {
+        boolean single = false;
+        boolean doubleQuoted = false;
+        boolean escaped = false;
+        for (int i = 0; i < command.length(); i++) {
+            char c = command.charAt(i);
+            if (escaped) { escaped = false; continue; }
+            if (c == '\\' && !single) { escaped = true; continue; }
+            if (c == '\'' && !doubleQuoted) { single = !single; continue; }
+            if (c == '"' && !single) { doubleQuoted = !doubleQuoted; continue; }
+            if (!single && (c == '`' || (c == '$' && i + 1 < command.length()
+                    && command.charAt(i + 1) == '('))) return true;
         }
         return false;
     }
@@ -730,9 +778,6 @@ public class CommandRiskEngine {
     }
 
     private boolean hasRiskModifier(String command, String baseCommand) {
-        if ("sed".equals(baseCommand) && containsAny(command, RISK_MODIFIERS_SED)) {
-            return true;
-        }
         if ("curl".equals(baseCommand) && containsAny(command, RISK_MODIFIERS_CURL)) {
             return true;
         }
@@ -748,6 +793,7 @@ public class CommandRiskEngine {
         List<String> tokens = tokenizeCommand(command);
         List<String> args = tokens.size() > 1 ? tokens.subList(1, tokens.size()) : List.of();
         return switch (baseCommand) {
+            case "sed" -> containsInPlaceFlag(args);
             // awk 程序里不允许 system()/getline 以及向文件或管道输出（与降级路径同一判定）
             case "awk", "gawk" -> !isReadOnlyAwkProgram(command);
             case "sort" -> containsAnyToken(args, "-o", "--output", "--compress-program")

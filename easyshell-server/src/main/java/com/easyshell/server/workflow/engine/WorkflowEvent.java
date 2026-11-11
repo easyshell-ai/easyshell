@@ -10,7 +10,7 @@ import java.time.Instant;
  *                 RUN_WAITING / RUN_SUCCEEDED / RUN_FAILED / RUN_CANCELLED / RUN_TIMEOUT
  * @param runId    run ID
  * @param nodeKey  关联节点（run 级事件为 null）
- * @param message  人读信息（已过 SensitiveDataFilter）
+ * @param message  人读信息（出站时由事件出口过滤）
  * @param payload  结构化负载（M1 不落日志，避免把输出写进出站通道）
  * @param at       事件时刻
  */

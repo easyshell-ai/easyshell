@@ -92,7 +92,10 @@ public class WorkflowTestRunService {
      */
     public WorkflowTestRunVO testRun(WorkflowRun run, Workflow workflow, String nodeKey,
                                      Long userId, String username) {
-        WorkflowDefinition def = loadDefinition(run.getVersionId());
+        if (!java.util.Objects.equals(run.getWorkflowId(), workflow.getId())) {
+            throw new BusinessException(404, "WORKFLOW_NOT_FOUND: 运行与工作流不匹配");
+        }
+        WorkflowDefinition def = loadDefinition(run.getVersionId(), workflow.getId());
         WorkflowNode node = def.nodeByKey(nodeKey);
         if (node == null) {
             throw new BusinessException(404, "WORKFLOW_NOT_FOUND: 运行定义中不存在节点 " + nodeKey);
@@ -115,13 +118,20 @@ public class WorkflowTestRunService {
                     .riskMatches(List.of())
                     .warnings(List.of("AI 节点试运行不会调用模型，请在真实运行中验证"))
                     .build();
-            case LLM, CLASSIFIER, CODE -> WorkflowTestRunVO.builder()
+            case LLM, CLASSIFIER -> WorkflowTestRunVO.builder()
                     .nodeKey(nodeKey)
                     .nodeType(node.nodeType().code())
                     .status("ok")
                     .riskLevel(RiskLevel.LOW.name())
                     .riskMatches(List.of())
                     .warnings(List.of("试运行不会调用模型/执行代码"))
+                    .build();
+            case CODE -> WorkflowTestRunVO.builder()
+                    .nodeKey(nodeKey)
+                    .nodeType(NodeType.CODE.code())
+                    .status("unavailable")
+                    .riskMatches(List.of())
+                    .warnings(List.of("CODE_RUNTIME_UNAVAILABLE: code 节点运行时不可用，试运行未执行代码"))
                     .build();
             case NOTIFY -> previewNotify(node);
             case APPROVAL, WAIT -> WorkflowTestRunVO.builder()
@@ -207,17 +217,20 @@ public class WorkflowTestRunService {
         RiskLevel level = risk.getOverallRisk();
         List<String> matches = risk.getBannedMatches() == null ? List.of() : risk.getBannedMatches();
         if (level == RiskLevel.BANNED) {
-            throw riskBlocked("WORKFLOW_RISK_BLOCKED", "脚本命中封禁模式（仅人工审批可豁免）",
+            throw riskBlocked("WORKFLOW_RISK_BLOCKED", "脚本命中封禁模式；工作流派发审批绑定尚不可用",
                     level, matches, riskPolicy, node.getKey());
         }
         if (level == RiskLevel.HIGH) {
-            throw riskBlocked("RISK_NEED_APPROVAL", "高风险脚本需要本 run 内已通过的 approval 祖先节点授权（§6.3.3）",
+            throw riskBlocked("RISK_NEED_APPROVAL", "高风险工作流派发审批绑定尚不可用",
                     level, matches, riskPolicy, node.getKey());
         }
         if (level == RiskLevel.MEDIUM && !"allow_medium".equals(riskPolicy)) {
             throw riskBlocked("RISK_NEED_APPROVAL", "中风险脚本被 riskPolicy=" + riskPolicy
-                            + " 拒绝；如需执行请改为 allow_medium（转人工审批）或降低脚本风险",
+                            + " 拒绝；工作流派发审批绑定尚不可用",
                     level, matches, riskPolicy, node.getKey());
+        }
+        if (level == RiskLevel.MEDIUM) {
+            warnings.add("预演未执行脚本；工作流派发审批绑定尚不可用，实际派发会被拒绝");
         }
 
         return WorkflowTestRunVO.builder()
@@ -407,9 +420,11 @@ public class WorkflowTestRunService {
         }
     }
 
-    private WorkflowDefinition loadDefinition(Long versionId) {
-        String json = versionRepository.findDefinition(versionId)
-                .orElseThrow(() -> new BusinessException(404, "WORKFLOW_NOT_FOUND: 版本定义不存在"));
+    private WorkflowDefinition loadDefinition(Long versionId, Long workflowId) {
+        var version = versionRepository.findByIdAndWorkflowId(versionId, workflowId)
+                .filter(v -> Boolean.TRUE.equals(v.getIsValid()))
+                .orElseThrow(() -> new BusinessException(404, "WORKFLOW_NOT_FOUND: 已发布版本不存在"));
+        String json = version.getDefinitionJson();
         try {
             return objectMapper.readValue(json, WorkflowDefinition.class);
         } catch (Exception e) {

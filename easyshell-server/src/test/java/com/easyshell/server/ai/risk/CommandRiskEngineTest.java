@@ -35,6 +35,24 @@ class CommandRiskEngineTest {
         engine = new CommandRiskEngine(configService);
     }
 
+    @Test
+    void bareReadCommandsCannotHideWritesOrCommandSubstitution() {
+        for (String command : java.util.List.of(
+                "echo hello > /tmp/not-read-only", "df -h >> /tmp/not-read-only",
+                "echo $(touch /tmp/not-read-only)", "echo \"$(touch /tmp/not-read-only)\"",
+                "echo `touch /tmp/not-read-only`", "echo \"'$(touch /tmp/not-read-only)'\"",
+                "echo $(echo safe; touch /tmp/not-read-only)", "echo $(echo safe | touch /tmp/not-read-only)",
+                "echo \"a\\\"b\" > /tmp/not-read-only", "echo safe >&/tmp/not-read-only",
+                "echo safe 2>&/tmp/not-read-only")) {
+            assertThat(engine.assessScript(command).getOverallRisk()).as(command).isNotEqualTo(RiskLevel.LOW);
+        }
+        assertThat(engine.assessScript("echo '$(not-executed)'").getOverallRisk()).isEqualTo(RiskLevel.LOW);
+        assertThat(engine.assessScript("df -h >/dev/null 2>&1").getOverallRisk()).isEqualTo(RiskLevel.LOW);
+        assertThat(engine.assessScript("sed --in-place 's/a/b/' file").getOverallRisk()).isNotEqualTo(RiskLevel.LOW);
+        assertThat(engine.assessScript("sed -i.bak 's/a/b/' file").getOverallRisk()).isNotEqualTo(RiskLevel.LOW);
+        assertThat(engine.assessScript("docker psomething").getOverallRisk()).isNotEqualTo(RiskLevel.LOW);
+    }
+
     @Nested
     @DisplayName("classifyCommand")
     class ClassifyCommand {

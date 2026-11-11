@@ -113,6 +113,9 @@ public class AgentEvent {
     /** Session ID (for SESSION event) */
     private String sessionId;
 
+    /** Server-generated identifier for the pending plan confirmation. */
+    private String planId;
+
     /** Approval request details */
     private Map<String, Object> approvalData;
 
@@ -218,10 +221,11 @@ public class AgentEvent {
         return AgentEvent.builder().type(Type.THINKING).content(statusText).agent("system").build();
     }
 
-    public static AgentEvent planAwaitConfirmation(ExecutionPlan plan) {
+    public static AgentEvent planAwaitConfirmation(ExecutionPlan plan, String planId) {
         return AgentEvent.builder()
                 .type(Type.PLAN_AWAIT_CONFIRMATION)
                 .plan(plan)
+                .planId(planId)
                 .build();
     }
 

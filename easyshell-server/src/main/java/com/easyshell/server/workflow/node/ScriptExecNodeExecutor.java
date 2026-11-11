@@ -13,7 +13,11 @@ import com.easyshell.server.model.entity.WorkflowApproval;
 import com.easyshell.server.repository.AgentRepository;
 import com.easyshell.server.repository.JobRepository;
 import com.easyshell.server.repository.TaskRepository;
+import com.easyshell.server.repository.TaskTargetSnapshotRepository;
 import com.easyshell.server.repository.WorkflowApprovalRepository;
+import com.easyshell.server.repository.WorkflowNodeRunRepository;
+import com.easyshell.server.repository.WorkflowRunProvenanceRepository;
+import com.easyshell.server.repository.WorkflowRunRepository;
 import com.easyshell.server.service.ClusterService;
 import com.easyshell.server.service.DispatchAuthority;
 import com.easyshell.server.service.TagService;
@@ -37,11 +41,20 @@ import com.easyshell.server.workflow.model.RenderResult;
 import com.easyshell.server.workflow.model.WorkflowNode;
 import com.easyshell.server.workflow.model.ValueType;
 import com.easyshell.server.workflow.properties.WorkflowProperties;
+import com.easyshell.server.workflow.service.WorkflowRunProvenanceService;
+import com.easyshell.server.service.HostIdentityService;
+import com.easyshell.server.service.HostAclService;
+import com.easyshell.server.workflow.gate.DispatchIntentHmac;
+import com.easyshell.server.workflow.gate.WorkflowDispatchApprovalBindingService;
+import com.easyshell.server.workflow.gate.WorkflowDispatchApprovalSuspensionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -64,11 +77,8 @@ import java.util.concurrent.ThreadLocalRandom;
  * ⑥ {@link CommandRiskEngine}（L4，就在 {@code createAndDispatch} 咽喉里）→
  * ⑦ {@code createAndDispatch(rendered, ...)}（落库 + 派发）。</p>
  *
- * <p><b>派发授权（§6.3.3）</b>：默认无授权（走门禁，非 LOW 一律 449）。唯一例外是本 run 里
- * 某个<b>拓扑祖先</b> approval 节点已 approved（或本节点自己的 MEDIUM 动态审批已通过）——
- * 此时传 {@link DispatchAuthority#HUMAN_APPROVED}，证据 = {@code workflow_approval:<runId>:<id>}。
- * 没有 approval 祖先的工作流，HIGH 脚本永远节点失败（BANNED 同理，人工审批是唯一能放过
- * BANNED 的路径）。</p>
+ * <p><b>派发授权</b>：精确审批启用时，审批绑定当前 attempt 的实际脚本、目标代次和超时；
+ * 唯一风险门禁消费绑定后才能落库派发。祖先审批不能替代该证据。</p>
  */
 @Slf4j
 @Component
@@ -84,7 +94,9 @@ public class ScriptExecNodeExecutor implements NodeExecutor {
     private final JobRepository jobRepository;
     private final TaskRepository taskRepository;
     private final WorkflowApprovalRepository approvalRepository;
-    private final WorkflowApprovalStore approvalStore;
+    private final WorkflowNodeRunRepository nodeRunRepository;
+    private final WorkflowRunRepository runRepository;
+    private final EntityManager entityManager;
     private final ExpressionEvaluator expressionEvaluator;
     private final CommandRiskEngine riskEngine;
     private final DagValidator dagValidator;
@@ -98,6 +110,29 @@ public class ScriptExecNodeExecutor implements NodeExecutor {
      * is not active"。
      */
     private final TransactionTemplate dispatchTransactionTemplate;
+    private WorkflowRunProvenanceService provenanceService;
+    private WorkflowRunProvenanceRepository provenanceRepository;
+    private TaskTargetSnapshotRepository targetSnapshots;
+    private HostIdentityService identities;
+    private HostAclService hostAcl;
+    private WorkflowDispatchApprovalSuspensionService dispatchSuspensions;
+
+    @Autowired
+    void setDispatchApprovalDependencies(HostIdentityService identities, HostAclService hostAcl,
+                                        WorkflowDispatchApprovalSuspensionService dispatchSuspensions) {
+        this.identities = identities;
+        this.hostAcl = hostAcl;
+        this.dispatchSuspensions = dispatchSuspensions;
+    }
+
+    @Autowired
+    void setProvenanceDependencies(WorkflowRunProvenanceService provenanceService,
+                                   WorkflowRunProvenanceRepository provenanceRepository,
+                                   TaskTargetSnapshotRepository targetSnapshots) {
+        this.provenanceService = Objects.requireNonNull(provenanceService);
+        this.provenanceRepository = Objects.requireNonNull(provenanceRepository);
+        this.targetSnapshots = Objects.requireNonNull(targetSnapshots);
+    }
 
     public ScriptExecNodeExecutor(TaskService taskService,
                                   ClusterService clusterService,
@@ -106,6 +141,9 @@ public class ScriptExecNodeExecutor implements NodeExecutor {
                                   JobRepository jobRepository,
                                   TaskRepository taskRepository,
                                   WorkflowApprovalRepository approvalRepository,
+                                  WorkflowNodeRunRepository nodeRunRepository,
+                                  WorkflowRunRepository runRepository,
+                                  EntityManager entityManager,
                                   WorkflowApprovalStore approvalStore,
                                   ExpressionEvaluator expressionEvaluator,
                                   CommandRiskEngine riskEngine,
@@ -121,7 +159,9 @@ public class ScriptExecNodeExecutor implements NodeExecutor {
         this.jobRepository = jobRepository;
         this.taskRepository = taskRepository;
         this.approvalRepository = approvalRepository;
-        this.approvalStore = approvalStore;
+        this.nodeRunRepository = Objects.requireNonNull(nodeRunRepository);
+        this.runRepository = Objects.requireNonNull(runRepository);
+        this.entityManager = Objects.requireNonNull(entityManager);
         this.expressionEvaluator = expressionEvaluator;
         this.riskEngine = riskEngine;
         this.dagValidator = dagValidator;
@@ -195,8 +235,66 @@ public class ScriptExecNodeExecutor implements NodeExecutor {
 
     @Override
     public NodeOutcome execute(NodeContext ctx) {
+        String taskId;
+        synchronized (ctx.nodeCancelled()) {
+            if (ctx.isCancelled()) throw new NodeCancelledException("节点已取消，停止派发");
+            taskId = dispatchTransactionTemplate.execute(tx -> prepareOrReuseTask(ctx));
+        }
+        if (taskId == null) {
+            return NodeOutcome.WAITING;
+        }
+        ctx.nodeRun().setTaskId(taskId);
+        pollTaskTerminal(ctx, taskId);
+        Object output = collectTaskOutput(taskId);
+        ctx.variables().putNodeOutput(ctx.node().getKey(), ctx.node().getOutputVar(), output);
+        return NodeOutcome.SUCCEEDED;
+    }
+
+    private String prepareOrReuseTask(NodeContext ctx) {
         WorkflowNode node = ctx.node();
         String runId = ctx.run().getId();
+        var run = runRepository.lockById(runId)
+                .orElseThrow(() -> new NodeCancelledException("运行不存在，停止派发"));
+        entityManager.refresh(run, LockModeType.PESSIMISTIC_WRITE);
+        if (ctx.isCancelled() || !"running".equals(run.getStatus()) || !Boolean.FALSE.equals(run.getCancelRequested())) {
+            throw new NodeCancelledException("运行已取消或不在运行中，停止派发");
+        }
+        var attempt = nodeRunRepository.lockRunningAttempt(ctx.nodeRun().getId(), runId,
+                node.getKey(), ctx.nodeRun().getAttempt())
+                .orElseThrow(() -> new NodeFailedException("ATTEMPT_NOT_RUNNING", "节点 attempt 已不在运行中"));
+        entityManager.refresh(attempt, LockModeType.PESSIMISTIC_WRITE);
+        if (!"running".equals(attempt.getStatus()) || !runId.equals(attempt.getRunId())
+                || !node.getKey().equals(attempt.getNodeKey())
+                || !Objects.equals(ctx.nodeRun().getAttempt(), attempt.getAttempt())) {
+            throw new NodeFailedException("ATTEMPT_NOT_RUNNING", "节点 attempt 已不在运行中");
+        }
+        if (attempt.getTaskId() != null) {
+            var provenance = provenanceRepository.findComplete(runId)
+                    .orElseThrow(() -> new IllegalStateException("Unknown run provenance"));
+            if (!"HOST".equals(provenance.kind()) || ctx.run().getVersionId() == null
+                    || provenance.versionId() != ctx.run().getVersionId()
+                    || !provenance.taskIds().contains(attempt.getTaskId())
+                    || targetSnapshots.findComplete(attempt.getTaskId()).isEmpty()) {
+                throw new IllegalStateException("Invalid bound task provenance");
+            }
+            return attempt.getTaskId();
+        }
+        if (properties.getApproval().isDispatchEnabled()
+                && !provenanceService.matchesExecutionDefinition(runId, ctx.definition())) {
+            throw new NodeFailedException("WORKFLOW_VERSION_MISMATCH", "执行定义与不可变版本不一致");
+        }
+        WorkflowApproval dispatchApproval = null;
+        if (properties.getApproval().isDispatchEnabled() && attempt.getApprovalId() != null) {
+            dispatchApproval = approvalRepository.findById(attempt.getApprovalId())
+                    .filter(a -> runId.equals(a.getRunId()) && node.getKey().equals(a.getNodeKey())
+                            && "script-exec".equals(a.getNodeType()))
+                    .orElseThrow(() -> new NodeFailedException("APPROVAL_MISMATCH", "派发审批绑定不匹配"));
+            if (!"approved".equals(dispatchApproval.getStatus()) || dispatchApproval.getDecidedBy() == null
+                    || dispatchApproval.getExpiresAt() == null
+                    || !dispatchApproval.getExpiresAt().isAfter(java.time.LocalDateTime.now())) {
+                throw new NodeFailedException("DISPATCH_APPROVAL_REJECTED", "派发审批尚未批准、已拒绝或过期");
+            }
+        }
         Map<String, Object> config = node.getConfig() == null ? Map.of() : node.getConfig();
         String script = node.configString("script");
         if (script == null || script.isBlank()) {
@@ -204,8 +302,21 @@ public class ScriptExecNodeExecutor implements NodeExecutor {
         }
         Map<String, String> parameters = stringMap(config.get("parameters"));
         Set<String> rawParams = new LinkedHashSet<>(stringList(config.get("rawParams")));
+        if (dagValidator.hasAiAncestor(ctx.definition(), node.getKey())) {
+            if (!rawParams.isEmpty() || !ShellSafeRenderer.rawSlotNames(script).isEmpty()
+                    || (config.get("rawParams") != null && !(config.get("rawParams") instanceof List<?>))) {
+                throw new NodeFailedException("AI_OUTPUT_RAW_FORBIDDEN", "AI/LLM/classifier 祖先下禁止使用 rawParams");
+            }
+            Set<String> gates = dagValidator.dominatingApprovals(ctx.definition(), node.getKey());
+            boolean approved = approvalRepository.findByRunId(runId).stream().anyMatch(a ->
+                    gates.contains(a.getNodeKey()) && "approval".equals(a.getNodeType())
+                            && "approved".equals(a.getStatus()) && a.getDecidedBy() != null);
+            if (!approved) {
+                throw new NodeFailedException("AI_APPROVAL_REQUIRED", "AI 祖先脚本需要已由人工通过的支配审批");
+            }
+        }
         String onUnsafeValue = node.configString("onUnsafeValue", "reject");
-        String riskPolicy = node.configString("riskPolicy", "block");
+        String riskPolicy = node.getRiskPolicy() != null ? node.getRiskPolicy() : node.configString("riskPolicy", "block");
 
         // ① 静态检查：槽位格式 / 槽位 ⊆ parameters / raw 声明
         // 只有"像槽位但不合规格"的才拒绝（合规格的 {{MSG}} 不拦）
@@ -281,39 +392,77 @@ public class ScriptExecNodeExecutor implements NodeExecutor {
         // ⑥ L4 风险门禁预判 + riskPolicy 三态（真正的门禁在 createAndDispatch 里）
         RiskAssessment risk = riskEngine.assessScript(rendered.rendered());
         Optional<WorkflowApproval> riskAuthority = findApprovedAuthority(ctx);
-        if (riskAuthority.isEmpty()) {
+        boolean exactApprovals = properties.getApproval().isDispatchEnabled();
+        if (exactApprovals && risk.getOverallRisk() == RiskLevel.BANNED) {
+            throw new NodeFailedException("RISK_BLOCKED", "工作流禁止派发封禁命令");
+        }
+        if (!exactApprovals && riskAuthority.isEmpty()) {
             RiskLevel level = risk.getOverallRisk();
             if (level == RiskLevel.BANNED) {
                 throw new NodeFailedException("RISK_BLOCKED",
                         "脚本命中封禁模式: " + String.join(",", risk.getBannedMatches())
-                                + "（仅人工审批可豁免）");
+                                + "（工作流派发审批绑定尚不可用）");
             }
             if (level == RiskLevel.HIGH) {
                 throw new NodeFailedException("RISK_BLOCKED",
-                        "高风险脚本需要本 run 内已通过的 approval 祖先节点授权（§6.3.3）");
+                        "高风险工作流派发审批绑定尚不可用，当前无法执行");
             }
             if (level == RiskLevel.MEDIUM && !"allow_medium".equals(riskPolicy)) {
                 throw new NodeFailedException("RISK_BLOCKED",
                         "中风险脚本被 riskPolicy=" + riskPolicy + " 拒绝；如需执行请改为 allow_medium"
-                                + "（转人工审批）或降低脚本风险");
+                                + "；当前工作流派发审批绑定尚不可用");
             }
             if (level == RiskLevel.MEDIUM) {
-                // MEDIUM → 转审批：创建审批行后挂起，通过后以 HUMAN_APPROVED 派发（§6.5.3）
-                WorkflowApproval approval = approvalStore.create(runId, node.getKey(),
-                        NodeType.SCRIPT_EXEC.code(), "中风险脚本执行确认",
-                        detailJson(ctx, level, risk), level.name(),
-                        String.join(",", risk.getBannedMatches()),
-                        "ADMIN", properties.getApproval().getDefaultTimeoutSec());
-                ctx.nodeRun().setApprovalId(approval.getId());
-                return NodeOutcome.WAITING;
+                throw new NodeFailedException("WORKFLOW_DISPATCH_APPROVAL_UNAVAILABLE",
+                        "工作流派发审批绑定尚不可用，无法为中风险脚本创建可执行的审批");
             }
         }
 
         // ⑦ 目标解析（host-list 执行前校验，§2.7）
         Set<String> agentIds = resolveTargets(ctx, node);
 
+        if (exactApprovals && dispatchApproval == null && risk.getOverallRisk() != RiskLevel.LOW) {
+            if (risk.getOverallRisk() == RiskLevel.MEDIUM && !"allow_medium".equals(riskPolicy)
+                    && !"strict".equals(riskPolicy)) {
+                throw new NodeFailedException("RISK_BLOCKED", "节点风险策略不允许申请派发审批");
+            }
+            if (provenanceService.verifiedIdentity(runId) != WorkflowRunProvenanceService.VerifiedIdentity.LEGACY) {
+                throw new NodeFailedException("APPROVAL_PROVENANCE_UNKNOWN", "运行版本来源无法验证");
+            }
+            List<DispatchIntentHmac.Target> targets = new ArrayList<>();
+            for (String id : agentIds.stream().sorted().toList()) {
+                var identity = identities.lock(id);
+                if (!identity.active() || identity.generation() <= 0 || !agentRepository.existsById(id)
+                        || !hostAcl.allowedForGeneration(run.getStartedBy(), id, identity.generation(), HostAclService.Permission.EXECUTE)) {
+                    throw new BusinessException(403, "Host execute permission required");
+                }
+                targets.add(new DispatchIntentHmac.Target(id, identity.generation()));
+            }
+            if (ctx.isCancelled()) throw new NodeCancelledException("节点已取消，停止审批");
+            var intent = new WorkflowDispatchApprovalBindingService.Intent(runId, attempt.getId(), attempt.getAttempt(),
+                    run.getStartedBy(), rendered.rendered(), targets, node.configInt("timeoutSeconds", 3600));
+            String detail;
+            try {
+                Map<String, Object> payload = new java.util.LinkedHashMap<>();
+                payload.put("scriptPreview", sensitiveDataFilter.filter(rendered.rendered()));
+                payload.put("targets", targets);
+                payload.put("timeoutSeconds", intent.timeoutSec());
+                payload.put("riskLevel", risk.getOverallRisk().name());
+                String unsigned = objectMapper.writeValueAsString(payload);
+                DispatchIntentHmac hmac = DispatchIntentHmac.fromEnvironment();
+                payload.put("detailHmac", hmac.intentHmac(intent.runId(), intent.nodeRunId(), intent.attempt(),
+                        intent.userId(), hmac.scriptHmac(unsigned), intent.targets(), intent.timeoutSec()));
+                detail = objectMapper.writeValueAsString(payload);
+            } catch (Exception failure) {
+                throw new NodeFailedException("APPROVAL_DETAIL_INVALID", "无法生成审批快照");
+            }
+            long id = dispatchSuspensions.suspend(node.getKey(), intent, properties.getApproval().getDefaultTimeoutSec(), detail);
+            ctx.nodeRun().setApprovalId(id);
+            return null;
+        }
+
         // ⑧ 派发授权（final 化以便进 lambda：默认无授权，唯一例外是已审批的 approval 祖先）
-        Optional<WorkflowApproval> approvedAuthority = findApprovedAuthority(ctx);
+        Optional<WorkflowApproval> approvedAuthority = exactApprovals ? Optional.ofNullable(dispatchApproval) : findApprovedAuthority(ctx);
         DispatchAuthority authority =
                 approvedAuthority.isPresent() ? DispatchAuthority.HUMAN_APPROVED : null;
         String evidenceRef = approvedAuthority.isPresent()
@@ -330,19 +479,16 @@ public class ScriptExecNodeExecutor implements NodeExecutor {
         ctx.nodeRun().setInputJson(inputJson(values, rawParams));
         ctx.nodeRun().setRawParams(String.join(",", rawParams));
 
-        Task task = dispatchTransactionTemplate.execute(tx ->
-                taskService.createAndDispatch(request, ctx.run().getStartedBy(), authority, evidenceRef));
-        ctx.nodeRun().setTaskId(task.getId());
-        markWorkflowSource(task.getId());
+        if (ctx.isCancelled()) throw new NodeCancelledException("节点已取消，停止派发");
+        Task task = taskService.createAndDispatch(request, ctx.run().getStartedBy(), authority, evidenceRef);
+        if (taskRepository.markWorkflowSource(task.getId()) != 1 ||
+                nodeRunRepository.bindTask(attempt.getId(), task.getId()) != 1) {
+            throw new IllegalStateException("Unable to bind task to running attempt");
+        }
+        provenanceService.associateTask(runId, task.getId());
+        if (ctx.isCancelled()) throw new NodeCancelledException("节点已取消，回滚派发");
         ctx.nodeRun().setAgentVersions(agentVersionsJson(agentIds));
-
-        // ⑨ 轮询 task 终态（§3.13：1000ms ±20% jitter，每轮检查取消）
-        pollTaskTerminal(ctx, task.getId());
-
-        // ⑩ 产出 output（自由 JSON 对象；未声明 outputSchema 时下游只能整体引用，§2.11）
-        Object output = collectTaskOutput(task.getId());
-        ctx.variables().putNodeOutput(node.getKey(), node.getOutputVar(), output);
-        return NodeOutcome.SUCCEEDED;
+        return task.getId();
     }
 
     @Override
@@ -357,23 +503,6 @@ public class ScriptExecNodeExecutor implements NodeExecutor {
     // ------------------------------------------------------------------
     // 内部
     // ------------------------------------------------------------------
-
-    /** MEDIUM 动态审批的 detail（不可变快照；只存等级与模式串，不存脚本原文，C-9） */
-    private String detailJson(NodeContext ctx, RiskLevel level, RiskAssessment risk) {
-        Map<String, Object> detail = new java.util.LinkedHashMap<>();
-        detail.put("runId", ctx.run().getId());
-        detail.put("nodeKey", ctx.node().getKey());
-        detail.put("nodeName", ctx.node().getName());
-        detail.put("riskLevel", level.name());
-        detail.put("riskMatches", risk.getBannedMatches());
-        detail.put("triggeredBy", ctx.run().getStartedBy());
-        detail.put("triggeredAt", java.time.LocalDateTime.now().toString());
-        try {
-            return objectMapper.writeValueAsString(detail);
-        } catch (Exception e) {
-            return "{}";
-        }
-    }
 
     private String inputJson(Map<String, String> values, Set<String> rawParams) {
         Map<String, Object> input = new java.util.LinkedHashMap<>();
@@ -391,18 +520,6 @@ public class ScriptExecNodeExecutor implements NodeExecutor {
         String token = ctx.run().getId() + ":" + ctx.node().getKey() + ":" + ctx.nodeRun().getAttempt();
         String name = ctx.node().getName() == null ? ctx.node().getKey() : ctx.node().getName();
         return truncate("[wf] " + name + " " + token, 120);
-    }
-
-    /** Task.source='workflow'（R2/G-17：前端来源筛选列；零 Job 表改动） */
-    private void markWorkflowSource(String taskId) {
-        try {
-            taskRepository.findById(taskId).ifPresent(task -> {
-                task.setSource("workflow");
-                taskRepository.save(task);
-            });
-        } catch (Exception e) {
-            log.warn("标记 task 来源失败（不影响派发）: task={} err={}", taskId, e.getMessage());
-        }
     }
 
     /** agent 版本快照（B12：派发时从 Agent.agentVersion 读取，零 Job 表改动） */

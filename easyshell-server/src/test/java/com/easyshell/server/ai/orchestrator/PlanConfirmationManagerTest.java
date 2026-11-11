@@ -1,67 +1,64 @@
 package com.easyshell.server.ai.orchestrator;
 
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import java.util.concurrent.CompletableFuture;
+import java.time.Duration;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.*;
 
-@DisplayName("PlanConfirmationManager")
 class PlanConfirmationManagerTest {
+    private final PlanConfirmationManager manager = new PlanConfirmationManager();
 
-    private PlanConfirmationManager manager;
-
-    @BeforeEach
-    void setUp() {
-        manager = new PlanConfirmationManager();
+    @Test
+    void noPendingDecisionFailsAndSessionsAreIndependent() {
+        assertThat(manager.confirm("missing", "id")).isFalse();
+        assertThat(manager.reject("missing", "id")).isFalse();
+        var first = manager.waitForConfirmation("a", 10);
+        var second = manager.waitForConfirmation("b", 10);
+        assertThat(manager.confirm("a", first.planId())).isTrue();
+        assertThat(manager.reject("b", second.planId())).isTrue();
+        assertThat(first.future().join()).isTrue();
+        assertThat(second.future().join()).isFalse();
     }
 
     @Test
-    void confirm_completesWithTrue() throws Exception {
-        CompletableFuture<Boolean> future = manager.waitForConfirmation("s1", 10);
-        manager.confirm("s1");
-        assertThat(future.get()).isTrue();
+    void matchingDecisionCompletesOnlyOnce() {
+        var plan = manager.waitForConfirmation("s", 10);
+        assertThat(manager.confirm("s", plan.planId())).isTrue();
+        assertThat(plan.future().join()).isTrue();
+        assertThat(manager.confirm("s", plan.planId())).isFalse();
+        var rejected = manager.waitForConfirmation("s", 10);
+        assertThat(manager.reject("s", rejected.planId())).isTrue();
+        assertThat(rejected.future().join()).isFalse();
     }
 
     @Test
-    void reject_completesWithFalse() throws Exception {
-        CompletableFuture<Boolean> future = manager.waitForConfirmation("s2", 10);
-        manager.reject("s2");
-        assertThat(future.get()).isFalse();
+    void staleMissingAndCrossSessionIdsCannotDecideReplacement() {
+        var old = manager.waitForConfirmation("s", 10);
+        assertThatThrownBy(() -> manager.waitForConfirmation("s", 10)).isInstanceOf(IllegalStateException.class);
+        old.future().cancel(false);
+        var current = manager.waitForConfirmation("s", 10);
+        var other = manager.waitForConfirmation("other", 10);
+        assertThat(current.planId()).isNotEqualTo(old.planId()).isNotEqualTo(other.planId());
+        assertThat(manager.confirm("s", old.planId())).isFalse();
+        assertThat(manager.reject("s", old.planId())).isFalse();
+        assertThat(manager.confirm("s", null)).isFalse();
+        assertThat(manager.confirm("s", other.planId())).isFalse();
+        assertThat(current.future()).isNotDone();
+        assertThat(manager.confirm("s", current.planId())).isTrue();
+        other.future().cancel(false);
     }
 
     @Test
-    void confirm_noPending_doesNotThrow() {
-        assertThatCode(() -> manager.confirm("nonexistent")).doesNotThrowAnyException();
-    }
-
-    @Test
-    void reject_noPending_doesNotThrow() {
-        assertThatCode(() -> manager.reject("nonexistent")).doesNotThrowAnyException();
-    }
-
-    @Test
-    void timeout_completesExceptionally() {
-        CompletableFuture<Boolean> future = manager.waitForConfirmation("timeout-session", 1);
-        assertThat(future).failsWithin(java.time.Duration.ofSeconds(3))
-                .withThrowableOfType(ExecutionException.class)
-                .withCauseInstanceOf(TimeoutException.class);
-    }
-
-    @Test
-    void multipleSessions_independent() throws Exception {
-        CompletableFuture<Boolean> f1 = manager.waitForConfirmation("a", 10);
-        CompletableFuture<Boolean> f2 = manager.waitForConfirmation("b", 10);
-
-        manager.confirm("a");
-        manager.reject("b");
-
-        assertThat(f1.get()).isTrue();
-        assertThat(f2.get()).isFalse();
+    void timeoutCannotBeReplayedAgainstReplacement() {
+        var old = manager.waitForConfirmation("s", 1);
+        assertThat(old.future()).failsWithin(Duration.ofSeconds(3))
+                .withThrowableOfType(ExecutionException.class).withCauseInstanceOf(TimeoutException.class);
+        var current = manager.waitForConfirmation("s", 10);
+        assertThat(manager.confirm("s", old.planId())).isFalse();
+        assertThat(current.future()).isNotDone();
+        current.future().cancel(false);
     }
 }

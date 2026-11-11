@@ -54,6 +54,12 @@ public class WorkflowProperties {
         /** 僵尸判定：心跳超时（秒） */
         private int heartbeatTimeoutSec = 120;
 
+        /** 自动接管未知执行状态尚无持久 fencing；默认关闭。 */
+        private boolean automaticRecoveryEnabled = false;
+
+        /** Persistent approval-resume delivery; does not authorize replay of unknown tasks. */
+        private boolean durableResumeEnabled = false;
+
         /** 超龄 run 放弃（小时） */
         private int maxRecoveryAgeHours = 6;
 
@@ -73,6 +79,8 @@ public class WorkflowProperties {
 
     @Data
     public static class Approval {
+        /** Enable only after the exact dispatch binding and runtime key are configured. */
+        private boolean dispatchEnabled = false;
         /** 审批超时默认（秒，§3.8 边界②） */
         private int defaultTimeoutSec = 86400;
 

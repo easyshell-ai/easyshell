@@ -5,7 +5,6 @@ import com.easyshell.server.ai.model.vo.AiExecutionResult;
 import com.easyshell.server.ai.service.AiExecutionService;
 import com.easyshell.server.model.entity.Agent;
 import com.easyshell.server.repository.AgentRepository;
-import lombok.RequiredArgsConstructor;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
@@ -13,22 +12,33 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 @Component
-@RequiredArgsConstructor
 public class SoftwareDetectTool {
 
     private final AgentRepository agentRepository;
     private final AiExecutionService aiExecutionService;
 
-    private Long currentUserId;
-    private String currentSourceIp;
+    private final Long currentUserId;
+    private final String currentSourceIp;
 
-    public void setContext(Long userId, String sourceIp) {
+    @org.springframework.beans.factory.annotation.Autowired
+    public SoftwareDetectTool(AgentRepository agentRepository, AiExecutionService aiExecutionService) {
+        this(agentRepository, aiExecutionService, null, null);
+    }
+
+    private SoftwareDetectTool(AgentRepository agentRepository, AiExecutionService aiExecutionService, Long userId, String sourceIp) {
+        this.agentRepository = agentRepository;
+        this.aiExecutionService = aiExecutionService;
         this.currentUserId = userId;
         this.currentSourceIp = sourceIp;
     }
 
+    public SoftwareDetectTool forUser(Long userId, String sourceIp) {
+        return new SoftwareDetectTool(agentRepository, aiExecutionService, userId, sourceIp);
+    }
+
     @Tool(description = "探测指定主机上运行的软件和服务，包括 Nginx、MySQL、PostgreSQL、Java、PHP、Node.js、Python、Docker 等")
     public String detectSoftware(@ToolParam(description = "目标主机的 Agent ID。必须是真实存在的主机 ID，如果上下文中用户已指定目标主机则直接使用其 ID，否则请先调用 listHosts 工具获取") String agentId) {
+        if (currentUserId == null || currentUserId <= 0) return "错误：无法确定当前用户身份，已拒绝执行。";
         Agent agent = agentRepository.findById(agentId).orElse(null);
         if (agent == null) {
             return "主机不存在: " + agentId;
@@ -76,7 +86,7 @@ public class SoftwareDetectTool {
         request.setAgentIds(List.of(agentId));
         request.setDescription("软件探测 - " + agent.getHostname());
         request.setTimeoutSeconds(30);
-        request.setUserId(currentUserId != null ? currentUserId : 0L);
+        request.setUserId(currentUserId);
         request.setSourceIp(currentSourceIp != null ? currentSourceIp : "ai-chat");
 
         AiExecutionResult result = aiExecutionService.execute(request);

@@ -1,8 +1,8 @@
 package com.easyshell.server.workflow.node;
 
 import com.easyshell.server.ai.security.SensitiveDataFilter;
-import com.easyshell.server.workflow.engine.NodeCancelledException;
 import com.easyshell.server.workflow.engine.NodeContext;
+import com.easyshell.server.workflow.engine.NodeCancelledException;
 import com.easyshell.server.workflow.engine.NodeExecutor;
 import com.easyshell.server.workflow.engine.NodeFailedException;
 import com.easyshell.server.workflow.engine.NodeOutcome;
@@ -14,64 +14,38 @@ import com.easyshell.server.workflow.model.WorkflowDefinition;
 import com.easyshell.server.workflow.model.WorkflowNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PreDestroy;
-import org.graalvm.polyglot.Context;
-import org.graalvm.polyglot.Engine;
-import org.graalvm.polyglot.EnvironmentAccess;
-import org.graalvm.polyglot.HostAccess;
-import org.graalvm.polyglot.PolyglotException;
-import org.graalvm.polyglot.Value;
-import org.graalvm.polyglot.io.IOAccess;
 import org.springframework.stereotype.Component;
 
-import java.io.OutputStream;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.CancellationException;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Future;
-import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.Set;
 import java.util.regex.Pattern;
 
-/**
- * code 节点执行器（工作流 2.1 §2.3）：GraalVM Polyglot 沙箱内的数据变换。
- *
- * <p><b>安全边界</b>：{@code HostAccess.NONE}、{@code allowIO=false}、
- * environment/process/thread 全部关闭；不在宿主线程执行、不落 shell、失败时绝不回退到
- * 命令行。语言运行时不可用 → {@code CODE_RUNTIME_UNAVAILABLE}，不静默伪造结果。</p>
- *
- * <p><b>契约</b>：javascript 代码定义 {@code function main(input)}，python 定义
- * {@code def main(input)}；输入按 code.inputs 模板解析，返回值经 Jackson 序列化/反序列化
- * 后写入节点输出。超时通过 {@code context.close(true)} 强制取消。</p>
- */
+/** Code nodes are disabled until execution has a hard memory isolation boundary. */
 @Component
 public class CodeNodeExecutor implements NodeExecutor, AutoCloseable {
 
+    private static final String RUNTIME_UNAVAILABLE = "code 节点运行时不可用：缺少硬内存隔离，代码未执行";
+
     static final int MAX_CODE_CHARS = 20_000;
     static final int MIN_TIMEOUT_SEC = 1;
-    static final int MAX_TIMEOUT_SEC = 15;
+    static final int MAX_TIMEOUT_SEC = 5;
     static final int DEFAULT_TIMEOUT_SEC = 5;
     static final int MAX_INPUT_JSON_CHARS = 1_000_000;
+    static final int MAX_JSON_DEPTH = 64;
+    static final int MAX_JSON_ELEMENTS = 10_000;
     static final Pattern INPUT_NAME = Pattern.compile("^[A-Za-z_][A-Za-z0-9_]{0,63}$");
-
-    private static final String JS = "js";
-    private static final String PYTHON = "python";
 
     private final ExpressionEvaluator expressionEvaluator;
     private final ObjectMapper objectMapper;
     private final SensitiveDataFilter sensitiveDataFilter;
-    private final ExecutorService codePool;
-    private final AtomicInteger threadCounter = new AtomicInteger(1);
+    private com.easyshell.server.workflow.code.WorkflowCodeWorkerClient workerClient;
 
-    private volatile Engine engine;
+    @org.springframework.beans.factory.annotation.Autowired
+    void setWorkerClient(com.easyshell.server.workflow.code.WorkflowCodeWorkerClient workerClient) {
+        this.workerClient = workerClient;
+    }
 
     public CodeNodeExecutor(ExpressionEvaluator expressionEvaluator,
                             ObjectMapper objectMapper,
@@ -79,16 +53,6 @@ public class CodeNodeExecutor implements NodeExecutor, AutoCloseable {
         this.expressionEvaluator = expressionEvaluator;
         this.objectMapper = objectMapper;
         this.sensitiveDataFilter = sensitiveDataFilter;
-        this.codePool = new ThreadPoolExecutor(
-                2, 4, 60, TimeUnit.SECONDS,
-                new ArrayBlockingQueue<>(16),
-                runnable -> {
-                    Thread thread = new Thread(runnable,
-                            "workflow-code-" + threadCounter.getAndIncrement());
-                    thread.setDaemon(true);
-                    return thread;
-                },
-                new ThreadPoolExecutor.AbortPolicy());
     }
 
     @Override
@@ -102,6 +66,9 @@ public class CodeNodeExecutor implements NodeExecutor, AutoCloseable {
 
     @Override
     public void validate(WorkflowNode node, WorkflowDefinition def, ValidationIssue.Sink issues) {
+        if (workerClient == null || !workerClient.isAvailable()) {
+            issues.error("CODE_RUNTIME_UNAVAILABLE", RUNTIME_UNAVAILABLE, node.getKey());
+        }
         String language = node.configString("language");
         if (!isSupportedLanguage(language)) {
             issues.error("NODE_CONFIG_INVALID",
@@ -116,7 +83,12 @@ public class CodeNodeExecutor implements NodeExecutor, AutoCloseable {
                     node.getKey());
         }
         validateInputs(node, issues);
-        int timeout = node.configInt("timeoutSec", DEFAULT_TIMEOUT_SEC);
+        int timeout;
+        try { timeout = guestTimeout(node); }
+        catch (NodeFailedException invalid) {
+            issues.error(invalid.getCode(), invalid.getMessage(), node.getKey());
+            return;
+        }
         if (timeout < MIN_TIMEOUT_SEC || timeout > MAX_TIMEOUT_SEC) {
             issues.error("NODE_CONFIG_INVALID",
                     "code 节点 timeoutSec 必须在 " + MIN_TIMEOUT_SEC + ".." + MAX_TIMEOUT_SEC
@@ -153,100 +125,67 @@ public class CodeNodeExecutor implements NodeExecutor, AutoCloseable {
 
     @Override
     public NodeOutcome execute(NodeContext ctx) {
-        WorkflowNode node = ctx.node();
-        String language = node.configString("language");
-        if (!isSupportedLanguage(language)) {
-            throw new NodeFailedException("NODE_CONFIG_INVALID",
-                    "code 节点 language 只能是 javascript / python，实际 '" + language + "'");
-        }
-        String code = node.configString("code");
-        if (code == null || code.isBlank()) {
-            throw new NodeFailedException("NODE_CONFIG_INVALID", "code 节点缺少 code");
-        }
-        if (code.length() > MAX_CODE_CHARS) {
-            throw new NodeFailedException("NODE_CONFIG_INVALID",
-                    "code 节点代码长度必须 <= " + MAX_CODE_CHARS + " 字符，实际 " + code.length());
-        }
-        int timeoutSec = node.configInt("timeoutSec", DEFAULT_TIMEOUT_SEC);
-        if (timeoutSec < MIN_TIMEOUT_SEC || timeoutSec > MAX_TIMEOUT_SEC) {
-            throw new NodeFailedException("NODE_CONFIG_INVALID",
-                    "code 节点 timeoutSec 必须在 " + MIN_TIMEOUT_SEC + ".." + MAX_TIMEOUT_SEC
-                            + " 之间，实际 " + timeoutSec);
-        }
-        if (ctx.isCancelled()) {
-            throw new NodeCancelledException("运行已取消，停止代码执行");
-        }
-
-        Map<String, Object> input = resolveInputs(node, ctx);
-        String inputJson;
-        try {
-            inputJson = objectMapper.writeValueAsString(input);
-        } catch (Exception e) {
-            throw new NodeFailedException("CODE_INPUT_INVALID", "code 节点输入无法序列化为 JSON");
-        }
-        if (inputJson.length() > MAX_INPUT_JSON_CHARS) {
-            throw new NodeFailedException("CODE_INPUT_TOO_LARGE",
-                    "code 节点输入超过 " + MAX_INPUT_JSON_CHARS + " 字符上限");
-        }
-
-        String languageId = "javascript".equals(language) ? JS : PYTHON;
-        requireLanguage(languageId);
-
-        AtomicReference<Context> activeContext = new AtomicReference<>();
-        Future<Object> future;
-        try {
-            future = codePool.submit(() -> executeInSandbox(languageId, code, inputJson, activeContext));
-        } catch (RejectedExecutionException e) {
-            throw new NodeFailedException("CODE_RUNTIME_UNAVAILABLE", "代码执行线程池繁忙，请稍后重试");
-        }
-
-        Object result;
-        try {
-            result = future.get(timeoutSec, TimeUnit.SECONDS);
-        } catch (TimeoutException e) {
-            cancelContext(activeContext);
-            future.cancel(true);
-            throw new NodeFailedException("CODE_TIMEOUT", "代码执行超过 " + timeoutSec + " 秒");
-        } catch (InterruptedException e) {
-            cancelContext(activeContext);
-            future.cancel(true);
-            Thread.currentThread().interrupt();
-            throw new NodeCancelledException("代码执行等待被中断");
-        } catch (CancellationException e) {
-            throw new NodeCancelledException("代码执行已被取消");
-        } catch (ExecutionException e) {
-            Throwable cause = e.getCause() == null ? e : e.getCause();
-            if (cause instanceof NodeFailedException failed) {
-                throw failed;
-            }
-            if (cause instanceof CodeRuntimeUnavailableException) {
-                throw new NodeFailedException("CODE_RUNTIME_UNAVAILABLE",
-                        cause.getMessage() == null ? "代码运行时不可用" : cause.getMessage());
-            }
-            if (cause instanceof CodeEntrypointMissingException) {
-                throw new NodeFailedException("CODE_ENTRYPOINT_MISSING",
-                        "代码必须定义 main(input) 入口函数");
-            }
-            if (cause instanceof PolyglotException polyglot) {
-                if (polyglot.isInternalError()) {
-                    throw new NodeFailedException("CODE_RUNTIME_UNAVAILABLE",
-                            "代码运行时不可用: " + safeMessage(polyglot));
-                }
-                if (polyglot.isHostException()) {
-                    throw new NodeFailedException("CODE_EXECUTION_FAILED",
-                            "代码访问宿主被拒绝: " + safeMessage(polyglot));
-                }
-                throw new NodeFailedException("CODE_EXECUTION_FAILED",
-                        "代码执行失败: " + safeMessage(polyglot));
-            }
-            throw new NodeFailedException("CODE_EXECUTION_FAILED",
-                    "代码执行失败: " + cause.getClass().getSimpleName());
-        }
-        if (ctx.isCancelled()) {
-            throw new NodeCancelledException("运行已取消，丢弃代码执行结果");
-        }
-        ctx.variables().putNodeOutput(node.getKey(), node.getOutputVar(), result);
+        if (ctx.isCancelled()) throw new NodeCancelledException("运行已取消，停止代码执行");
+        Object result = executeRemote(ctx.node(), resolveInputs(ctx.node(), ctx), ctx::isCancelled);
+        if (ctx.isCancelled()) throw new NodeCancelledException("运行已取消，丢弃代码结果");
+        ctx.variables().putNodeOutput(ctx.node().getKey(), ctx.node().getOutputVar(), result);
         return NodeOutcome.SUCCEEDED;
+    }
+
+    /** Sample execution is disabled at the entry point, independently of request validation. */
+    public Object executeSample(WorkflowNode node, Map<String, Object> input) {
+        return executeRemote(node, input);
+    }
+
+    private Object executeRemote(WorkflowNode node, Map<String, Object> input) {
+        return executeRemote(node, input, () -> false);
+    }
+
+    private Object executeRemote(WorkflowNode node, Map<String, Object> input, java.util.function.BooleanSupplier cancelled) {
+        if (workerClient == null || !workerClient.isAvailable()) {
+            throw new NodeFailedException("CODE_RUNTIME_UNAVAILABLE", RUNTIME_UNAVAILABLE);
+        }
+        String language = node.configString("language");
+        String source = node.configString("code");
+        int timeout = guestTimeout(node);
+        if (!isSupportedLanguage(language) || source == null || source.isBlank()
+                || source.length() > MAX_CODE_CHARS || timeout < 1 || timeout > 5 || input == null) {
+            throw new NodeFailedException("NODE_CONFIG_INVALID", "代码配置无效或超过隔离执行限制");
+        }
+        var active = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<Object, Boolean>());
+        checkInput(input, 0, new Budget("CODE_INPUT_INVALID"), active);
+        Object masked = sensitiveDataFilter.filterJson(input);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> safeInput = (Map<String, Object>) masked;
+        var result = workerClient.execute(language, source, safeInput, timeout * 1000, cancelled);
+        if (!result.succeeded()) {
+            throw new NodeFailedException(result.errorCode() == null ? "CODE_EXECUTION_FAILED" : result.errorCode(),
+                    "隔离代码执行失败");
+        }
+        Object output = sensitiveDataFilter.filterJson(result.output());
+        if (!(output instanceof Map<?, ?>)) {
+            Map<String, Object> wrapped = new LinkedHashMap<>();
+            wrapped.put("result", output);
+            output = wrapped;
+        }
+        try {
+            if (objectMapper.writeValueAsBytes(output).length > 8192) {
+                throw new NodeFailedException("CODE_OUTPUT_TOO_LARGE", "代码结果超过完整变量存储上限 8192 字节");
+            }
+        } catch (com.fasterxml.jackson.core.JsonProcessingException invalid) {
+            throw new NodeFailedException("CODE_OUTPUT_INVALID", "代码结果无法序列化");
+        }
+        return output;
+    }
+
+    private int guestTimeout(WorkflowNode node) {
+        Object raw = node.getConfig() == null ? null : node.getConfig().get("timeoutSec");
+        if (raw == null) return DEFAULT_TIMEOUT_SEC;
+        if (!(raw instanceof Number number) || !Double.isFinite(number.doubleValue())
+                || number.doubleValue() != number.intValue() || number.intValue() < 1 || number.intValue() > 5) {
+            throw new NodeFailedException("CODE_TIMEOUT_UNSUPPORTED", "隔离代码执行上限为 5 秒，请更新超时配置");
+        }
+        return number.intValue();
     }
 
     private Map<String, Object> resolveInputs(WorkflowNode node, NodeContext ctx) {
@@ -270,6 +209,19 @@ public class CodeNodeExecutor implements NodeExecutor, AutoCloseable {
                         "code 节点输入 '" + name + "' 的值必须是模板字符串");
             }
             try {
+                // Preserve sensitive source-field context before aliasing it to an innocuous
+                // input name. The sole masking policy remains SensitiveDataFilter.
+                var references = java.util.regex.Pattern.compile("\\$\\{([^{}]+)}").matcher(template);
+                boolean sensitiveSource = false;
+                while (references.find()) {
+                    for (String component : references.group(1).trim().split("\\.")) {
+                        if (sensitiveDataFilter.isSensitiveField(component)) sensitiveSource = true;
+                    }
+                }
+                if (sensitiveSource) {
+                    input.put(name, sensitiveDataFilter.filterField("token", "redacted"));
+                    continue;
+                }
                 input.put(name, NodeTemplateResolver.resolveValue(template, ctx, expressionEvaluator));
             } catch (ExpressionException e) {
                 throw new NodeFailedException(e.getCode(), e.getMessage(), e);
@@ -278,181 +230,67 @@ public class CodeNodeExecutor implements NodeExecutor, AutoCloseable {
         return input;
     }
 
-    /** 沙箱内执行：创建 Context、注入 guest 原生输入、调用 main、递归转换返回值。 */
-    private Object executeInSandbox(String languageId, String code, String inputJson,
-                                    AtomicReference<Context> activeContext) {
-        Context context;
+    private void checkInput(Object value, int depth, Budget budget, Set<Object> active) {
+        budget.element(depth);
+        if (value == null || value instanceof Boolean) return;
+        if (value instanceof String text) {
+            budget.text(text);
+            return;
+        }
+        if (value instanceof Number number) {
+            if (!Double.isFinite(number.doubleValue())) {
+                throw new NodeFailedException("CODE_INPUT_INVALID", "code 节点输入包含非有限数值");
+            }
+            budget.text(number.toString());
+            return;
+        }
+        if (!(value instanceof Map<?, ?>) && !(value instanceof List<?>)) {
+            throw new NodeFailedException("CODE_INPUT_INVALID", "code 节点输入必须是 JSON 类型");
+        }
+        if (!active.add(value)) {
+            throw new NodeFailedException("CODE_INPUT_INVALID", "code 节点输入包含循环引用");
+        }
         try {
-            context = Context.newBuilder(languageId)
-                    .engine(engine())
-                    .allowHostAccess(HostAccess.NONE)
-                    .allowHostClassLookup(name -> false)
-                    .allowHostClassLoading(false)
-                    .allowIO(IOAccess.NONE)
-                    .allowEnvironmentAccess(EnvironmentAccess.NONE)
-                    .allowNativeAccess(false)
-                    .allowCreateThread(false)
-                    .out(OutputStream.nullOutputStream())
-                    .err(OutputStream.nullOutputStream())
-                    .build();
-        } catch (Throwable t) {
-            throw new CodeRuntimeUnavailableException(
-                    "代码运行时不可用（" + languageId + "）: " + t.getClass().getSimpleName());
-        }
-        activeContext.set(context);
-        try {
-            Value guestInput = parseGuestInput(context, languageId, inputJson);
-            context.eval(languageId, code);
-            Value main = context.getBindings(languageId).getMember("main");
-            if (main == null || !main.canExecute()) {
-                throw new CodeEntrypointMissingException();
-            }
-            Value value = main.execute(guestInput);
-            Object converted = toJava(value);
-            return normalizeJson(converted);
-        } finally {
-            activeContext.compareAndSet(context, null);
-            try {
-                context.close(true);
-            } catch (Throwable ignored) {
-                // close(true) 在已取消/已关闭时可能抛异常；执行结果已经由 future 传递
-            }
-        }
-    }
-
-    /** JSON → guest 原生对象（HostAccess.NONE 下不能把宿主 Map 直接交给 guest）。 */
-    private Value parseGuestInput(Context context, String languageId, String inputJson) {
-        try {
-            if (JS.equals(languageId)) {
-                return context.eval(JS, "JSON.parse").execute(inputJson);
-            }
-            Value loads = context.eval(PYTHON, "import json\njson.loads");
-            return loads.execute(inputJson);
-        } catch (PolyglotException e) {
-            if (e.isInternalError() || e.isHostException()) {
-                throw new CodeRuntimeUnavailableException(
-                        "代码运行时无法初始化输入桥（" + languageId + "）: " + safeMessage(e));
-            }
-            throw e;
-        }
-    }
-
-    /** Graal Value → 标准 Java 结构；无法表示的值按不可序列化处理，不 toString 糊弄。 */
-    private Object toJava(Value value) {
-        if (value == null || value.isNull()) {
-            return null;
-        }
-        if (value.isBoolean()) {
-            return value.asBoolean();
-        }
-        if (value.isString()) {
-            return value.asString();
-        }
-        if (value.isNumber()) {
-            if (value.fitsInLong()) {
-                return value.asLong();
-            }
-            double d = value.asDouble();
-            if (!Double.isFinite(d)) {
-                throw new NodeFailedException("CODE_OUTPUT_NOT_SERIALIZABLE",
-                        "代码返回值包含 NaN/Infinity，无法序列化为 JSON");
-            }
-            return d;
-        }
-        if (value.hasArrayElements()) {
-            List<Object> list = new ArrayList<>();
-            long size = value.getArraySize();
-            for (long i = 0; i < size; i++) {
-                list.add(toJava(value.getArrayElement(i)));
-            }
-            return list;
-        }
-        if (value.hasHashEntries()) {
-            Map<String, Object> map = new LinkedHashMap<>();
-            Value keys = value.getHashKeysIterator();
-            Value values = value.getHashValuesIterator();
-            while (keys.hasIteratorNextElement()) {
-                Value key = keys.getIteratorNextElement();
-                Object mapKey = key.isString() ? key.asString() : String.valueOf(toJava(key));
-                Object mapValue = values.hasIteratorNextElement()
-                        ? toJava(values.getIteratorNextElement()) : null;
-                map.put(String.valueOf(mapKey), mapValue);
-            }
-            return map;
-        }
-        if (value.hasMembers()) {
-            Map<String, Object> map = new LinkedHashMap<>();
-            for (String key : value.getMemberKeys()) {
-                map.put(key, toJava(value.getMember(key)));
-            }
-            return map;
-        }
-        throw new NodeFailedException("CODE_OUTPUT_NOT_SERIALIZABLE",
-                "代码返回值不是 JSON 可序列化类型");
-    }
-
-    /** 用 Jackson 做最后一道 JSON 归一化：不可序列化 → 稳定错误码。 */
-    private Object normalizeJson(Object value) {
-        try {
-            String json = objectMapper.writeValueAsString(value);
-            return objectMapper.readValue(json, Object.class);
-        } catch (Exception e) {
-            throw new NodeFailedException("CODE_OUTPUT_NOT_SERIALIZABLE",
-                    "代码返回值无法序列化为 JSON");
-        }
-    }
-
-    private void requireLanguage(String languageId) {
-        Engine current;
-        try {
-            current = engine();
-        } catch (Throwable t) {
-            throw new NodeFailedException("CODE_RUNTIME_UNAVAILABLE",
-                    "代码运行时初始化失败: " + t.getClass().getSimpleName());
-        }
-        if (!current.getLanguages().containsKey(languageId)) {
-            throw new NodeFailedException("CODE_RUNTIME_UNAVAILABLE",
-                    "代码运行时不可用（缺少语言 " + languageId + "）");
-        }
-    }
-
-    private Engine engine() {
-        Engine current = engine;
-        if (current == null) {
-            synchronized (this) {
-                current = engine;
-                if (current == null) {
-                    current = Engine.newBuilder()
-                            .option("engine.WarnInterpreterOnly", "false")
-                            .build();
-                    engine = current;
+            if (value instanceof Map<?, ?> map) {
+                budget.containerSize(map.size());
+                for (Map.Entry<?, ?> entry : map.entrySet()) {
+                    if (!(entry.getKey() instanceof String key)) {
+                        throw new NodeFailedException("CODE_INPUT_INVALID", "code 节点输入对象的键必须是字符串");
+                    }
+                    budget.text(key);
+                    checkInput(entry.getValue(), depth + 1, budget, active);
                 }
+            } else {
+                List<?> list = (List<?>) value;
+                budget.containerSize(list.size());
+                for (Object item : list) checkInput(item, depth + 1, budget, active);
             }
-        }
-        return current;
-    }
-
-    private void cancelContext(AtomicReference<Context> activeContext) {
-        Context context = activeContext.getAndSet(null);
-        if (context != null) {
-            try {
-                // 强制关闭正在执行的 context：这是 GraalVM 官方取消运行中 guest 代码的方式
-                context.close(true);
-            } catch (Throwable ignored) {
-                // 取消是尽力而为；future.cancel 仍会打断等待
-            }
+        } finally {
+            active.remove(value);
         }
     }
 
-    private String safeMessage(PolyglotException e) {
-        String message = e.getMessage();
-        if (message == null || message.isBlank()) {
-            message = e.getClass().getSimpleName();
+    /** Conservative JSON upper bound, including worst-case string escaping and punctuation. */
+    private static final class Budget {
+        private final String code;
+        private int elements;
+        private long chars;
+        Budget(String code) { this.code = code; }
+        void element(int depth) {
+            if (depth > MAX_JSON_DEPTH || ++elements > MAX_JSON_ELEMENTS) fail();
+            chars += 32; // JSON punctuation and largest finite double representation
+            if (chars > MAX_INPUT_JSON_CHARS) fail();
         }
-        if (message.length() > 300) {
-            message = message.substring(0, 300);
+        void text(String text) {
+            chars += 6L * text.length() + 3;
+            if (chars > MAX_INPUT_JSON_CHARS) fail();
         }
-        return sensitiveDataFilter.filter(message);
+        void containerSize(long size) {
+            if (size > MAX_JSON_ELEMENTS - elements) fail();
+        }
+        private void fail() {
+            throw new NodeFailedException(code, "code 节点 JSON 超过大小、深度或元素数量限制");
+        }
     }
 
     private static boolean isSupportedLanguage(String language) {
@@ -462,23 +300,5 @@ public class CodeNodeExecutor implements NodeExecutor, AutoCloseable {
     @Override
     @PreDestroy
     public void close() {
-        codePool.shutdownNow();
-        Engine current = engine;
-        if (current != null) {
-            try {
-                current.close(true);
-            } catch (Throwable ignored) {
-                // 关闭失败不影响进程退出
-            }
-        }
-    }
-
-    private static final class CodeRuntimeUnavailableException extends RuntimeException {
-        CodeRuntimeUnavailableException(String message) {
-            super(message);
-        }
-    }
-
-    private static final class CodeEntrypointMissingException extends RuntimeException {
     }
 }

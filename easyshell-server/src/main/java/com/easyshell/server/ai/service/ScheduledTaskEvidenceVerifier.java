@@ -9,9 +9,8 @@ import org.springframework.stereotype.Service;
 /**
  * {@link DispatchAuthority#USER_SCHEDULED_TASK} 授权的证据校验器。
  *
- * <p>证据 = {@code ai_scheduled_task} 行存在且 {@code createdBy} 与发起派发的用户
- * 一致（换任务/换用户即校验失败，门禁返回 449）。定时巡检是用户自己的选择，
- * 脚本由用户自备，本授权只豁免"非 LOW 转审批"，BANNED 脚本仍不可豁免（门禁硬规则）。
+ * <p>仅凭任务 ID 和属主无法证明最终脚本及目标与用户授权的配置一致。
+ * 在精确绑定和并发边界完成之前，定时任务证据一律拒绝；LOW 风险仍按唯一门禁的规则处理。
  */
 @Service
 @RequiredArgsConstructor
@@ -26,24 +25,6 @@ public class ScheduledTaskEvidenceVerifier implements DispatchEvidenceVerifier {
 
     @Override
     public String verify(String evidenceRef, String scriptContent, Long userId) {
-        Long taskId = parseTaskId(evidenceRef);
-        if (taskId == null) {
-            return null;
-        }
-        return scheduledTaskRepository.findById(taskId)
-                .filter(task -> userId != null && userId.equals(task.getCreatedBy()))
-                .map(task -> "ai_scheduled_task:" + taskId)
-                .orElse(null);
-    }
-
-    private Long parseTaskId(String evidenceRef) {
-        if (evidenceRef == null || evidenceRef.isBlank()) {
-            return null;
-        }
-        try {
-            return Long.valueOf(evidenceRef.trim());
-        } catch (NumberFormatException e) {
-            return null;
-        }
+        return null;
     }
 }
