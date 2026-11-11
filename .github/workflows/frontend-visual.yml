@@ -58,7 +58,10 @@ jobs:
         # build 必须在本步完成：playwright.config.ts 的 webServer 只起 vite preview，
         # 不再自己构建（见该文件 webServer 注释——CI 上 npm 包装层会吞掉 preview 的输出）。
         run: |
-          npm run lint && npm run build && npm test
+          set -e
+          npm run lint
+          npm run build
+          npm test
           npx playwright test
       # 失败时把 diff 三件套（expected / actual / diff）与 html 报告作 artifact 上传，
       # PR 的 Checks 页底部即可下载对比；github reporter 同时会在 PR 里标注失败用例。

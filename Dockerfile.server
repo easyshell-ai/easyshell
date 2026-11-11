@@ -54,6 +54,6 @@ ENV EASYSHELL_VERSION=${VERSION:-1.2.0} \
 EXPOSE 18080
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=3 \
-    CMD curl -sf http://localhost:18080/actuator/health || exit 1
+    CMD curl -sf "http://localhost:${SERVER_PORT:-18080}/actuator/health" || exit 1
 
 ENTRYPOINT ["/opt/easyshell/scripts/server-entrypoint.sh"]
