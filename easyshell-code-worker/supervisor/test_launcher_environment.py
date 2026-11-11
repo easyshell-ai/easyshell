@@ -36,7 +36,9 @@ int main(int argc, char **argv) {
                 subprocess.run(['gcc', '-static', '-std=c11', '-Wall', '-Wextra', '-Werror',
                                 '-o', str(output), str(source)], check=True, capture_output=True)
             environment = {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin',
-                           'EASYSHELL_SYNTHETIC_SECRET': 'must-not-reach-jvm'}
+                           'EASYSHELL_SYNTHETIC_SECRET': 'must-not-reach-jvm',
+                           'JAVA_TOOL_OPTIONS': '-javaagent:/synthetic-must-not-load.jar',
+                           'GRAAL_PYTHONHOME': '/synthetic-must-not-use'}
             result = subprocess.run(['chroot', str(root), '/launcher'], env=environment,
                                     capture_output=True, timeout=5)
             self.assertEqual(0, result.returncode)
