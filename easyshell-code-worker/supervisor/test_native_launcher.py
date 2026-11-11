@@ -13,10 +13,14 @@ class NativeLauncherPolicyTest(unittest.TestCase):
             spec = policy(IMAGE, record)
             self.assertEqual(['/opt/code-worker/launcher'], EXECUTION_COMMAND)
             self.assertEqual(EXECUTION_COMMAND, spec['Cmd'])
-            self.assertEqual([], spec['Env'])
+            self.assertEqual(['PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'], spec['Env'])
             runtime = FakeRuntime()
             runtime.create(record.name, spec)
             verify(runtime.raw, record, IMAGE)
+            runtime.raw['Config']['Env'].append('JAVA_TOOL_OPTIONS=-javaagent:/untrusted.jar')
+            with self.assertRaises(Rejected):
+                verify(runtime.raw, record, IMAGE)
+            runtime.raw['Config']['Env'] = ['PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin']
             runtime.raw['Config']['Cmd'] = ['/opt/java/openjdk/bin/java']
             with self.assertRaises(Rejected):
                 verify(runtime.raw, record, IMAGE)

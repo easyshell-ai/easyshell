@@ -180,7 +180,11 @@ def policy(image, record):
     return {
         "Image": image, "Cmd": list({"refusal": COMMAND, "execution": EXECUTION_COMMAND,
                                      "resourceprobe": RESOURCE_COMMAND}[record.profile]), "Entrypoint": [], "User": "65532:65532",
-        "Env": [], "WorkingDir": "/tmp", "Labels": record.labels(), "NetworkDisabled": True,
+        # Docker scratch builds inject PATH. Execution may carry only this public constant;
+        # the static launcher replaces envp with an empty array before starting the JVM.
+        "Env": ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"]
+               if record.profile == "execution" else [],
+        "WorkingDir": "/tmp", "Labels": record.labels(), "NetworkDisabled": True,
         "OpenStdin": True, "StdinOnce": True, "Tty": False,
         "AttachStdin": True, "AttachStdout": True, "AttachStderr": True,
         "HostConfig": {

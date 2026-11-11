@@ -10,6 +10,11 @@
 固定绝对路径及主类；refusal/resourceprobe 保留各自固定的受信验收命令。请求不能选择
 入口。此改动不代表以下生产模板、固定 digest 构建和主机重启流程已经验收。
 
+execution 容器的 Inspect 环境严格限定为一个公开固定 PATH，不能包含任何其他环境项；
+这是兼容 Docker scratch 构建自动 PATH 的显式策略。它不是 JVM 环境：静态 launcher
+在启动 JVM 前用空 envp 替换全部继承环境，合成秘密及额外参数的 chroot 探针已验证。
+refusal/resourceprobe 继续要求空容器环境，不得把此例外推广到其他 profile。
+
 reaper 首次启动仍要求新 journal；可信重启可显式使用 `--resume-existing`，要求原文件
 为当前用户所有的 0600 普通文件、路径无符号链接，并持有独占文件锁。恢复只对账和
 清理原记录，不重放执行。该入口已有保留记录、独占和错误路径测试，但跨主机重启、
