@@ -137,8 +137,9 @@ orchestrator root 的能力限于所需目录穿越/chown，reaper 不持 capabi
    对照可信登记 daemon ID，精确核对 journal ownership 和 pending 任务；任何未知均拒绝 ready。
    daemon ID 不能刚从任意 socket 读取就当可信。核验仅由受信 orchestrator/reaper 访问 runtime。
 3. 顺序为 containerd → dockerd → 独立 reaper。`After=` 仅是启动顺序，不代表 ready。
-   读取该 reaper 的 ready/session 后，经受保护流程渲染 orchestrator 的 session；unit 模板不解析
-   日志、不持久自动复用旧 session。orchestrator RPC 验证成功后再启动 UID17001 control。
+    reaper 的 `Type=notify` 在对账后通知 ready，受保护 `service-entry.py` 从 journal 读取并验证
+    活跃 session；unit 不解析日志、不渲染或复用静态 session。orchestrator RPC 验证成功后
+    再启动 UID17001 control；完整依赖服务 readiness 仍须目标机器验收。
    `service-entry.py` 用 Python `-I -B` 和固定绝对发布路径，避免 cwd/PYTHONPATH 导入。
 4. 默认 `Restart=no`，每 300 秒最多 3 次启动。reaper 退出即停止依赖 orchestrator；失效期间
    readiness 必须拒绝。不要用无界重启、删 DB、自动 unlink RPC socket 处理故障。
