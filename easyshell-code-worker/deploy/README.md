@@ -19,7 +19,9 @@ journal 遗忘旧资源；当前 systemd 模板仍保持 BLOCKED。
 `service-entry.py` 对 reaper 的既有受保护 journal 自动选择保留恢复，对 orchestrator
 从同一 journal 读取 session，并核验独立 reaper 的 PID/starttime 与近期心跳；拒绝静态
 `--reaper-session` 覆盖。此启动交接已有单测，但 systemd `After=` 不表示应用 ready，
-当前 `Type=simple` 模板仍缺经过验收的 readiness/restart 协调，不能据此解除阻断。
+reaper 模板现使用 `Type=notify`，仅在首次对账成功、心跳已提交后发送 `READY=1`；
+失败不通知。Unix datagram 与失败路径已有测试，但真实 systemd readiness/restart
+协调仍未验收，不能据此解除阻断。
 
 `launcher.c` 是静态程序，拒绝所有额外参数，以固定绝对 JVM 路径、固定 JVM 参数及主类
 调用 `execve`，envp 只有 NULL。不得替换为 shell、Java 包装器或继承环境的 exec。

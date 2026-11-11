@@ -6,7 +6,9 @@ StartLimitIntervalSec=300
 StartLimitBurst=3
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
+TimeoutStartSec=30
 User=root
 WorkingDirectory=/opt/easyshell-code
 UMask=0077
