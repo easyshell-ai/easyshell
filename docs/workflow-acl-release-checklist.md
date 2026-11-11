@@ -50,10 +50,11 @@
 | 源码完整性 | 干净 git archive 后端1560项、worker锁定构建及监督器测试、Agent build/vet/test | 全部平台的干净环境与远端CI |
 | Web | lint零错误、503单测、类型与构建、35视觉通过/22配置跳过；真实浏览器样例 | 跳过视觉范围与所有浏览器/平台 |
 | 审批/恢复 | 双VM HIGH批准成功、拒绝零派发、409重放拒绝、持久member完成及槽释放 | 任意UNKNOWN裁决、跨实例外部fencing与完整崩溃接管 |
-| 数据 | MySQL合成旧库迁移、排序规则、RR旧快照及1093回归；测试备份独立schema恢复42表检查OK | 真实v1.1.2副本迁移、恢复应用启动和旧版本回滚 |
-| code | JS/Python、真实Java mTLS、跨owner、取消、SIGKILL独立回收、memcg OOM后恢复、native空环境、临时systemd重启 | 固定基础镜像完整构建、五服务模板及主机开机恢复、生产证书运维 |
+| 数据 | 正式v1.1.2未修改程序生成22表，原API写数据；当前候选迁移及原口令/数据保留通过；备份恢复后旧版启动读取通过；MySQL RR及1093回归 | 任意客户历史脏数据及所有业务数据组合需副本预检 |
+| code | 固定官方完整JRE、五持久systemd服务及target整链stop/start；JS/Python、真实Java mTLS、跨owner、取消、SIGKILL回收、memcg OOM后恢复、native空环境 | 物理宿主冷启动未执行；目标机器账户/证书与清单有效期需运维维护 |
 | 依赖 | worker严格锁定离线构建；70项制品与Maven Central摘要或下载重算一致 | PGP签名、漏洞审计及基础镜像内容/来源审查 |
 
-发布前不得跳过真实旧库与生产部署门槛。`easyshell-code-worker/deploy/preflight.sh`
-仍固定退出78；不能改为无条件成功来使模板启动。完整记录见 `upgrade-from-1.1.2.md`、
+旧版程序升级/备份回滚及专用五服务部署的本地技术门槛已按上述范围实测。
+`easyshell-code-worker/deploy/preflight.sh` 现在核验受保护发布清单，缺失、篡改或过期退出78；
+不能改为无条件成功来使模板启动。剩余未执行范围不得自动勾选。完整记录见 `upgrade-from-1.1.2.md`、
 `isolated-trial.md` 和 worker 部署说明。
