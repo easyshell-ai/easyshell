@@ -1,0 +1,23 @@
+[Unit]
+Description=EasyShell dedicated dockerd (blocked deployment template)
+Requires=easyshell-code-containerd.service
+After=easyshell-code-containerd.service
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=root
+UMask=0077
+ExecStartPre=/bin/bash /opt/easyshell-code/deploy/preflight.sh
+ExecStart=/usr/bin/dockerd --config-file=/etc/easyshell-code/daemon.json
+Restart=no
+TimeoutStopSec=30
+KillMode=process
+Delegate=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/easyshell-code/docker /var/lib/easyshell-code/containerd /run/easyshell-code/runtime
+RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6

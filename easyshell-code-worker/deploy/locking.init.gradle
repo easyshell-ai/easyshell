@@ -1,0 +1,26 @@
+import org.gradle.api.artifacts.dsl.LockMode
+
+allprojects {
+    dependencyLocking {
+        lockAllConfigurations()
+        lockMode = LockMode.STRICT
+    }
+    configurations.configureEach {
+        // Gradle forbids failOnDynamicVersions together with dependency locking.
+        // Reject unstable declarations before resolution; strict locks fix transitives.
+        incoming.beforeResolve {
+            allDependencies.each { dependency ->
+                def version = dependency.version
+                if (version != null && (version.contains('+') || version.startsWith('latest.')
+                        || version.contains('[') || version.contains('(')
+                        || version.endsWith('-SNAPSHOT'))) {
+                    throw new GradleException('Unstable dependency declaration is forbidden')
+                }
+            }
+        }
+    }
+    tasks.withType(AbstractArchiveTask).configureEach {
+        preserveFileTimestamps = false
+        reproducibleFileOrder = true
+    }
+}

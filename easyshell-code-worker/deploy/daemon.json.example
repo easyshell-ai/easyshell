@@ -1,0 +1,19 @@
+{
+  "hosts": ["unix:///run/easyshell-code/runtime/docker.sock"],
+  "data-root": "/var/lib/easyshell-code/docker",
+  "exec-root": "/run/easyshell-code/runtime/docker-exec",
+  "pidfile": "/run/easyshell-code/runtime/docker.pid",
+  "containerd": "/run/easyshell-code/runtime/containerd.sock",
+  "containerd-namespace": "easyshell-code",
+  "containerd-plugins-namespace": "easyshell-code-plugins",
+  "group": "root",
+  "exec-opts": ["native.cgroupdriver=systemd"],
+  "bridge": "none",
+  "iptables": false,
+  "ip6tables": false,
+  "ip-forward": false,
+  "ip-masq": false,
+  "userland-proxy": false,
+  "log-driver": "none",
+  "live-restore": false
+}

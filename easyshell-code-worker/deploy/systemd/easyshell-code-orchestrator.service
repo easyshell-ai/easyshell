@@ -1,0 +1,27 @@
+[Unit]
+Description=EasyShell trusted root orchestrator (blocked deployment template)
+Requires=easyshell-code-dockerd.service easyshell-code-reaper.service
+After=easyshell-code-dockerd.service easyshell-code-reaper.service
+BindsTo=easyshell-code-reaper.service
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/easyshell-code
+UMask=0077
+ExecStartPre=/bin/bash /opt/easyshell-code/deploy/preflight.sh
+ExecStart=/usr/bin/python3 -I -B /opt/easyshell-code/deploy/service-entry.py orchestrator_rpc --rpc-socket /run/easyshell-code/control-rpc/orchestrator.sock --control-uid 17001 --owner code-client.example.invalid --metadata /var/lib/easyshell-code/orchestrator/rpc.sqlite --socket /run/easyshell-code/runtime/docker.sock --expected-daemon-id @TRUSTED_DAEMON_ID@ --image @TASK_IMAGE_DIGEST@ --journal /var/lib/easyshell-code/execution/execution.sqlite --reaper-session @READY_SESSION_FROM_THIS_BOOT@
+Restart=no
+TimeoutStopSec=30
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+ProtectControlGroups=yes
+ReadWritePaths=/var/lib/easyshell-code/execution /var/lib/easyshell-code/orchestrator /run/easyshell-code/control-rpc
+RestrictAddressFamilies=AF_UNIX
+StandardOutput=null
+StandardError=null

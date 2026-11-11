@@ -1,0 +1,23 @@
+[Unit]
+Description=EasyShell dedicated containerd (blocked deployment template)
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=root
+UMask=0077
+ExecStartPre=/bin/bash /opt/easyshell-code/deploy/preflight.sh
+ExecStart=/usr/bin/containerd --config /etc/easyshell-code/containerd.toml
+Restart=no
+TimeoutStopSec=30
+KillMode=process
+Delegate=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/easyshell-code/containerd /run/easyshell-code/runtime
+RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
+
+# No Install section: review/render/provision and remove blockers before enabling.
