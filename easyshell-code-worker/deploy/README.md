@@ -21,7 +21,9 @@ journal 遗忘旧资源；当前 systemd 模板仍保持 BLOCKED。
 `--reaper-session` 覆盖。此启动交接已有单测，但 systemd `After=` 不表示应用 ready，
 reaper 模板现使用 `Type=notify`，仅在首次对账成功、心跳已提交后发送 `READY=1`；
 失败不通知。Unix datagram 与失败路径已有测试，但真实 systemd readiness/restart
-协调仍未验收，不能据此解除阻断。
+整套模板尚未验收，不能据此解除阻断。专用临时 `systemd-run` 单元已实际验证真实 reaper
+的 READY、保留 journal 重启、新 session 和原任务记录不重放；这不覆盖完整模板的
+文件系统沙箱、依赖服务联动、开机启动、固定镜像构建或证书配置。
 
 `launcher.c` 是静态程序，拒绝所有额外参数，以固定绝对 JVM 路径、固定 JVM 参数及主类
 调用 `execve`，envp 只有 NULL。不得替换为 shell、Java 包装器或继承环境的 exec。
