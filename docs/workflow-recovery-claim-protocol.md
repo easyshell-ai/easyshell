@@ -1,6 +1,8 @@
-# 工作流 recovery claim 有界协议（未接线）
+# 工作流 recovery claim 有界协议
 
-本协议及实现只新增持久互斥与状态证据，不启用恢复。Repository 不注册 Spring Bean，默认构造关闭；测试或未来经审查的调用者必须显式开启。迁移建表不代表功能开启。没有引擎、扫描器、Task、审批或旧 worker 接线，没有自动重派，不宣称 exactly-once、多实例安全或完整恢复。
+当前已通过默认关闭的 `engine.durableResumeEnabled` 接入审批恢复。`WorkflowRecoveryClaimService` 在同一个 JPA/JDBC 事务中领取完整 waiting 集合；引擎在提交 executor 前独立提交 ENTERED，allocator 将 node/member 的已知结果原子终结。过期 sweeper 取消仍为 CLAIMED 的精确节点、将 ENTERED 标为 UNCERTAIN；有界异步扫描补偿丢失的审批通知。未知执行不重派，不接管 owner，不宣称 exactly-once、多实例安全或完整恢复。迁移建表本身不启用功能。
+
+下文保留底座初始设计的分层说明；涉及“未来接线/未测试”的表述是历史边界，以本段及末尾当前验证状态为准。
 
 ## 身份与持久边界
 
@@ -17,7 +19,7 @@
 
 每次写先锁 run 槽，再匹配 active round、owner、随机 fencing token、数据库时间租约，再以完整 member 身份和预期状态更新。owner/token 是数据库 CAS 凭据，不是外部 executor 的真实 fencing；未改造旧 worker 不能受本协议保护。时间使用数据库 `CURRENT_TIMESTAMP(6)`，无应用传入的 now。事务应短小，数据库事务时间语义和真实 MySQL 锁/隔离行为尚需验证。
 
-正常写在租约到期后失败。显式 `expire` 仅在匹配相同 batch 身份且数据库确认过期后，将 CLAIMED 变 CANCELLED、ENTERED 变 UNCERTAIN；它不是接管，不换 owner/token、不派发。UNCERTAIN 永久不可重派，不开放凭猜测解决未知的 API。`finishBatch` 仅当所有 member 均为 SUCCEEDED/FAILED/CANCELLED 才释放 active 槽；UNKNOWN/ENTERED/CLAIMED 均阻塞。
+开始交付要求有效租约；同一完整身份的已知结果可在租约过期后终结 ENTERED，不能普通终结 UNCERTAIN。显式 `expire` 仅在匹配相同 batch 身份且数据库确认过期后，将 CLAIMED 变 CANCELLED、ENTERED 变 UNCERTAIN；它不是接管，不换 owner/token、不派发。UNCERTAIN 不可重派，不开放凭猜测解决未知的 API。`finishBatch` 仅当所有 member 均为 SUCCEEDED/FAILED/CANCELLED 才释放 active 槽；UNKNOWN/ENTERED/CLAIMED 均阻塞。
 
 取消只逐个 CAS 请求中的精确成员，且只接受 CLAIMED；返回实际变更数。已 ENTERED 或未列出的成员不变。此处 CANCELLED 只是 claim 墓碑，**不写旧 node/run 状态，不冒充 `resume_aborted` 的业务收尾**。超时/取消不覆盖 UNCERTAIN；未来 watchdog 无权自动 reclaim。
 
@@ -36,6 +38,8 @@
 | 旧 owner/token 回写 | 身份/active round/租约拒绝；这不阻止旧 worker 的外部动作 |
 
 ## 验证及集成责任
+
+当前已执行 H2/Spring 领取、审批批准/拒绝、共同回滚、过期收尾、未知不重领和有界补偿测试；真实 MySQL RR 旧快照反例验证 `finishBatch` 使用当前锁定读，不会错误释放槽。真实双 VM HIGH 审批在持久领取模式成功，member SUCCEEDED 且活动槽释放。尚未证明旧 worker 外部 fencing、任意未知结果裁决或跨实例完整崩溃恢复。
 
 新增测试使用每测试唯一 H2 内存库、keeper Connection、真实 Flyway classpath 迁移、独立 JDBC 连接与事务；覆盖并发 claim/进入竞争、旧 token/owner/过期拒绝、回滚、高水位、未知不 reclaim、精确取消及永久身份唯一性。测试不启动 Spring、网络或容器。本轮按授权不启动构建或测试，尚无执行通过证据，也未验证真实 MySQL。
 
