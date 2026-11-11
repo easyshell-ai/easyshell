@@ -1,10 +1,22 @@
-# 独立 code worker 原型（不可部署）
+# 独立 code worker（专用测试验收通过，生产部署待验收）
+
+## 当前验证状态
+
+专用临时运行时已实际验证 JS/Python 正常计算与 guest 超时、mTLS 跨身份授权、
+运行中取消、监督器 SIGKILL 后独立回收、memcg OOM 后正常任务恢复，以及保留原
+journal 的重启。产品工作流详情和浏览器代码样例也已实际验证。execution 策略现只
+运行 `/opt/code-worker/launcher`，固定 JVM 参数并在 execve 时使用空环境；默认
+Worker/CLI 仍拒绝执行。监督器 167 项测试和锁定依赖的离线 strict 构建通过。
+
+以下诊断过程与早期测试数量保留为历史证据，不能把其中“待复验”当作最新状态。
+生产仍缺固定基础镜像的独立供应链审查、完整主机重启、证书运维和 systemd 验收；
+`deploy/preflight.sh` 因此保持明确阻断，不能把临时运行步骤当作正式部署。
 
 计时约定更新：Java Context build/显式语言initialize在执行future之前，由监督器固定
 15秒startup allowance + guest timeoutMs（最大5000ms，总执行deadline最大20秒）覆盖。
 future从用户source eval开始计时，超时context.close(true)。不新增响应phase/初始化消息，
 Supervisor内部区分worker返回TIMEOUT和外部TIMEOUT；loop验收只接受前者且源码已交付。
-guest权限、资源限额、原Worker与默认CLI拒绝行为不变。仍需fresh reaper/journal实测。
+guest权限、资源限额、原Worker与默认CLI拒绝行为不变。该预算已经专用运行时实测。
 
 ## 已定位的 scratch 镜像初始化根因与 JDK 完整性
 
@@ -14,7 +26,7 @@ guest权限、资源限额、原Worker与默认CLI拒绝行为不变。仍需fre
 OpenJDK21 `conf` 含指向 `/etc/java-21-openjdk` 的符号链接，而原 scratch 镜像未包含其目标。
 因此当前已确认的阻断是 **JDK 系统配置链接目标缺失**；资源缓存/TruffleAttach 警告并非
 这条证据所示的异常根因，先前 passwd/group、locale、timezone 等推测不作为结论。
-修复镜像后仍需真实复验，本文不宣称 Python 容器执行已经通过。
+修复镜像后 Python 容器已经实际复验通过；此段保留根因和打包完整性要求。
 
 若临时复制宿主 JDK 构建镜像，构建方必须审查并包含完整 runtime 文件闭包：
 
