@@ -66,7 +66,7 @@ public class UserServiceImpl implements UserService {
     @Override
     @Transactional
     public UserVO update(Long id, UserUpdateRequest request) {
-        User user = userRepository.findById(id)
+        User user = userRepository.findByIdForUpdate(id)
                 .orElseThrow(() -> new BusinessException(404, "用户不存在"));
 
         if (request.getEmail() != null) {
@@ -91,7 +91,7 @@ public class UserServiceImpl implements UserService {
     @Override
     @Transactional
     public void delete(Long id) {
-        User user = userRepository.findById(id)
+        User user = userRepository.findByIdForUpdate(id)
                 .orElseThrow(() -> new BusinessException(404, "用户不存在"));
 
         // Prevent deleting the last super_admin
@@ -111,7 +111,7 @@ public class UserServiceImpl implements UserService {
     @Override
     @Transactional
     public void resetPassword(Long id, PasswordResetRequest request) {
-        User user = userRepository.findById(id)
+        User user = userRepository.findByIdForUpdate(id)
                 .orElseThrow(() -> new BusinessException(404, "用户不存在"));
         user.setPassword(passwordEncoder.encode(request.getNewPassword()));
         userRepository.save(user);

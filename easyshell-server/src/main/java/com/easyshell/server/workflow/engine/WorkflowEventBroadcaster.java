@@ -26,10 +26,12 @@ public class WorkflowEventBroadcaster implements Consumer<WorkflowEvent> {
 
     private final WorkflowEventPublisher logPublisher;
     private final WorkflowRunWebSocketHandler runWebSocketHandler;
+    private final SensitiveDataFilter sensitiveDataFilter;
 
     public WorkflowEventBroadcaster(WorkflowRunWebSocketHandler runWebSocketHandler,
                                     SensitiveDataFilter sensitiveDataFilter) {
         this.runWebSocketHandler = runWebSocketHandler;
+        this.sensitiveDataFilter = sensitiveDataFilter;
         this.logPublisher = new WorkflowEventPublisher(sensitiveDataFilter);
     }
 
@@ -37,7 +39,8 @@ public class WorkflowEventBroadcaster implements Consumer<WorkflowEvent> {
     public void accept(WorkflowEvent event) {
         logPublisher.accept(event);
         try {
-            runWebSocketHandler.broadcast(event);
+            runWebSocketHandler.broadcast(new WorkflowEvent(event.type(), event.runId(), event.nodeKey(),
+                    sensitiveDataFilter.filter(event.message()), null, event.at()));
         } catch (Exception e) {
             // WS 推送失败绝不能反噬执行内核
             log.warn("工作流事件 WS 推送失败: run={} type={} err={}", event.runId(), event.type(), e.getMessage());

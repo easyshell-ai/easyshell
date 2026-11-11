@@ -2,7 +2,16 @@ package com.easyshell.server.websocket;
 
 import com.easyshell.server.config.WebSocketAuthInterceptor;
 import com.easyshell.server.model.entity.Task;
+import com.easyshell.server.model.entity.Job;
+import com.easyshell.server.model.entity.User;
+import com.easyshell.server.model.dto.TaskTargetSnapshot;
 import com.easyshell.server.repository.TaskRepository;
+import com.easyshell.server.repository.TaskTargetSnapshotRepository;
+import com.easyshell.server.repository.JobRepository;
+import com.easyshell.server.repository.UserRepository;
+import com.easyshell.server.service.AuditLogService;
+import com.easyshell.server.service.HostAclService;
+import com.easyshell.server.service.HostAclService.Permission;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -17,6 +26,7 @@ import java.net.URI;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -38,12 +48,37 @@ class TaskLogWebSocketHandlerTest {
 
     @Mock
     private TaskRepository taskRepository;
+    @Mock
+    private TaskTargetSnapshotRepository snapshotRepository;
+    @Mock
+    private HostAclService hostAclService;
+    @Mock private UserRepository userRepository;
+    @Mock private JobRepository jobRepository;
+    @Mock private AuditLogService auditLogService;
 
     private TaskLogWebSocketHandler handler;
 
     @BeforeEach
     void setUp() {
-        handler = new TaskLogWebSocketHandler(taskRepository);
+        handler = new TaskLogWebSocketHandler(taskRepository, snapshotRepository, hostAclService,
+                userRepository, jobRepository, auditLogService);
+        lenient().when(userRepository.findById(org.mockito.ArgumentMatchers.anyLong())).thenAnswer(invocation -> {
+            long id = invocation.getArgument(0);
+            User user = new User();
+            user.setId(id);
+            user.setRole(id == 7L ? "super_admin" : "operator");
+            return Optional.of(user);
+        });
+        lenient().when(jobRepository.findByTaskId(TASK_ID)).thenReturn(List.of(job("job_1", TASK_ID, "agent-1"),
+                job("job", TASK_ID, "agent-1")));
+        lenient().when(snapshotRepository.findComplete(TASK_ID)).thenReturn(Optional.of(snapshot()));
+        lenient().when(hostAclService.allowedForGeneration(org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.eq("agent-1"), org.mockito.ArgumentMatchers.eq(1L),
+                org.mockito.ArgumentMatchers.eq(Permission.VIEW))).thenReturn(true);
+    }
+
+    private TaskTargetSnapshot snapshot() {
+        return new TaskTargetSnapshot(TASK_ID, List.of(new TaskTargetSnapshot.Target("agent-1", 1L)));
     }
 
     private Task taskOwnedBy(Long userId) {
@@ -52,7 +87,16 @@ class TaskLogWebSocketHandlerTest {
         task.setName("someone else's job");
         task.setScriptContent("echo secret");
         task.setCreatedBy(userId);
+        task.setTotalCount(1);
         return task;
+    }
+
+    private Job job(String id, String taskId, String agentId) {
+        Job job = new Job();
+        job.setId(id);
+        job.setTaskId(taskId);
+        job.setAgentId(agentId);
+        return job;
     }
 
     private WebSocketSession session(Long userId, String role) throws Exception {
@@ -169,5 +213,155 @@ class TaskLogWebSocketHandlerTest {
 
         verify(session, never()).sendMessage(any());
         assertThat(handler).isNotNull();
+    }
+
+    @Test
+    void unknownSnapshotRejectsEvenAdmin() throws Exception {
+        when(taskRepository.findById(TASK_ID)).thenReturn(Optional.of(taskOwnedBy(42L)));
+        when(snapshotRepository.findComplete(TASK_ID)).thenReturn(Optional.empty());
+        WebSocketSession admin = session(7L, "admin");
+        handler.afterConnectionEstablished(admin);
+        verify(admin).close(CloseStatus.POLICY_VIOLATION);
+    }
+
+    @Test
+    void deniedViewOnAnyTargetRejects() throws Exception {
+        Task task = taskOwnedBy(42L);
+        task.setTotalCount(2);
+        when(taskRepository.findById(TASK_ID)).thenReturn(Optional.of(task));
+        when(snapshotRepository.findComplete(TASK_ID)).thenReturn(Optional.of(new TaskTargetSnapshot(TASK_ID,
+                List.of(new TaskTargetSnapshot.Target("agent-1", 1L), new TaskTargetSnapshot.Target("agent-2", 2L)))));
+        WebSocketSession session = session(42L, "operator");
+        handler.afterConnectionEstablished(session);
+        verify(session).close(CloseStatus.POLICY_VIOLATION);
+    }
+
+    @Test
+    void revokedViewClosesBeforeSending() throws Exception {
+        when(taskRepository.findById(TASK_ID)).thenReturn(Optional.of(taskOwnedBy(42L)));
+        when(hostAclService.allowedForGeneration(42L, "agent-1", 1L, Permission.VIEW)).thenReturn(true, false);
+        WebSocketSession session = session(42L, "operator");
+        handler.afterConnectionEstablished(session);
+        handler.sendLog(TASK_ID, "job", "secret");
+        verify(session).close(CloseStatus.POLICY_VIOLATION);
+        verify(session, never()).sendMessage(any());
+    }
+
+    @Test
+    void snapshotDatabaseFailureClosesBeforeSending() throws Exception {
+        when(taskRepository.findById(TASK_ID)).thenReturn(Optional.of(taskOwnedBy(42L)));
+        when(snapshotRepository.findComplete(TASK_ID)).thenReturn(Optional.of(snapshot()))
+                .thenThrow(new RuntimeException("db down"));
+        WebSocketSession session = session(42L, "operator");
+        handler.afterConnectionEstablished(session);
+        handler.sendLog(TASK_ID, "job", "secret");
+        verify(session).close(CloseStatus.POLICY_VIOLATION);
+        verify(session, never()).sendMessage(any());
+    }
+
+    @Test
+    void changedSnapshotClosesBeforeSendingEvenIfNewTargetIsAllowed() throws Exception {
+        when(taskRepository.findById(TASK_ID)).thenReturn(Optional.of(taskOwnedBy(42L)));
+        var changed = new TaskTargetSnapshot(TASK_ID, List.of(new TaskTargetSnapshot.Target("agent-1", 2L)));
+        when(snapshotRepository.findComplete(TASK_ID)).thenReturn(Optional.of(snapshot()), Optional.of(changed));
+        when(hostAclService.allowedForGeneration(42L, "agent-1", 2L, Permission.VIEW)).thenReturn(true);
+        WebSocketSession session = session(42L, "operator");
+        handler.afterConnectionEstablished(session);
+        handler.sendLog(TASK_ID, "job", "secret");
+        verify(session).close(CloseStatus.POLICY_VIOLATION);
+        verify(session, never()).sendMessage(any());
+    }
+
+    @Test
+    void missingTargetRejectsAndAudits() throws Exception {
+        Task task = taskOwnedBy(42L);
+        task.setTotalCount(2);
+        when(taskRepository.findById(TASK_ID)).thenReturn(Optional.of(task));
+        WebSocketSession session = session(42L, "operator");
+        handler.afterConnectionEstablished(session);
+        verify(session).close(CloseStatus.POLICY_VIOLATION);
+        verify(auditLogService).logSync(org.mockito.ArgumentMatchers.eq(42L), any(), any(), any(),
+                org.mockito.ArgumentMatchers.eq(TASK_ID), any(), org.mockito.ArgumentMatchers.isNull(), any());
+    }
+
+    @Test
+    void foreignTargetJobRejectsSubscription() throws Exception {
+        when(taskRepository.findById(TASK_ID)).thenReturn(Optional.of(taskOwnedBy(42L)));
+        when(jobRepository.findByTaskId(TASK_ID)).thenReturn(List.of(job("bad", TASK_ID, "other")));
+        WebSocketSession session = session(42L, "operator");
+        handler.afterConnectionEstablished(session);
+        verify(session).close(CloseStatus.POLICY_VIOLATION);
+    }
+
+    @Test
+    void crossTaskJobClosesBeforeSend() throws Exception {
+        when(taskRepository.findById(TASK_ID)).thenReturn(Optional.of(taskOwnedBy(42L)));
+        WebSocketSession session = session(42L, "operator");
+        handler.afterConnectionEstablished(session);
+        handler.sendLog(TASK_ID, "foreign-job", "secret");
+        verify(session).close(CloseStatus.POLICY_VIOLATION);
+        verify(session, never()).sendMessage(any());
+    }
+
+    @Test
+    void demotedAdminWithOldTokenIsRejectedBeforeSend() throws Exception {
+        when(taskRepository.findById(TASK_ID)).thenReturn(Optional.of(taskOwnedBy(42L)));
+        User admin = new User();
+        admin.setRole("admin");
+        User demoted = new User();
+        demoted.setRole("operator");
+        when(userRepository.findById(7L)).thenReturn(Optional.of(admin), Optional.of(demoted));
+        WebSocketSession session = session(7L, "admin");
+        handler.afterConnectionEstablished(session);
+        handler.sendLog(TASK_ID, "job_1", "secret");
+        verify(session).close(CloseStatus.POLICY_VIOLATION);
+        verify(session, never()).sendMessage(any());
+    }
+
+    @Test
+    void disabledUserAndAuditFailureStillClose() throws Exception {
+        User disabled = new User();
+        disabled.setStatus(0);
+        when(userRepository.findById(42L)).thenReturn(Optional.of(disabled));
+        org.mockito.Mockito.doThrow(new RuntimeException("audit down")).when(auditLogService)
+                .logSync(any(), any(), any(), any(), any(), any(), org.mockito.ArgumentMatchers.isNull(), any());
+        WebSocketSession session = session(42L, "operator");
+        handler.afterConnectionEstablished(session);
+        verify(session).close(CloseStatus.POLICY_VIOLATION);
+    }
+
+    @Test
+    void jobDatabaseFailureClosesBeforeSend() throws Exception {
+        when(taskRepository.findById(TASK_ID)).thenReturn(Optional.of(taskOwnedBy(42L)));
+        when(jobRepository.findByTaskId(TASK_ID)).thenReturn(List.of(job("job_1", TASK_ID, "agent-1")))
+                .thenThrow(new RuntimeException("db down"));
+        WebSocketSession session = session(42L, "operator");
+        handler.afterConnectionEstablished(session);
+        handler.sendLog(TASK_ID, "job_1", "secret");
+        verify(session).close(CloseStatus.POLICY_VIOLATION);
+        verify(session, never()).sendMessage(any());
+    }
+
+    @Test
+    void pendingTaskWithoutJobsCannotEmitLogs() throws Exception {
+        when(taskRepository.findById(TASK_ID)).thenReturn(Optional.of(taskOwnedBy(42L)));
+        when(jobRepository.findByTaskId(TASK_ID)).thenReturn(List.of());
+        WebSocketSession session = session(42L, "operator");
+        handler.afterConnectionEstablished(session);
+        verify(session, never()).close(any());
+        handler.sendLog(TASK_ID, "job_1", "secret");
+        verify(session).close(CloseStatus.POLICY_VIOLATION);
+        verify(session, never()).sendMessage(any());
+    }
+
+    @Test
+    void staleAdminRoleAtHandshakeDoesNotGrantAccess() throws Exception {
+        User demoted = new User();
+        demoted.setRole("operator");
+        when(userRepository.findById(7L)).thenReturn(Optional.of(demoted));
+        when(taskRepository.findById(TASK_ID)).thenReturn(Optional.of(taskOwnedBy(42L)));
+        WebSocketSession session = session(7L, "admin");
+        handler.afterConnectionEstablished(session);
+        verify(session).close(CloseStatus.POLICY_VIOLATION);
     }
 }

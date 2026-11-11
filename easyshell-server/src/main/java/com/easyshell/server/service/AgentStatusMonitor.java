@@ -9,6 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -25,49 +26,49 @@ public class AgentStatusMonitor {
     private final MetricSnapshotRepository metricSnapshotRepository;
     private final TaskService taskService;
     private final AgentWebSocketHandler agentWebSocketHandler;
+    private final HostIdentityService hostIdentityService;
+    private final TransactionTemplate transactionTemplate;
 
     @Scheduled(fixedRate = 30000)
     public void checkAgentStatus() {
+        // Scanned entities are only candidates. Never save them after acquiring the lock:
+        // deletion, re-registration or a heartbeat may have occurred in the meantime.
+        List<String> candidates = java.util.stream.Stream.concat(
+                        agentRepository.findByStatus(1).stream(), agentRepository.findByStatus(2).stream())
+                .map(Agent::getId).distinct().toList();
+        for (String id : candidates) {
+            transactionTemplate.executeWithoutResult(status -> updateCurrentStatus(id));
+        }
+    }
+
+    private void updateCurrentStatus(String id) {
+        hostIdentityService.lock(id);
+        Agent agent = agentRepository.findById(id).orElse(null);
+        if (agent == null || agent.getStatus() == null) return;
+
         LocalDateTime now = LocalDateTime.now();
         LocalDateTime offlineThreshold = now.minusSeconds(HEARTBEAT_TIMEOUT_SECONDS);
         LocalDateTime unstableThreshold = now.minusSeconds(UNSTABLE_THRESHOLD_SECONDS);
-
-        List<Agent> onlineAgents = agentRepository.findByStatus(1);
-        for (Agent agent : onlineAgents) {
-            if (agent.getLastHeartbeat() == null || agent.getLastHeartbeat().isBefore(offlineThreshold)) {
-                // Also check WebSocket: agent may still be connected even if heartbeat is stale
-                if (agentWebSocketHandler.isAgentConnected(agent.getId())) {
-                    log.debug("Agent {} heartbeat stale but WebSocket still connected, keeping online", agent.getId());
-                    continue;
-                }
-                agent.setStatus(0);
-                agentRepository.save(agent);
-                log.warn("Agent {} marked offline (no heartbeat for {}s, no WebSocket)", agent.getId(), HEARTBEAT_TIMEOUT_SECONDS);
-            } else if (agent.getLastHeartbeat().isBefore(unstableThreshold)) {
-                agent.setStatus(2);
-                agentRepository.save(agent);
-                log.warn("Agent {} marked unstable", agent.getId());
+        LocalDateTime heartbeat = agent.getLastHeartbeat();
+        int current = agent.getStatus();
+        int next = current;
+        if (current == 1) {
+            if (heartbeat == null || heartbeat.isBefore(offlineThreshold)) {
+                if (!agentWebSocketHandler.isAgentConnected(id)) next = 0;
+            } else if (heartbeat.isBefore(unstableThreshold)) {
+                next = 2;
+            }
+        } else if (current == 2) {
+            if (heartbeat != null && heartbeat.isAfter(unstableThreshold)) {
+                next = 1;
+            } else if (heartbeat == null || heartbeat.isBefore(offlineThreshold)) {
+                next = agentWebSocketHandler.isAgentConnected(id) ? 1 : 0;
             }
         }
-
-        List<Agent> unstableAgents = agentRepository.findByStatus(2);
-        for (Agent agent : unstableAgents) {
-            if (agent.getLastHeartbeat() != null && agent.getLastHeartbeat().isAfter(unstableThreshold)) {
-                agent.setStatus(1);
-                agentRepository.save(agent);
-                log.info("Agent {} recovered to online", agent.getId());
-            } else if (agent.getLastHeartbeat() == null || agent.getLastHeartbeat().isBefore(offlineThreshold)) {
-                // Also check WebSocket before marking offline
-                if (agentWebSocketHandler.isAgentConnected(agent.getId())) {
-                    agent.setStatus(1); // recover to online if WebSocket is connected
-                    agentRepository.save(agent);
-                    log.info("Agent {} recovered to online (WebSocket connected)", agent.getId());
-                } else {
-                    agent.setStatus(0);
-                    agentRepository.save(agent);
-                    log.warn("Agent {} marked offline from unstable", agent.getId());
-                }
-            }
+        if (next != current) {
+            agent.setStatus(next);
+            agentRepository.save(agent);
+            log.info("Agent {} status changed from {} to {}", id, current, next);
         }
     }
 

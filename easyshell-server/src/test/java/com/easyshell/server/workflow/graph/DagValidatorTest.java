@@ -73,6 +73,44 @@ class DagValidatorTest {
                 && code.equals(i.code()));
     }
 
+    @Test
+    void strictAiRequiresExplicitAbortAndNoRetries() {
+        for (String type : List.of("llm", "ai-analyze")) {
+            WorkflowNode ai = node("ai", type);
+            ai.setConfig(Map.of("outputMode", "json_schema_v1"));
+            ai.setOnFailure("partial");
+            ai.setRetryMax(2);
+            assertThat(hasError(validate(List.of(ai), List.of()), "STRICT_AI_FAILURE_POLICY")).isTrue();
+            assertThat(hasError(validate(List.of(ai), List.of()), "STRICT_AI_RETRY")).isTrue();
+            ai.setOnFailure(null);
+            assertThat(hasError(validate(List.of(ai), List.of()), "STRICT_AI_FAILURE_POLICY")).isTrue();
+            ai.setOnFailure("abort");
+            ai.setRetryMax(0);
+            assertThat(hasError(validate(List.of(ai), List.of()), "STRICT_AI_FAILURE_POLICY")).isFalse();
+            assertThat(hasError(validate(List.of(ai), List.of()), "STRICT_AI_RETRY")).isFalse();
+            ai.setRetryMax(null);
+            assertThat(hasError(validate(List.of(ai), List.of()), "STRICT_AI_RETRY")).isFalse();
+        }
+    }
+
+    @Test
+    void aiTransitiveRawAndApprovalBypassAreRejected() {
+        WorkflowNode ai = node("ai", "llm");
+        WorkflowNode transform = node("middle", "transform");
+        WorkflowNode gate = node("gate", "approval");
+        WorkflowNode script = node("script", "script-exec");
+        script.setConfig(Map.of("rawParams", List.of("X"), "parameters", Map.of("X", "constant")));
+        WorkflowDefinition def = definition(List.of(ai, transform, gate, script),
+                List.of(edge("ai", "middle"), edge("middle", "gate"), edge("gate", "script"),
+                        edge("middle", "script")));
+        assertThat(validator.hasAiAncestor(def, "script")).isTrue();
+        assertThat(validator.dominatingApprovals(def, "script")).isEmpty();
+        assertThat(hasError(validator.validate(def), "AI_OUTPUT_RAW_FORBIDDEN")).isTrue();
+        assertThat(hasError(validator.validate(def), "AI_APPROVAL_REQUIRED")).isTrue();
+        def.setEdges(List.of(edge("ai", "middle"), edge("middle", "gate"), edge("gate", "script")));
+        assertThat(validator.dominatingApprovals(def, "script")).containsExactly("gate");
+    }
+
     // ------------------------------------------------------------------
     // 环检测
     // ------------------------------------------------------------------
@@ -829,6 +867,16 @@ class DagValidatorTest {
                     List.of(llmNode(Map.of("outputMode", "json", "jsonSchema", "{not json"))), List.of());
             assertThat(hasWarning(schemaIssues, "NODE_CONFIG_INVALID")).isTrue();
             assertThat(hasError(schemaIssues, "NODE_CONFIG_INVALID")).isFalse();
+        }
+
+        @Test
+        void strictLlmOutputModeIsAcceptedByGraphValidation() {
+            WorkflowNode llm = llmNode(Map.of("outputMode", "json_schema_v1",
+                    "jsonSchema", Map.of("type", "object", "properties", Map.of())));
+            llm.setOnFailure("abort");
+            List<ValidationIssue> issues = validate(List.of(llm), List.of());
+            assertThat(hasError(issues, "NODE_CONFIG_INVALID")).isFalse();
+            assertThat(hasWarning(issues, "NODE_CONFIG_INVALID")).isFalse();
         }
 
         @Test

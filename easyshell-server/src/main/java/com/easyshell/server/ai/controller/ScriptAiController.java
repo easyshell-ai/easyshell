@@ -1,6 +1,7 @@
 package com.easyshell.server.ai.controller;
 
 import com.easyshell.server.ai.orchestrator.AgentEvent;
+import com.easyshell.server.ai.security.SensitiveDataFilter;
 import com.easyshell.server.ai.service.ChatModelFactory;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
@@ -29,6 +30,7 @@ import java.util.Map;
 public class ScriptAiController {
 
     private final ChatModelFactory chatModelFactory;
+    private final SensitiveDataFilter sensitiveDataFilter;
 
     // Section delimiters used in the AI prompt
     private static final String DELIM_NAME = "===SCRIPT_NAME===";
@@ -51,12 +53,13 @@ public class ScriptAiController {
             Authentication auth) {
 
         boolean isModification = request.getExistingScript() != null && !request.getExistingScript().isBlank();
-        String systemPrompt = buildSystemPrompt(request, isModification);
+        String systemPrompt = sensitiveDataFilter.filter(buildSystemPrompt(request, isModification));
+        String filteredPrompt = sensitiveDataFilter.filter(request.getPrompt());
         String userPrompt;
         if (isModification) {
-            userPrompt = "EXISTING SCRIPT TO MODIFY:\n```\n" + request.getExistingScript() + "\n```\n\nUSER REQUEST: " + request.getPrompt();
+            userPrompt = "EXISTING SCRIPT TO MODIFY:\n```\n" + sensitiveDataFilter.filter(request.getExistingScript()) + "\n```\n\nUSER REQUEST: " + filteredPrompt;
         } else {
-            userPrompt = request.getPrompt();
+            userPrompt = filteredPrompt;
         }
 
         Sinks.Many<AgentEvent> sink = Sinks.many().unicast().onBackpressureBuffer();
@@ -88,18 +91,15 @@ public class ScriptAiController {
                         String raw = fullResponse.toString();
                         emitParsedSections(raw, sink, isModification);
                     } catch (Exception e) {
-                        log.warn("Failed to parse structured sections from AI response", e);
+                        log.warn("Failed to parse structured sections from AI response");
                     }
                     sink.tryEmitNext(AgentEvent.builder().type(AgentEvent.Type.DONE).build());
                     sink.tryEmitComplete();
-                }).doOnError(err -> {
-                    log.error("Script generation error", err);
-                    sink.tryEmitNext(AgentEvent.error(err.getMessage()));
-                    sink.tryEmitComplete();
                 }).blockLast();
             } catch (Exception e) {
-                log.error("Script generation failed", e);
-                sink.tryEmitNext(AgentEvent.error(e.getMessage()));
+                // Provider exceptions can contain request or response bodies, including secrets.
+                log.error("Script generation failed");
+                sink.tryEmitNext(AgentEvent.error("Script generation failed"));
                 sink.tryEmitComplete();
             }
         }).start();

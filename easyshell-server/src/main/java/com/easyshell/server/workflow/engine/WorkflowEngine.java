@@ -10,6 +10,7 @@ import com.easyshell.server.repository.WorkflowApprovalRepository;
 import com.easyshell.server.repository.WorkflowNodeRunRepository;
 import com.easyshell.server.repository.WorkflowRunRepository;
 import com.easyshell.server.repository.WorkflowVersionRepository;
+import com.easyshell.server.repository.WorkflowRecoveryClaimRepository.State;
 import com.easyshell.server.service.AuditLogService;
 import com.easyshell.server.workflow.expression.ExpressionException;
 import com.easyshell.server.workflow.expression.ExpressionEvaluator;
@@ -21,18 +22,25 @@ import com.easyshell.server.workflow.model.WorkflowEdge;
 import com.easyshell.server.workflow.model.WorkflowNode;
 import com.easyshell.server.workflow.properties.WorkflowProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.sql.SQLException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -105,21 +113,14 @@ public class WorkflowEngine {
      */
     private final TransactionTemplate transactionTemplate;
 
-    /**
-     * 留痕行（"从未开始"节点的 cancelled/skipped attempt 行）写入专用短事务，
-     * PROPAGATION_REQUIRES_NEW——与 {@link AttemptAllocator#startAttempt} 同一套路。
-     *
-     * <p><b>为什么不能并进调用方的事务</b>：留痕写是"尽力而为"的审计行，撞 uk_node_run
-     * 是常态竞态而非错误。若它并进取消事务，仓储方法自身的 {@code @Transactional}
-     * 一抛就会把<b>整个取消事务</b>标成 rollback-only，run 的终态、节点批量取消全部回滚，
-     * 对外就是 HTTP 500；失败实体留在持久化上下文里，还会让后续 JPQL 查询前的 auto-flush
-     * 把同一条 INSERT 重发一遍，第二次异常没有任何 try/catch 接着。
-     * 独立短事务把这两件事一起关在里面：失败即整体回滚丢弃，取消事务毫发无损。</p>
-     */
-    private final TransactionTemplate terminalRowTemplate;
+    /** 固定分片，锁身份不会随终态清理改变；不同 run 可能争用同一分片。 */
+    private final ReentrantLock[] runLocks = java.util.stream.IntStream.range(0, 256)
+            .mapToObj(i -> new ReentrantLock()).toArray(ReentrantLock[]::new);
+    private final Set<String> deferredCleanup = ConcurrentHashMap.newKeySet();
+    private final ThreadLocal<Map<String, String>> claimedAttempts = new ThreadLocal<>();
 
-    /** per-runId 进程内锁（MF-10②：触发端点/扫描器/看门狗/resume 四方同 JVM 重入防护） */
-    private final Map<String, ReentrantLock> runLocks = new ConcurrentHashMap<>();
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private WorkflowRecoveryClaimService recoveryClaims;
 
     /** per-run 取消标志：同 JVM 内执行中节点的检查点源（§3.10） */
     private final Map<String, AtomicBoolean> cancelFlags = new ConcurrentHashMap<>();
@@ -169,8 +170,6 @@ public class WorkflowEngine {
         this.properties = properties;
         this.objectMapper = objectMapper;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
-        this.terminalRowTemplate = new TransactionTemplate(transactionManager);
-        this.terminalRowTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     // ==================================================================
@@ -197,34 +196,88 @@ public class WorkflowEngine {
     /**
      * 唤醒：DB 行唯一事实源 + 同 JVM 事件 + 10s 扫描兜底（§3.8）。
      *
-     * <p>本 run 下全部 waiting 节点都已决策才唤醒（漏一个都整体放弃，等下一轮扫描）；
-     * {@code resumeIfWaiting} 影响 0 行 = run 已被取消/已终态，节点唤醒仍然安全——
-     * 因为 {@link #resumeNodes} 会按当前行状态二次过滤，且 run 终态时直接返回。</p>
+     * <p>读取的 waiting 节点全部已决策才唤醒；run 或任一 attempt 条件更新失败时
+     * 整个事务回滚，不执行节点。其他写入未共享锁，不能保证读取后没有新增 waiting。</p>
      */
     public void resumeRun(String runId) {
-        WorkflowRun run = runRepository.findById(runId).orElse(null);
-        if (run == null || TERMINAL_RUN.contains(run.getStatus())) {
+        // REQUIRED would otherwise join the caller's transaction: returning from the
+        // claim would not mean it committed, yet resumeNodes could execute immediately.
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            throw new IllegalStateException("resumeRun cannot run inside an active transaction");
+        }
+        WorkflowRun candidate = runRepository.findById(runId).orElse(null);
+        if (candidate == null || TERMINAL_RUN.contains(candidate.getStatus())) {
             return;
         }
-        List<WorkflowNodeRun> waiting = nodeRunRepository.findByRunIdAndStatus(runId, "waiting");
-        if (waiting.isEmpty()) {
-            return;
-        }
-        List<String> decidedKeys = new ArrayList<>();
-        for (WorkflowNodeRun row : waiting) {
-            Optional<com.easyshell.server.model.entity.WorkflowApproval> approval =
-                    approvalRepository.findByRunIdAndNodeKey(runId, row.getNodeKey());
-            if (approval.isEmpty() || "pending".equals(approval.get().getStatus())) {
-                return;   // 还有未决策的审批：整体放弃，等下一轮
+        withLock(candidate, () -> resumeRunLocked(runId), () -> submitResume(runId));
+    }
+
+    private void resumeRunLocked(String runId) {
+        Map<String, String> claimed = new LinkedHashMap<>();
+        Map<String, RecoveryAttemptRef> refs = new LinkedHashMap<>();
+        boolean durable = properties.getEngine().isDurableResumeEnabled();
+        if (durable && recoveryClaims == null) throw new IllegalStateException("recovery service is unavailable");
+        List<String> decidedKeys = transactionTemplate.execute(status -> {
+            WorkflowRun run = (durable ? runRepository.lockById(runId) : runRepository.findById(runId)).orElse(null);
+            if (run == null || TERMINAL_RUN.contains(run.getStatus())) {
+                return List.of();
             }
-            decidedKeys.add(row.getNodeKey());
-        }
-        transactionTemplate.execute(status -> {
-            runRepository.resumeIfWaiting(runId);          // run: waiting -> running（幂等）
-            nodeRunRepository.resumeWaitingNodes(runId);   // node_run: waiting -> running
-            return null;
+            List<WorkflowNodeRun> waiting = nodeRunRepository.findByRunIdAndStatus(runId, "waiting");
+            if (waiting.isEmpty()) {
+                return List.of();
+            }
+            Map<String, WorkflowNodeRun> latest = latestByKey(runId);
+            for (WorkflowNodeRun row : waiting) {
+                WorkflowNodeRun newest = latest.get(row.getNodeKey());
+                if (claimed.putIfAbsent(row.getNodeKey(), row.getId()) != null
+                        || newest == null || !Objects.equals(newest.getId(), row.getId())) {
+                    log.warn("拒绝不明确的审批 attempt: run={} node={}", runId, row.getNodeKey());
+                    return List.of();
+                }
+                if (row.getApprovalId() == null) {
+                    return List.of();
+                }
+                Optional<com.easyshell.server.model.entity.WorkflowApproval> approval =
+                        approvalRepository.findById(row.getApprovalId());
+                if (approval.isEmpty() || !Objects.equals(runId, approval.get().getRunId())
+                        || !Objects.equals(row.getNodeKey(), approval.get().getNodeKey())
+                        || !Objects.equals(row.getNodeType(), approval.get().getNodeType())
+                        || approval.get().getStatus() == null
+                        || !Set.of("approved", "rejected", "timeout", "cancelled").contains(approval.get().getStatus())) {
+                    return List.of();
+                }
+            }
+            if (durable) {
+                refs.putAll(recoveryClaims.claimWaiting(runId, waiting));
+                if (refs.size() != waiting.size()) {
+                    throw new IllegalStateException("incomplete recovery batch: " + runId);
+                }
+                return List.copyOf(refs.keySet());
+            }
+            if (runRepository.resumeIfWaiting(runId) != 1) {
+                throw new IllegalStateException("run resume conflict: " + runId);
+            }
+            List<String> keys = new ArrayList<>();
+            for (WorkflowNodeRun row : waiting) {
+                if (nodeRunRepository.resumeWaitingAttempt(row.getId(), runId, row.getApprovalId()) != 1) {
+                    throw new IllegalStateException("attempt resume conflict: " + row.getId());
+                }
+                keys.add(row.getNodeKey());
+            }
+            return keys;
         });
-        resumeNodes(runId, decidedKeys);
+        if (decidedKeys != null && !decidedKeys.isEmpty()) {
+            if (durable) {
+                resumeNodes(runId, decidedKeys, Map.copyOf(refs));
+                return;
+            }
+            claimedAttempts.set(claimed);
+            try {
+                resumeNodes(runId, decidedKeys);
+            } finally {
+                claimedAttempts.remove();
+            }
+        }
     }
 
     /**
@@ -234,60 +287,213 @@ public class WorkflowEngine {
      * 而 attempt 号必须保持不变——审计链上"这一次 attempt 包含等待审批的时间"。</p>
      */
     public void resumeNodes(String runId, List<String> nodeKeys) {
+        resumeNodes(runId, nodeKeys, Map.of());
+    }
+
+    private void resumeNodes(String runId, List<String> nodeKeys, Map<String, RecoveryAttemptRef> refs) {
+        boolean durable = properties.getEngine().isDurableResumeEnabled();
+        Map<String, String> claimed = durable ? null : claimedAttempts.get();
+        List<String> remaining = new ArrayList<>(nodeKeys.stream().distinct().toList());
+        // These are deliberately separate from the work-list. A claim is not an
+        // accepted submission, and an accepted submission must not be cleaned up
+        // merely because its future has not started yet.
+        Set<String> accepted = new java.util.HashSet<>();
+        try {
         WorkflowRun run = runRepository.findById(runId).orElse(null);
         if (run == null || TERMINAL_RUN.contains(run.getStatus())) {
             return;
         }
-        if (!initVariablesIfAbsentOrFail(run)) {
-            return;
-        }
         withLock(run, () -> {
+            if (!initVariablesIfAbsentOrFail(run)) {
+                return;
+            }
             WorkflowDefinition def = loadDefinition(run.getVersionId());
             if (def == null) {
+                failRun(run, "definition_missing: 无法加载工作流定义");
                 return;
             }
             Map<String, WorkflowNodeRun> latest = latestByKey(runId);
-            // 只重执行"刚被唤醒且现在确实是 running"的节点：取消/超时抢先的行不再执行
-            List<WorkflowNode> resumed = nodeKeys.stream()
-                    .filter(key -> {
-                        WorkflowNodeRun row = latest.get(key);
-                        return row != null && "running".equals(row.getStatus());
-                    })
-                    .map(def::nodeByKey).filter(Objects::nonNull).toList();
+            WorkflowRun currentRun = runRepository.findById(runId).orElse(null);
+            if (currentRun == null || TERMINAL_RUN.contains(currentRun.getStatus())) {
+                return;
+            }
+            if (Boolean.TRUE.equals(currentRun.getCancelRequested())) {
+                cancelRun(currentRun, "cancelled", "user_cancelled");
+                return;
+            }
+            if (durable ? refs.isEmpty() : claimed == null) {
+                // External callers cannot prove ownership of a running attempt.
+                // A previously failed strict AI node must still terminate the run;
+                // do not claim or rewrite any unowned running attempt here.
+                abortFailedNode(currentRun, def, latest);
+                log.warn("拒绝无领取凭据的恢复: run={}", runId);
+                return;
+            }
+            if (abortFailedNode(currentRun, def, latest)) {
+                return;
+            }
             AtomicBoolean cancelled = cancelFlags.computeIfAbsent(runId, k -> new AtomicBoolean());
-            if (!resumed.isEmpty()) {
-                runWave(run, def, resumed, latest, cancelled, true, new AtomicBoolean());
-                checkpoint(run, def);
-            }
-            if (postWave(run, def, cancelled)) {
+            // Process negative decisions before approvals; no later wave may run after rejection.
+            Map<String, WorkflowNodeRun> selected = latest;
+            remaining.sort(java.util.Comparator.comparingInt(key -> {
+                WorkflowNodeRun row = selected.get(key);
+                return row != null && row.getApprovalId() != null
+                        && approvalRepository.findById(row.getApprovalId())
+                                .map(a -> !"approved".equals(a.getStatus())).orElse(true) ? 0 : 1;
+            }));
+            Set<String> negative = remaining.stream().filter(key -> {
+                WorkflowNodeRun row = selected.get(key);
+                return row == null || row.getApprovalId() == null
+                        || approvalRepository.findById(row.getApprovalId())
+                                .map(a -> !"approved".equals(a.getStatus())).orElse(true);
+            }).collect(java.util.stream.Collectors.toSet());
+            int limit = Math.max(1, properties.getEngine().getMaxConcurrentNodes());
+                while (!remaining.isEmpty()) {
+                    WorkflowRun current = runRepository.findById(runId).orElse(null);
+                    if (current == null || TERMINAL_RUN.contains(current.getStatus()) || cancelled.get()) {
+                        return;
+                    }
+                    if (Boolean.TRUE.equals(current.getCancelRequested())) {
+                        cancelRun(current, "cancelled", "user_cancelled");
+                        return;
+                    }
+                    latest = latestByKey(runId);
+                    if (abortFailedNode(current, def, latest)) {
+                        return;
+                    }
+                    int waveSize = negative.contains(remaining.get(0)) ? 1 : Math.min(limit, remaining.size());
+                    List<String> keys = new ArrayList<>(remaining.subList(0, waveSize));
+                    List<WorkflowNode> wave = new ArrayList<>();
+                    for (String key : keys) {
+                        WorkflowNodeRun row = latest.get(key);
+                        WorkflowNode node = def.nodeByKey(key);
+                        boolean exactDispatch = node != null && node.nodeType() == NodeType.SCRIPT_EXEC
+                                && properties.getApproval().isDispatchEnabled() && row != null
+                                && validDispatchSuspension(row);
+                        if (node != null && node.nodeType() == NodeType.SCRIPT_EXEC && !exactDispatch) {
+                            cancelRun(current, "failed", "resume_unsupported",
+                                    "SCRIPT_APPROVAL_RESUME_UNSUPPORTED: 历史脚本动态审批恢复暂不支持，请联系管理员处理");
+                            return;
+                        }
+                        RecoveryAttemptRef ref = refs.get(key);
+                        if (row == null || !(durable ? matchesRecovery(row, ref)
+                                : Objects.equals(claimed.get(key), row.getId()))
+                                || !"running".equals(row.getStatus()) || node == null
+                                || (node.nodeType() != NodeType.APPROVAL && !exactDispatch)) {
+                            cancelRun(current, "failed", "resume_attempt_invalid");
+                            return;
+                        }
+                        wave.add(node);
+                    }
+                    try {
+                        runWave(current, def, wave, latest, cancelled, true, new AtomicBoolean(),
+                                key -> {
+                                    accepted.add(key);
+                                    remaining.remove(key);
+                                 }, refs);
+                    } catch (java.util.concurrent.RejectedExecutionException rejected) {
+                        // runWave joins every successfully submitted future before propagating.
+                        // Only keys still in remaining were never accepted by this pool.
+                        cancelRun(current, "failed", "resume_dispatch_rejected");
+                        return;
+                    }
+                    checkpoint(current, def);
+                    if (!postWave(current, def, cancelled)) {
+                        return;
+                    }
+                    if (durable && keys.stream().map(latestByKey(runId)::get)
+                            .anyMatch(row -> row != null && "waiting".equals(row.getStatus()))) {
+                        return;
+                    }
+                }
                 driveLocked(run);
-            }
         });
+        } finally {
+            // The claim and terminal run transaction have committed before these independent
+            // attempt transactions. A process crash between them remains unrecovered.
+            // Only a claim for which runAsync threw before returning is undelivered.
+            // In particular, do not close an accepted future that is still queued.
+            if (durable) {
+                for (RecoveryAttemptRef ref : refs.values()) {
+                    // CAS only CLAIMED members. Accepted/ENTERED work can never be inferred unexecuted.
+                    try {
+                        attemptAllocator.closeRecoveryAborted(ref, false, ignored -> publish(WorkflowEvent.of(
+                                "NODE_CANCELLED", runId, ref.member().nodeKey(), "resume_aborted")));
+                        attemptAllocator.markRecoveryUncertain(ref);
+                    } catch (RuntimeException cleanupFailure) {
+                        log.error("恢复成员收尾失败，保留持久状态禁止重派: run={} node={}",
+                                runId, ref.member().nodeKey(), cleanupFailure);
+                    }
+                }
+            } else if (claimed != null) {
+                Set<String> undelivered = new java.util.HashSet<>(claimed.keySet());
+                undelivered.removeAll(accepted);
+                for (String key : undelivered) {
+                    String id = claimed.get(key);
+                    if (id == null) continue;
+                    WorkflowNodeRun row = nodeRunRepository.findById(id).orElse(null);
+                    if (row == null) continue;
+                    attemptAllocator.closeResumeAborted(runId, key, id, row.getAttempt(),
+                            "resume_aborted: 恢复在执行此节点前中止",
+                            ignored -> publish(WorkflowEvent.of("NODE_CANCELLED", runId, key, "resume_aborted")));
+                }
+            }
+        }
+    }
+
+    private boolean matchesRecovery(WorkflowNodeRun row, RecoveryAttemptRef ref) {
+        return ref != null && Objects.equals(row.getRunId(), ref.claim().runId())
+                && Objects.equals(row.getId(), ref.member().nodeRunId())
+                && Objects.equals(row.getNodeKey(), ref.member().nodeKey())
+                && Objects.equals(row.getAttempt(), ref.member().attempt());
     }
 
     /** 主循环（同步阻塞；测试直接调用） */
     public void drive(WorkflowRun run) {
         // 队列泵回/扫描器重驱动不会经过 WorkflowRunService 的立即启动路径：在引擎入口
         // 兜底播种 run.input.* 与 run 元信息，保证 queued 启动的 run 与立即启动的完全等价
-        if (!initVariablesIfAbsentOrFail(run)) {
-            return;
-        }
-        withLock(run, () -> driveLocked(run));
+        withLock(run, () -> {
+            if (initVariablesIfAbsentOrFail(run)) {
+                driveLocked(run);
+            }
+        }, () -> submitDrive(run));
     }
 
     private void withLock(WorkflowRun run, Runnable body) {
-        ReentrantLock lock = runLocks.computeIfAbsent(run.getId(), k -> new ReentrantLock());
+        // Direct resumeNodes callers cannot safely replay an already-running attempt.
+        withLock(run, body, null);
+    }
+
+    private void withLock(WorkflowRun run, Runnable body, Runnable retry) {
+        ReentrantLock lock = lockFor(run.getId());
         if (!lock.tryLock()) {
-            // 同一 run 已有执行者（触发端点/扫描器/看门狗/resume 之一）：放弃本次，
-            // 登记后由 10s 扫描器兜底——不静默丢弃（v2 小瑕，v3 修复）
-            pendingWakeups.add(run.getId());
+            // Retry the original operation, not the approval-only pendingWakeups scanner.
+            // A resume retry occurs before any waiting -> running transition.
+            if (retry != null) {
+                try {
+                    retryScheduler.schedule(retry, Instant.now().plusSeconds(1));
+                } catch (RuntimeException e) {
+                    // No attempt has been claimed on this path. Scanner may retry later.
+                    log.error("重试调度失败，保留原状态等待扫描: run={}", run.getId(), e);
+                }
+            } else {
+                log.warn("拒绝重放未持锁的 running attempt: run={}", run.getId());
+            }
             return;
         }
         try {
-            body.run();
+            WorkflowRun current = runRepository.findById(run.getId()).orElse(null);
+            if (current != null && !TERMINAL_RUN.contains(current.getStatus())) {
+                body.run();
+            }
         } finally {
             lock.unlock();
+            deferredCleanup.stream().filter(id -> lockFor(id) == lock).forEach(this::cleanup);
         }
+    }
+
+    private ReentrantLock lockFor(String runId) {
+        return runLocks[Math.floorMod(runId.hashCode(), runLocks.length)];
     }
 
     private void driveLocked(WorkflowRun run) {
@@ -315,6 +521,15 @@ public class WorkflowEngine {
             }
 
             Map<String, WorkflowNodeRun> latest = latestByKey(runId);
+            if (abortFailedNode(current, def, latest)) {
+                return;
+            }
+            // An unowned running attempt may already have performed external effects.
+            // Without durable fencing, neither replay nor additional work is safe.
+            if (latest.values().stream().anyMatch(row -> "running".equals(row.getStatus()))) {
+                log.warn("存在无法安全恢复的 running attempt，停止自动重放: run={}", runId);
+                return;
+            }
             List<WorkflowNode> ready = dagSchedulerFindReady(def, latest, runId);
             if (ready.isEmpty()) {
                 if (DagScheduler.hasPendingRetry(def, latest)) {
@@ -346,28 +561,52 @@ public class WorkflowEngine {
     private void runWave(WorkflowRun run, WorkflowDefinition def, List<WorkflowNode> ready,
                          Map<String, WorkflowNodeRun> latest, AtomicBoolean cancelled,
                          boolean resume, AtomicBoolean attemptConflict) {
+        runWave(run, def, ready, latest, cancelled, resume, attemptConflict, key -> {}, Map.of());
+    }
+
+    private void runWave(WorkflowRun run, WorkflowDefinition def, List<WorkflowNode> ready,
+                         Map<String, WorkflowNodeRun> latest, AtomicBoolean cancelled,
+                         boolean resume, AtomicBoolean attemptConflict, Consumer<String> submitted,
+                         Map<String, RecoveryAttemptRef> refs) {
         // 背压②：单波不超过 max-concurrent-nodes，其余留到下一波（§3.9）
         int limit = Math.max(1, properties.getEngine().getMaxConcurrentNodes());
         List<CompletableFuture<Void>> futures = new ArrayList<>();
-        for (WorkflowNode node : ready.stream().limit(limit).toList()) {
-            if (cancelled.get()) {
-                break;
+        try {
+            for (WorkflowNode node : ready.stream().limit(limit).toList()) {
+                if (cancelled.get()) {
+                    break;
+                }
+                RecoveryAttemptRef ref = refs.get(node.getKey());
+                if (resume && properties.getEngine().isDurableResumeEnabled()
+                        && (ref == null || !attemptAllocator.enterRecovery(ref))) {
+                    throw new IllegalStateException("recovery enter conflict: " + node.getKey());
+                }
+                CompletableFuture<Void> future;
+                try {
+                    future = CompletableFuture.runAsync(
+                            () -> runNode(run, def, node, latest, cancelled, resume, attemptConflict, ref), enginePool);
+                } catch (java.util.concurrent.RejectedExecutionException rejected) {
+                    if (ref != null) attemptAllocator.closeRecoveryAborted(ref, true, ignored -> publish(
+                            WorkflowEvent.of("NODE_CANCELLED", run.getId(), node.getKey(), "resume_aborted")));
+                    throw rejected;
+                }
+                futures.add(future);
+                submitted.accept(node.getKey());
             }
-            futures.add(CompletableFuture.runAsync(
-                    () -> runNode(run, def, node, latest, cancelled, resume, attemptConflict), enginePool));
-        }
-        for (CompletableFuture<Void> future : futures) {
-            try {
-                future.join();
-            } catch (CompletionException | java.util.concurrent.CancellationException e) {
-                log.warn("节点执行 future 异常: run={} err={}", run.getId(), e.getMessage());
+        } finally {
+            for (CompletableFuture<Void> future : futures) {
+                try {
+                    future.join();
+                } catch (CompletionException | java.util.concurrent.CancellationException e) {
+                    log.warn("节点执行 future 异常: run={} err={}", run.getId(), e.getMessage());
+                }
             }
         }
     }
 
     private void runNode(WorkflowRun run, WorkflowDefinition def, WorkflowNode node,
                          Map<String, WorkflowNodeRun> latest, AtomicBoolean cancelled,
-                         boolean resume, AtomicBoolean attemptConflict) {
+                          boolean resume, AtomicBoolean attemptConflict, RecoveryAttemptRef ref) {
         String runId = run.getId();
         VariableStore store = variableStores.computeIfAbsent(runId, k -> new VariableStore());
 
@@ -375,9 +614,9 @@ public class WorkflowEngine {
         if (cancelled.get()) {
             WorkflowNodeRun existing = latest.get(node.getKey());
             if (existing != null && "running".equals(existing.getStatus())) {
-                finishNode(store, run, existing, "cancelled", "user_cancelled", "用户取消", null);
+                finishNode(store, run, existing, "cancelled", "user_cancelled", "用户取消", null, ref);
             } else {
-                insertTerminalRow(runId, node, "cancelled", "user_cancelled");
+                insertStandaloneTerminalRow(runId, node, "cancelled", "user_cancelled", null);
             }
             return;
         }
@@ -386,13 +625,11 @@ public class WorkflowEngine {
         if (!resume) {
             GateDecision gate = evaluateGate(def, node, latest, store);
             if (gate.action() == GateAction.SKIP) {
-                insertTerminalRow(runId, node, "skipped", gate.reason());
-                publish(WorkflowEvent.of("NODE_SKIPPED", runId, node.getKey(), gate.reason()));
+                insertStandaloneTerminalRow(runId, node, "skipped", gate.reason(), "NODE_SKIPPED");
                 return;
             }
             if (gate.action() == GateAction.CANCEL) {
-                insertTerminalRow(runId, node, "cancelled", gate.reason());
-                publish(WorkflowEvent.of("NODE_CANCELLED", runId, node.getKey(), gate.reason()));
+                insertStandaloneTerminalRow(runId, node, "cancelled", gate.reason(), "NODE_CANCELLED");
                 return;
             }
         }
@@ -401,14 +638,17 @@ public class WorkflowEngine {
         WorkflowNodeRun row;
         if (resume) {
             row = latest.get(node.getKey());
+            if (ref != null && (row == null || !matchesRecovery(row, ref))) {
+                throw new IllegalStateException("recovery attempt changed before execution");
+            }
             if (row == null) {
-                row = startAttemptSafely(run, node, attemptConflict);
+                row = startAttemptSafely(run, node, attemptConflict, latest.get(node.getKey()));
                 if (row == null) {
                     return;
                 }
             }
         } else {
-            row = startAttemptSafely(run, node, attemptConflict);
+            row = startAttemptSafely(run, node, attemptConflict, latest.get(node.getKey()));
             if (row == null) {
                 return;
             }
@@ -420,55 +660,70 @@ public class WorkflowEngine {
         NodeExecutor executor = registry.executorFor(node.nodeType());
         if (executor == null) {
             finishNode(store, run, row, "failed", "NODE_TYPE_UNKNOWN",
-                    "节点类型无执行器: " + node.getType(), null);
+                     "节点类型无执行器: " + node.getType(), null, ref);
             return;
         }
 
         AtomicBoolean nodeCancelled = new AtomicBoolean(false);
-        // 运行期祖先隔离：写仍落 master store，读只给该节点的拓扑祖先快照。
+        // 每次调用独立缓冲写入（包括 resume），读取只给拓扑祖先快照。
         // 不开这个视图时，发布期漏掉的引用会在运行期读到兄弟/后继节点输出（横向越权）。
         java.util.Set<String> ancestors = dagValidator.ancestorMap(def)
                 .getOrDefault(node.getKey(), java.util.Set.of());
         VariableStore readView = store.createSnapshot(ancestors);
+        VariableStore attemptStore = new VariableStore();
         try {
-            NodeContext ctx = new NodeContext(run, row, node, def, store, enginePool, cancelled,
+            NodeContext ctx = new NodeContext(run, row, node, def, attemptStore, enginePool, cancelled,
                     nodeCancelled, false, eventSink, readView);
-            NodeOutcome outcome = executeWithTimeout(executor, ctx, node);
+            NodeOutcome outcome = executeWithTimeout(executor, ctx, node, ref);
             switch (outcome) {
-                case SUCCEEDED -> finishNode(store, run, row, "succeeded", null, null, null);
-                case SKIPPED -> finishNode(store, run, row, "skipped", null, null, null);
+                case SUCCEEDED -> finishNode(store, attemptStore, run, row, "succeeded", null, null, null, ref);
+                case SKIPPED -> finishNode(store, run, row, "skipped", null, null, null, ref);
                 case WAITING -> {
-                    // 执行体已落 approval 行；node_run 由引擎挂起（状态迁移单写入方）
-                    int suspended = attemptAllocator.suspendAttempt(row, row.getApprovalId());
-                    if (suspended == 0) {
-                        finishNode(store, run, row, "cancelled", "cancel_race",
-                                "挂起前已被取消/超时", null);
+                    if (node.nodeType() == NodeType.APPROVAL
+                            || (node.nodeType() == NodeType.SCRIPT_EXEC && properties.getApproval().isDispatchEnabled())) {
+                        if (!recognizeApprovalSuspension(ctx)) {
+                            finishNode(store, run, row, "cancelled", "cancel_race", "审批未成功挂起", null, ref);
+                        } else if (ref != null) {
+                            finishNode(store, run, row, "failed", "RECOVERY_WAITING",
+                                    "恢复执行再次挂起，禁止自动重派", null, ref);
+                        }
+                        break;
+                    }
+                    // 非审批执行器不能通过返回 WAITING 创建或替换审批绑定。
+                    finishNode(store, null, run, row, "failed", "WAITING_UNSUPPORTED",
+                            "非审批节点不支持挂起", null, true, ref);
+                }
+                case FAILED -> {
+                    if (!DagScheduler.automaticRetryAllowed(node)) {
+                        finishNode(store, run, row, "failed", node.nodeType() == NodeType.SCRIPT_EXEC
+                                        ? "SCRIPT_RETRY_UNSAFE" : "EXTERNAL_RETRY_UNSAFE",
+                                "节点返回失败；外部副作用未知，禁止自动重派", null, ref);
                     } else {
-                        publish(WorkflowEvent.of("NODE_WAITING", runId, node.getKey(),
-                                "等待审批 approval=" + row.getApprovalId()));
+                        finishNode(store, run, row, "failed", "NODE_FAILED", "节点返回失败", null, ref);
                     }
                 }
-                case FAILED -> finishNode(store, run, row, "failed", "NODE_FAILED", "节点返回失败", null);
             }
         } catch (NodeCancelledException e) {
-            finishNode(store, run, row, "cancelled", "user_cancelled", e.getMessage(), null);
+            finishNode(store, run, row, "cancelled", "user_cancelled", e.getMessage(), null, ref);
         } catch (NodeFailedException e) {
-            handleFailure(run, def, node, row, executor, store, e.getCode(), e.getMessage(), startedAtMillis);
+            handleFailure(run, def, node, row, executor, store, e.getCode(), e.getMessage(), startedAtMillis, ref);
         } catch (ExpressionException e) {
-            handleFailure(run, def, node, row, executor, store, e.getCode(), e.getMessage(), startedAtMillis);
+            handleFailure(run, def, node, row, executor, store, e.getCode(), e.getMessage(), startedAtMillis, ref);
         } catch (BusinessException e) {
             // 门禁 449 等：错误信息可能含等级/模式串，但不含脚本原文（C-9）
-            handleFailure(run, def, node, row, executor, store, "RISK_BLOCKED", e.getMessage(), startedAtMillis);
+            handleFailure(run, def, node, row, executor, store, "RISK_BLOCKED", e.getMessage(), startedAtMillis, ref);
         } catch (Exception e) {
             log.error("节点执行未预期异常: run={} node={}", runId, node.getKey(), e);
             handleFailure(run, def, node, row, executor, store, "NODE_INTERNAL",
-                    "节点内部错误: " + e.getClass().getSimpleName(), startedAtMillis);
+                    "节点内部错误: " + e.getClass().getSimpleName(), startedAtMillis, ref);
         }
     }
 
-    private WorkflowNodeRun startAttemptSafely(WorkflowRun run, WorkflowNode node, AtomicBoolean attemptConflict) {
+    private WorkflowNodeRun startAttemptSafely(WorkflowRun run, WorkflowNode node, AtomicBoolean attemptConflict,
+                                                WorkflowNodeRun previous) {
         try {
-            return attemptAllocator.startAttempt(run.getId(), node.getKey(), node.getType());
+            return attemptAllocator.startAttempt(run.getId(), node.getKey(), node.getType(),
+                    previous == null ? 0 : previous.getAttempt());
         } catch (AttemptConflictException e) {
             log.error("attempt 抢占失败，终止 run: {}", e.getMessage());
             attemptConflict.set(true);
@@ -480,16 +735,26 @@ public class WorkflowEngine {
 
     private void handleFailure(WorkflowRun run, WorkflowDefinition def, WorkflowNode node, WorkflowNodeRun row,
                                NodeExecutor executor, VariableStore store, String code, String message,
-                               long startedAtMillis) {
+                               long startedAtMillis, RecoveryAttemptRef ref) {
+        if (ref != null) {
+            // A recovery delivery is never retried from an uncertain executor result.
+            finishNode(store, run, row, "failed", code, message, null, ref);
+            return;
+        }
+        if (!DagScheduler.automaticRetryAllowed(node)) {
+            finishNode(store, run, row, "failed", code,
+                    "外部副作用未知，禁止自动重派；" + message, null, ref);
+            return;
+        }
         int attempt = row.getAttempt() == null ? 1 : row.getAttempt();
-        int allowed = node.retryMaxOrDefault(0) + 1;
+        int allowed = isStrictAi(node) ? 1 : node.retryMaxOrDefault(0) + 1;
         boolean retryable = executor.retryable(new NodeFailedException(code, message)) || defaultRetryable(code);
         if (retryable && attempt < allowed) {
-            finishNode(store, run, row, "failed", code, message + "（attempt " + attempt + " 失败，将退避重试）", null);
+            finishNode(store, run, row, "failed", code, message + "（attempt " + attempt + " 失败，将退避重试）", null, ref);
             scheduleRetry(run, node, attempt);
             return;
         }
-        finishNode(store, run, row, "failed", code, message, null);
+        finishNode(store, run, row, "failed", code, message, null, ref);
     }
 
     /** 默认可重试判定（§3.12：超时/网络/IO/agent 掉线可重试；类型/校验/BANNED/权限不可重试） */
@@ -513,15 +778,43 @@ public class WorkflowEngine {
         log.info("节点 {} 将在 {}s 后重试（attempt={}）", node.getKey(), delay, attempt);
     }
 
-    private NodeOutcome executeWithTimeout(NodeExecutor executor, NodeContext ctx, WorkflowNode node) throws Exception {
+    private NodeOutcome executeWithTimeout(NodeExecutor executor, NodeContext ctx, WorkflowNode node,
+                                           RecoveryAttemptRef ref) throws Exception {
         int timeoutSec = node.timeoutSecOrDefault(properties.getEngine().getDefaultNodeTimeoutSec());
-        CompletableFuture<NodeOutcome> future = CompletableFuture.supplyAsync(() -> executor.execute(ctx), enginePool);
+        CompletableFuture<NodeOutcome> future;
+        try {
+            future = CompletableFuture.supplyAsync(() -> {
+                if (ref != null && (ctx.nodeCancelled().get() || !attemptAllocator.verifyRecoveryEntered(ref))) {
+                    throw new NodeFailedException("RECOVERY_AUTHORITY_LOST", "恢复执行凭据已失效");
+                }
+                return executor.execute(ctx);
+            }, enginePool);
+        } catch (java.util.concurrent.RejectedExecutionException rejected) {
+            if (ref != null) {
+                attemptAllocator.closeRecoveryAborted(ref, true, ignored -> publish(WorkflowEvent.of(
+                        "NODE_CANCELLED", ctx.run().getId(), node.getKey(), "resume_aborted")));
+                throw new NodeFailedException("RECOVERY_SUBMISSION_REJECTED", "恢复执行提交被拒绝");
+            }
+            throw rejected;
+        }
         try {
             return future.get(timeoutSec, TimeUnit.SECONDS);
         } catch (TimeoutException e) {
             // 节点级超时（§3.10 ①）：orphan 线程可能还在跑，翻节点级取消标志让它下一轮退出；
             // 迟到结果由 finishAttemptAtomically 的 status='running' 条件丢弃
-            ctx.nodeCancelled().set(true);
+            synchronized (ctx.nodeCancelled()) {
+                try {
+                    if ((node.nodeType() == NodeType.APPROVAL
+                            || (node.nodeType() == NodeType.SCRIPT_EXEC && properties.getApproval().isDispatchEnabled()))
+                            && recognizeApprovalSuspension(ctx)) {
+                        return NodeOutcome.WAITING;
+                    }
+                } catch (RuntimeException lookupFailure) {
+                    ctx.nodeCancelled().set(true);
+                    throw lookupFailure;
+                }
+                ctx.nodeCancelled().set(true);
+            }
             throw new NodeFailedException("NODE_TIMEOUT", "节点执行超过 " + timeoutSec + " 秒");
         } catch (java.util.concurrent.ExecutionException e) {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
@@ -533,6 +826,39 @@ public class WorkflowEngine {
             Thread.currentThread().interrupt();
             throw new NodeCancelledException("节点执行被中断");
         }
+    }
+
+    /** 普通审批 WAITING 只能接受已提交且与本 attempt 对应的绑定。 */
+    private boolean recognizeApprovalSuspension(NodeContext ctx) {
+        WorkflowNodeRun expected = ctx.nodeRun();
+        String expectedType = ctx.node().getType();
+        if (!("approval".equals(expectedType) || ("script-exec".equals(expectedType)
+                && properties.getApproval().isDispatchEnabled()))) return false;
+        return nodeRunRepository.findById(expected.getId()).filter(actual ->
+                "waiting".equals(actual.getStatus()) && expectedType.equals(actual.getNodeType())
+                && Objects.equals(actual.getRunId(), ctx.run().getId())
+                && Objects.equals(actual.getNodeKey(), ctx.node().getKey())
+                && Objects.equals(actual.getAttempt(), expected.getAttempt())
+                && actual.getApprovalId() != null
+                && approvalRepository.findById(actual.getApprovalId()).filter(approval ->
+                        Objects.equals(approval.getRunId(), actual.getRunId())
+                        && Objects.equals(approval.getNodeKey(), actual.getNodeKey())
+                        && expectedType.equals(approval.getNodeType())).isPresent()
+                && (!"script-exec".equals(expectedType) || validDispatchSuspension(actual)))
+                .map(actual -> { expected.setApprovalId(actual.getApprovalId()); return true; }).orElse(false);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.easyshell.server.repository.WorkflowDispatchApprovalBindingRepository dispatchBindings;
+
+    private boolean validDispatchSuspension(WorkflowNodeRun row) {
+        if (dispatchBindings == null || row.getTaskId() != null) return false;
+        return Boolean.TRUE.equals(transactionTemplate.execute(tx -> dispatchBindings.find(row.getApprovalId())
+                .filter(binding -> row.getId().equals(binding.nodeRunId())
+                        && Objects.equals(row.getAttempt(), binding.attempt())
+                        && binding.userId() != null && binding.userId() > 0 && binding.timeoutSec() != null
+                        && binding.timeoutSec() > 0 && binding.targets() != null && !binding.targets().isBlank()
+                        && binding.consumedAt() == null && binding.taskId() == null).isPresent()));
     }
 
     // ==================================================================
@@ -560,6 +886,10 @@ public class WorkflowEngine {
                 anyUnsettled = true;
                 continue;
             }
+            // skipped 表示路径未被选中，不是成功的空输出；必须跨多跳传播。
+            if ("skipped".equals(status)) {
+                continue;
+            }
             if (NODE_FAILED.contains(status)) {
                 anyUpstreamFailed = true;
                 FailurePolicy policy = FailurePolicyResolver.resolve(edge, node, def);
@@ -569,7 +899,13 @@ public class WorkflowEngine {
                 if (policy == FailurePolicy.SKIP) {
                     continue;   // 本边不可通行
                 }
-                // PARTIAL：边可通行，失败上游的 output 视为不存在
+                // 分支节点失败时，即使旧 attempt 留有输出也不能据此选择分支。
+                WorkflowNode source = def.nodeByKey(edge.getFrom());
+                if (source != null && (source.nodeType() == NodeType.CONDITION
+                        || source.nodeType() == NodeType.CLASSIFIER)) {
+                    continue;
+                }
+                // PARTIAL：普通上游允许继续，保留现有失败策略。
             }
             Boolean handleDecision = evaluateConditionHandle(def, edge, store);
             if (handleDecision != null) {
@@ -607,17 +943,31 @@ public class WorkflowEngine {
     /**
      * condition / classifier 出边 handle 门控（工作流 2.0 §2.2 + 2.1 §3）。
      *
-     * @return null = 本边不适用 handle 门控（上游不是 condition/classifier 或 sourceHandle 为空），
+     * @return null = 本边不适用 handle 门控（上游不是 condition/classifier，或旧 condition 边使用表达式），
      *         交由旧 edge.condition 语义处理；TRUE/FALSE = handle 的通行判定。
      *         <b>fail-closed</b>：上游输出缺失/result 不是布尔值/handle 非法时返回 false。
      */
     private Boolean evaluateConditionHandle(WorkflowDefinition def, WorkflowEdge edge,
                                             VariableStore store) {
         String handle = edge.getSourceHandle();
-        if (handle == null || handle.isBlank()) {
-            return null;
-        }
         WorkflowNode upstream = def.nodeByKey(edge.getFrom());
+        // 旧定义以 edge.condition 选择 condition 分支；仍需实际求值，不能直接放行。
+        if (upstream != null && upstream.nodeType() == NodeType.CONDITION
+                && (handle == null || handle.isBlank())
+                && edge.getCondition() != null && !edge.getCondition().isBlank()) {
+            // 仅接受旧版标准分支表达式，不能用恒真或复合表达式绕过分支门控。
+            String resultPath = "nodes." + edge.getFrom() + ".output.result";
+            String legacy = edge.getCondition().trim();
+            if (legacy.matches(java.util.regex.Pattern.quote(resultPath) + "\\s*==\\s*(true|false)")) {
+                return null;
+            }
+            return false;
+        }
+        if (upstream != null && (upstream.nodeType() == NodeType.CLASSIFIER
+                || upstream.nodeType() == NodeType.CONDITION) && (handle == null || handle.isBlank())) {
+            store.addWarning("分支出边缺少 sourceHandle，边未通行: " + edge.getFrom() + " -> " + edge.getTo());
+            return false;
+        }
         if (upstream != null && upstream.nodeType() == NodeType.CLASSIFIER) {
             return evaluateClassifierHandle(upstream, edge, handle, store);
         }
@@ -641,7 +991,7 @@ public class WorkflowEngine {
      *
      * <ul>
      *   <li>类别 handle：{@code output.class} 与 handle 精确相等才通行；</li>
-     *   <li>{@code default}：class 缺失、非字符串或不在配置类别内时通行；</li>
+     *   <li>{@code default}：无有效类别时也不能通行；</li>
      *   <li>分类器输出整体缺失 / 不可读：<b>所有</b> handle 一律不通行（fail-closed）；</li>
      *   <li>handle 不在配置类别中：不通行（发布期已报 ERROR，这里是运行期兜底）。</li>
      * </ul>
@@ -657,29 +1007,24 @@ public class WorkflowEngine {
 
         Set<String> classes = configuredClassifierClasses(upstream);
         Object classValue = readClassifierClass(output);
-        // class 字段缺失（null）允许走 default；非字符串 class 属于不可解析，整体 fail-closed
-        boolean readable = classValue != READ_UNREADABLE
-                && (classValue == null || classValue instanceof String);
-        if (!readable) {
-            store.addWarning("classifier 出边门控失败（上游输出不可读），边未通行: "
+        if (!(classValue instanceof String text) || !classes.contains(text) || "default".equals(text)) {
+            store.addWarning("classifier 出边门控失败（类别缺失、未知或不可读），边未通行: "
                     + edge.getFrom() + " -> " + edge.getTo());
             return false;
         }
-        boolean matched = classValue instanceof String text && classes.contains(text);
 
         if ("default".equals(handle)) {
-            // 配置类别命中时 default 绝不放行；class 缺失/未知时作为显式兜底
-            return !matched;
+            return false;
         }
         if (!classes.contains(handle)) {
             store.addWarning("classifier 出边 handle '" + handle + "' 不在配置类别中，边未通行: "
                     + edge.getFrom() + " -> " + edge.getTo());
             return false;
         }
-        return matched && handle.equals(classValue);
+        return handle.equals(classValue);
     }
 
-    /** 哨兵：输出存在但结构不可读（与"class 字段缺失"区分，后者允许走 default）。 */
+    /** 哨兵：输出存在但结构不可读。 */
     private static final Object READ_UNREADABLE = new Object();
 
     private Object readClassifierClass(VariableStore.StoredOutput output) {
@@ -763,7 +1108,7 @@ public class WorkflowEngine {
         String runId = run.getId();
         WorkflowRun current = runRepository.findById(runId).orElse(null);
         if (current == null || TERMINAL_RUN.contains(current.getStatus())) {
-            cleanup(runId);
+            afterCommit(() -> cleanup(runId));
             return false;
         }
         if (Boolean.TRUE.equals(current.getCancelRequested())) {
@@ -773,21 +1118,8 @@ public class WorkflowEngine {
         List<WorkflowNodeRun> rows = nodeRunRepository.findByRunId(runId);
         Map<String, WorkflowNodeRun> latest = DagScheduler.latestByKey(rows);
 
-        // ① 本节点自身失败且 onFailure=abort → 终止 run（重试额度未尽的除外）
-        for (WorkflowNode node : def.getNodes()) {
-            WorkflowNodeRun row = latest.get(node.getKey());
-            if (row == null || !NODE_FAILED.contains(row.getStatus())) {
-                continue;
-            }
-            int attempt = row.getAttempt() == null ? 1 : row.getAttempt();
-            if (attempt < node.retryMaxOrDefault(0) + 1) {
-                continue;   // 还要重试，不终止
-            }
-            if (FailurePolicyResolver.ownFailure(node, def) == FailurePolicy.ABORT) {
-                // 节点原因与 run 原因分开记：下游看到的是"上游失败"，run 看到的是"谁终止了整条 run"
-                cancelRun(current, "failed", "upstream_failed", "node_failed:" + node.getKey());
-                return false;
-            }
+        if (abortFailedNode(current, def, latest)) {
+            return false;
         }
 
         // ② 审批被拒且 definition.onRejection=abort（§3.8 边界③）
@@ -801,6 +1133,11 @@ public class WorkflowEngine {
         }
 
         // ③ 派生式挂起（MF-9）：本波全部节点都已终态或 waiting，才允许把 run 置 waiting
+        if (properties.getEngine().isDurableResumeEnabled()
+                && rows.stream().anyMatch(row -> "running".equals(row.getStatus()))) {
+            // Known aborts above retain priority; unknown work never opens another wave.
+            return false;
+        }
         boolean anyWaiting = rows.stream().anyMatch(r -> "waiting".equals(r.getStatus()));
         if (anyWaiting && rows.stream().allMatch(
                 r -> NODE_TERMINAL.contains(r.getStatus()) || "waiting".equals(r.getStatus()))) {
@@ -812,6 +1149,26 @@ public class WorkflowEngine {
             // 影响 0 行 = run 已不是 running（被取消/并发迁移）：交给 10s 扫描器二次判定
         }
         return true;
+    }
+
+    /** 波末与恢复调度前使用同一失败判定；严格 AI 不受 partial 或重试影响。 */
+    private boolean abortFailedNode(WorkflowRun run, WorkflowDefinition def,
+                                          Map<String, WorkflowNodeRun> latest) {
+        for (WorkflowNode node : def.getNodes()) {
+            WorkflowNodeRun row = latest.get(node.getKey());
+            if (row != null && NODE_FAILED.contains(row.getStatus())
+                    && (isStrictAi(node) || (!DagScheduler.hasRetryRemaining(node, row)
+                    && FailurePolicyResolver.ownFailure(node, def) == FailurePolicy.ABORT))) {
+                cancelRun(run, "failed", "upstream_failed", "node_failed:" + node.getKey());
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isStrictAi(WorkflowNode node) {
+        return (node.nodeType() == NodeType.LLM || node.nodeType() == NodeType.AI_ANALYZE)
+                && "json_schema_v1".equals(node.configString("outputMode"));
     }
 
     /** 波末单事务：心跳 + 当前波节点 + 标量变量全量快照（§3.7） */
@@ -832,17 +1189,16 @@ public class WorkflowEngine {
     }
 
     private void finalizeRun(WorkflowRun run) {
-        transactionTemplate.execute(status -> {
+        terminalTransaction(() -> {
             finalizeRunInTransaction(run);
-            return null;
         });
     }
 
     private void finalizeRunInTransaction(WorkflowRun run) {
         String runId = run.getId();
-        WorkflowRun current = runRepository.findById(runId).orElse(null);
+        WorkflowRun current = runRepository.lockById(runId).orElse(null);
         if (current == null || TERMINAL_RUN.contains(current.getStatus())) {
-            cleanup(runId);
+            afterCommit(() -> cleanup(runId));
             return;
         }
         WorkflowDefinition def = loadDefinition(current.getVersionId());
@@ -866,11 +1222,16 @@ public class WorkflowEngine {
                 : Duration.between(current.getStartedAt(), LocalDateTime.now()).toMillis();
         int finished = runRepository.finishRunAtomically(runId, status, LocalDateTime.now(), duration,
                 buildRunOutput(runId, def, latest), truncate(error, 1000), TERMINAL_RUN);
-        if (finished == 1) {
-            publish(WorkflowEvent.of(anyFailed ? "RUN_FAILED" : "RUN_SUCCEEDED", runId, null,
-                    anyFailed ? truncate(error, 200) : "运行完成"));
-        }
-        cleanup(runId);
+        afterCommit(() -> {
+            try {
+                if (finished == 1) {
+                    publish(WorkflowEvent.of(anyFailed ? "RUN_FAILED" : "RUN_SUCCEEDED", runId, null,
+                            anyFailed ? truncate(error, 200) : "运行完成"));
+                }
+            } finally {
+                cleanup(runId);
+            }
+        });
     }
 
     /**
@@ -929,15 +1290,23 @@ public class WorkflowEngine {
     }
 
     private void failRun(WorkflowRun run, String reason) {
+        String safeReason = sensitiveDataFilter.filter(reason);
         transactionTemplate.execute(status -> {
             long duration = run.getStartedAt() == null ? 0L
                     : Duration.between(run.getStartedAt(), LocalDateTime.now()).toMillis();
-            runRepository.finishRunAtomically(run.getId(), "failed", LocalDateTime.now(), duration,
-                    null, truncate(reason, 1000), TERMINAL_RUN);
+            int finished = runRepository.finishRunAtomically(run.getId(), "failed", LocalDateTime.now(), duration,
+                    null, truncate(safeReason, 1000), TERMINAL_RUN);
+            afterCommit(() -> {
+                try {
+                    if (finished == 1) {
+                        publish(WorkflowEvent.of("RUN_FAILED", run.getId(), null, safeReason));
+                    }
+                } finally {
+                    cleanup(run.getId());
+                }
+            });
             return null;
         });
-        publish(WorkflowEvent.of("RUN_FAILED", run.getId(), null, reason));
-        cleanup(run.getId());
     }
 
     // ==================================================================
@@ -952,19 +1321,14 @@ public class WorkflowEngine {
      * 检查丢弃——"取消后不再接受该 job 回传"由此保证，且不需要改 agent 协议（X4）。</p>
      */
     public void requestCancel(String runId, Long userId) {
-        transactionTemplate.execute(status -> {
+        terminalTransaction(() -> {
             int marked = runRepository.requestCancelAtomically(runId);
             if (marked == 0) {
-                return null;   // 已取消/已终态/不存在：幂等返回
-            }
-            // 同 JVM 内执行中的节点：翻转取消标志，下一检查点（轮询循环每轮一次）退出
-            AtomicBoolean flag = cancelFlags.get(runId);
-            if (flag != null) {
-                flag.set(true);
+                return;   // 已取消/已终态/不存在：幂等返回
             }
             WorkflowRun run = runRepository.findById(runId).orElse(null);
             if (run == null) {
-                return null;
+                return;
             }
             List<String> taskIds = nodeRunRepository.findByRunId(runId).stream()
                     .map(WorkflowNodeRun::getTaskId).filter(Objects::nonNull).distinct().toList();
@@ -972,7 +1336,6 @@ public class WorkflowEngine {
             auditLogService.logSync(userId, "SYSTEM", "WORKFLOW_RUN_CANCEL", "workflow_run", runId,
                     "task_ids=" + taskIds, null, "success");
             cancelRunInTransaction(run, "cancelled", "user_cancelled", "user_cancelled");
-            return null;
         });
     }
 
@@ -992,34 +1355,35 @@ public class WorkflowEngine {
      * @param runError   run 行 error_message（"是哪个节点/什么事件终止了整条 run"）
      */
     public void cancelRun(WorkflowRun run, String runStatus, String nodeReason, String runError) {
-        transactionTemplate.execute(status -> {
+        terminalTransaction(() -> {
             cancelRunInTransaction(run, runStatus, nodeReason, runError);
-            return null;
         });
     }
 
     private void cancelRunInTransaction(WorkflowRun run, String runStatus, String nodeReason, String runError) {
         String runId = run.getId();
-        WorkflowRun current = runRepository.findById(runId).orElse(null);
+        String safeRunError = sensitiveDataFilter.filter(runError);
+        String safeNodeReason = sensitiveDataFilter.filter(nodeReason);
+        WorkflowRun current = runRepository.lockById(runId).orElse(null);
         if (current == null) {
-            cleanup(runId);
+            afterCommit(() -> cleanup(runId));
             return;
         }
         if (TERMINAL_RUN.contains(current.getStatus())) {
-            cleanup(runId);
+            afterCommit(() -> cleanup(runId));
             return;
         }
         long duration = current.getStartedAt() == null ? 0L
                 : Duration.between(current.getStartedAt(), LocalDateTime.now()).toMillis();
         int finished = runRepository.finishRunAtomically(runId, runStatus, LocalDateTime.now(), duration,
-                null, truncate(runError, 1000), TERMINAL_RUN);
+                null, truncate(safeRunError, 1000), TERMINAL_RUN);
         if (finished == 0) {
-            cleanup(runId);
+            afterCommit(() -> cleanup(runId));
             return;   // 已有其他线程写过终态（取消 vs 恢复的竞态由此确定收敛）
         }
 
         // ① 未开始与等待中的节点批量取消
-        nodeRunRepository.cancelUnfinishedNodes(runId, nodeReason);
+        nodeRunRepository.cancelUnfinishedNodes(runId, safeNodeReason);
 
         // ② 从未开始的节点补一行 cancelled 留痕（运行详情页能看到"为什么没执行"）
         WorkflowDefinition def = loadDefinition(current.getVersionId());
@@ -1027,7 +1391,7 @@ public class WorkflowEngine {
             Map<String, WorkflowNodeRun> latest = latestByKey(runId);
             for (WorkflowNode node : def.getNodes()) {
                 if (!latest.containsKey(node.getKey())) {
-                    insertTerminalRow(runId, node, "cancelled", nodeReason);
+                    insertTerminalRow(runId, node, "cancelled", safeNodeReason);
                 }
             }
         }
@@ -1038,9 +1402,31 @@ public class WorkflowEngine {
         // ④ 悬死审批清理（SF-7）
         approvalRepository.cancelPendingByRunId(runId);
 
-        publish(WorkflowEvent.of("cancelled".equals(runStatus) ? "RUN_CANCELLED" : "RUN_FAILED",
-                runId, null, runError));
-        cleanup(runId);
+        afterCommit(() -> {
+            AtomicBoolean flag = cancelFlags.get(runId);
+            if (flag != null) {
+                flag.set(true);
+            }
+            try {
+                publish(WorkflowEvent.of("cancelled".equals(runStatus) ? "RUN_CANCELLED" : "RUN_FAILED",
+                        runId, null, safeRunError));
+            } finally {
+                cleanup(runId);
+            }
+        });
+    }
+
+    private void afterCommit(Runnable action) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    action.run();
+                }
+            });
+        } else {
+            action.run();
+        }
     }
 
     private void cancelDispatchedJobs(String runId) {
@@ -1069,14 +1455,45 @@ public class WorkflowEngine {
         return DagScheduler.findReady(def, latest, node -> {
             Instant due = retryDue.get(runId + ":" + node.getKey());
             return due == null || !Instant.now().isBefore(due);
-        });
+        }).stream().filter(node -> def.inEdges(node.getKey()).stream().noneMatch(edge -> {
+            WorkflowNode source = def.nodeByKey(edge.getFrom());
+            WorkflowNodeRun row = latest.get(edge.getFrom());
+            if (source == null || row == null || !("failed".equals(row.getStatus())
+                    || "timeout".equals(row.getStatus()))) {
+                return false;
+            }
+            return DagScheduler.hasRetryRemaining(source, row);
+        })).toList();
     }
 
     /** finishNode：attempt 终态写入 + 变量状态刷新 + 事件 */
     private void finishNode(VariableStore store, WorkflowRun run, WorkflowNodeRun row, String status,
                             String errorCode, String errorMessage, String warningMessage) {
-        VariableStore.StoredOutput output = store.nodeOutput(row.getNodeKey());
-        List<String> warnings = store.drainWarnings();
+        finishNode(store, run, row, status, errorCode, errorMessage, warningMessage, null);
+    }
+
+    private void finishNode(VariableStore store, WorkflowRun run, WorkflowNodeRun row, String status,
+                            String errorCode, String errorMessage, String warningMessage, RecoveryAttemptRef ref) {
+        finishNode(store, null, run, row, status, errorCode, errorMessage, warningMessage, ref);
+    }
+
+    private void finishNode(VariableStore store, VariableStore attemptStore, WorkflowRun run, WorkflowNodeRun row,
+                            String status, String errorCode, String errorMessage, String warningMessage,
+                            RecoveryAttemptRef ref) {
+        finishNode(store, attemptStore, run, row, status, errorCode, errorMessage, warningMessage, false, ref);
+    }
+
+    private void finishNode(VariableStore store, VariableStore attemptStore, WorkflowRun run, WorkflowNodeRun row,
+                            String status, String errorCode, String errorMessage, String warningMessage,
+                            boolean preserveApprovalBinding, RecoveryAttemptRef ref) {
+        if (ref != null && "RECOVERY_SUBMISSION_REJECTED".equals(errorCode)) return;
+        State recoveryState = null;
+        if (ref != null) {
+            recoveryState = errorCode == null && ("succeeded".equals(status) || "skipped".equals(status))
+                    ? State.SUCCEEDED : State.UNCERTAIN;
+        }
+        VariableStore.StoredOutput output = attemptStore == null ? null : attemptStore.nodeOutput(row.getNodeKey());
+        List<String> warnings = attemptStore == null ? List.of() : attemptStore.drainWarnings();
         String warning = warningMessage;
         if (!warnings.isEmpty()) {
             warning = (warning == null ? "" : warning + "；") + String.join("；", warnings);
@@ -1089,12 +1506,21 @@ public class WorkflowEngine {
         // run 已终态（取消/超时抢先）时，执行体即便返回 succeeded 也只记 cancelled——
         // 取消传播矩阵（§3.10）要求"执行中的节点 → cancelled"，不依赖执行体自觉检查取消标志
         String effectiveStatus = status;
+        if (ref != null && "approval".equals(row.getNodeType()) && "approval_cancelled".equals(errorCode)) {
+            effectiveStatus = "cancelled";
+        }
         if (("succeeded".equals(status) || "skipped".equals(status))
-                && TERMINAL_RUN.contains(runRepository.findById(run.getId())
-                        .map(WorkflowRun::getStatus).orElse(null))) {
+                && runRepository.findById(run.getId())
+                        .map(current -> TERMINAL_RUN.contains(current.getStatus())
+                                || Boolean.TRUE.equals(current.getCancelRequested())).orElse(true)) {
             effectiveStatus = "cancelled";
             error = "run 已终态，节点结果作废";
         }
+        if (!"succeeded".equals(effectiveStatus)) {
+            output = null;
+            warning = warningMessage;
+        }
+        String filteredError = truncate(sensitiveDataFilter.filter(error), 1000);
         int updated = attemptAllocator.finishAttempt(row, AttemptAllocator.AttemptResult.builder()
                 .status(effectiveStatus)
                 // MF-13：执行体回填的渲染后 parameters Map 必须随终态一起落库（P-1）。
@@ -1106,18 +1532,22 @@ public class WorkflowEngine {
                 .rawParams(row.getRawParams())
                 .artifactIds(row.getArtifactIds())
                 // 错误信息可能拼入表达式/上游值，落库前统一脱敏（出站展示还会再过滤一次）
-                .errorMessage(truncate(sensitiveDataFilter.filter(error), 1000))
+                .errorMessage(filteredError)
                 .warningMessage(truncate(sensitiveDataFilter.filter(warning), 1000))
                 .agentVersions(row.getAgentVersions())
                 .taskId(row.getTaskId())
                 .approvalId(row.getApprovalId())
                 .cancelDelivered(false)
                 .durationMs(duration)
-                .build());
+                .build(), outcome -> publishStaleNode(row.getRunId(), row.getNodeKey(), outcome),
+                preserveApprovalBinding, ref, recoveryState, errorCode);
         if (updated == 0) {
             log.info("迟到结果被丢弃（attempt 已终态或被并发收尾）: run={} node={} attempt={}",
                     run.getId(), row.getNodeKey(), row.getAttempt());
             return;
+        }
+        if ("succeeded".equals(effectiveStatus) && attemptStore != null) {
+            store.mergeAttempt(attemptStore, row.getNodeKey());
         }
         store.putNodeStatus(row.getNodeKey(), effectiveStatus, duration, row.getAttempt());
         publish(WorkflowEvent.of(switch (effectiveStatus) {
@@ -1125,38 +1555,46 @@ public class WorkflowEngine {
             case "skipped" -> "NODE_SKIPPED";
             case "cancelled" -> "NODE_CANCELLED";
             default -> "NODE_FAILED";
-        }, run.getId(), row.getNodeKey(), effectiveStatus.equals("succeeded") ? null : error));
+        }, run.getId(), row.getNodeKey(), effectiveStatus.equals("succeeded") ? null : filteredError));
     }
 
-    /**
-     * 从未开始节点的终态留痕（uk_node_run 冲突时静默放弃：说明已有 attempt 行）。
-     *
-     * <p><b>幂等语义</b>：同一 (runId, nodeKey, attempt) 只允许一行（uk_node_run）。
-     * 先查后写，已有 attempt 行就直接放弃——"已有 attempt 行"由那个 attempt 自行收敛，
-     * 取消路径绝不因为一条留痕写不进去而失败（对外即 HTTP 500）。</p>
-     *
-     * <p><b>为什么必须 saveAndFlush 而不是 save</b>：{@code save()} 只把实体挂进持久化
-     * 上下文，INSERT 要到 flush/commit 才真正发出，那时异常早已不在本方法的 try/catch
-     * 覆盖范围内，会连坐炸掉调用方事务（对外就是 HTTP 500，且 run 的终态一起回滚）。
-     * {@code saveAndFlush} 让冲突在方法内暴露，兜底才兜得住。</p>
-     *
-     * <p><b>为什么必须跑在独立短事务里</b>（{@link #terminalRowTemplate}，REQUIRES_NEW）：
-     * 仓储方法自身的 {@code @Transactional} 是<b>参与</b>调用方事务的，它一抛就会把整个
-     * 取消事务标成 rollback-only——run 终态、节点批量取消、悬死审批清理全部回滚，
-     * 对外就是 HTTP 500；且失败实体留在持久化上下文里，后续 JPQL 查询前的 auto-flush
-     * 会把同一条 INSERT <b>再发一遍</b>，第二次异常没有任何 try/catch 接着
-     * （复现见 {@code WorkflowEngineH2Test} 的"取消 vs 引擎并发 attempt"用例）。
-     * 独立短事务把这两件事一起关在里面：撞键即整体回滚丢弃，取消事务毫发无损。
-     * 与 {@link AttemptAllocator#startAttempt} 处理同一个 uk_node_run 竞态同一套路。</p>
-     *
-     * <p>兜底只认 uk_node_run 冲突（{@code DataIntegrityViolationException}）：
-     * 真实错误（字段超长、空值等）不在静默范围内，照旧往外抛。</p>
-     */
-    private void insertTerminalRow(String runId, WorkflowNode node, String status, String reason) {
+    void publishStaleNode(String runId, String nodeKey, String outcome) {
+        publish(WorkflowEvent.of("cancelled".equals(outcome) ? "NODE_CANCELLED" : "NODE_FAILED",
+                runId, nodeKey, null));
+    }
+
+    /** 整个事务回滚后重新读取；参与外层事务时不能安全重试。 */
+    private void terminalTransaction(Runnable action) {
+        boolean participating = TransactionSynchronizationManager.isActualTransactionActive();
+        for (int attempt = 0; ; attempt++) {
+            try {
+                transactionTemplate.executeWithoutResult(tx -> action.run());
+                return;
+            } catch (TerminalRowConflict e) {
+                if (participating || attempt >= 2) {
+                    throw e;
+                }
+                log.debug("终态留痕冲突，回滚整个事务后重试: attempt={}", attempt + 1);
+            }
+        }
+    }
+
+    private void insertStandaloneTerminalRow(String runId, WorkflowNode node, String status, String reason,
+                                             String eventType) {
+        terminalTransaction(() -> {
+            if (runRepository.lockById(runId).isPresent() && insertTerminalRow(runId, node, status, reason)
+                    && eventType != null) {
+                afterCommit(() -> publish(WorkflowEvent.of(eventType, runId, node.getKey(), reason)));
+            }
+        });
+    }
+
+    /** 留痕与终态在同一事务中提交，冲突只在事务边界处理。 */
+    private boolean insertTerminalRow(String runId, WorkflowNode node, String status, String reason) {
         // ① 已有 attempt 行（引擎侧同一瞬间抢占同一 attempt / 上一次留痕已落库）：不写第二条
         if (nodeRunRepository.findByRunIdAndNodeKeyAndAttempt(runId, node.getKey(), 1).isPresent()) {
             log.debug("终态留痕跳过（已有 attempt=1 行）: run={} node={} status={}", runId, node.getKey(), status);
-            return;
+            return false;
         }
         LocalDateTime now = LocalDateTime.now();
         WorkflowNodeRun row = new WorkflowNodeRun();
@@ -1170,14 +1608,35 @@ public class WorkflowEngine {
         row.setStartedAt(now);
         row.setFinishedAt(now);
         try {
-            terminalRowTemplate.execute(tx -> {
-                nodeRunRepository.saveAndFlush(row);
-                return null;
-            });
+            nodeRunRepository.saveAndFlush(row);
+            return true;
         } catch (DataIntegrityViolationException e) {
-            // 查与 INSERT 之间的竞态窗口：引擎侧刚好在这一刻插下同一个 attempt。
-            // 按"已有 attempt 行"作废本次留痕，由那个 attempt 自行收敛；不重试、不改写别人的行。
-            log.debug("终态留痕写入被并发抢先（可忽略）: run={} node={} status={}", runId, node.getKey(), status);
+            if (isNodeRunUniqueConflict(e)) {
+                throw new TerminalRowConflict(e);
+            }
+            throw e;
+        }
+    }
+
+    private static boolean isNodeRunUniqueConflict(Throwable failure) {
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof SQLException sql &&
+                    ("23505".equals(sql.getSQLState()) ||
+                            ("23000".equals(sql.getSQLState()) && sql.getErrorCode() == 1062))) {
+                String message = sql.getMessage();
+                if (message != null && java.util.regex.Pattern.compile(
+                        "(?i)(?<![a-z0-9_])uk_node_run(?:_index_[a-z0-9]+)?(?![a-z0-9_])")
+                        .matcher(message).find()) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static final class TerminalRowConflict extends RuntimeException {
+        private TerminalRowConflict(Throwable cause) {
+            super(cause);
         }
     }
 
@@ -1200,11 +1659,23 @@ public class WorkflowEngine {
 
     /** run 级进程内状态清理（终态后调用，防止 Map 无限增长） */
     private void cleanup(String runId) {
-        cancelFlags.remove(runId);
-        variableStores.remove(runId);
-        runLocks.remove(runId);
-        retryDue.entrySet().removeIf(e -> e.getKey().startsWith(runId + ":"));
-        pendingWakeups.remove(runId);
+        ReentrantLock lock = lockFor(runId);
+        if (!lock.tryLock()) {
+            deferredCleanup.add(runId);
+            // Close the race with the execution thread releasing its lock.
+            if (!lock.tryLock()) {
+                return;
+            }
+        }
+        try {
+            deferredCleanup.remove(runId);
+            cancelFlags.remove(runId);
+            variableStores.remove(runId);
+            retryDue.entrySet().removeIf(e -> e.getKey().startsWith(runId + ":"));
+            pendingWakeups.remove(runId);
+        } finally {
+            lock.unlock();
+        }
     }
 
     /** 被 tryLock 拒绝而登记的 run（10s 扫描器消费） */
@@ -1218,7 +1689,23 @@ public class WorkflowEngine {
 
     /** 触发器用：把 run 级输入灌进变量存储（标量通道的唯一入口） */
     public void initVariables(WorkflowRun run, WorkflowDefinition def, Map<String, Object> input) {
-        VariableStore store = variableStore(run.getId());
+        Map<String, Object> inputCopy = input == null ? Map.of() : new LinkedHashMap<>(input);
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+                throw new IllegalStateException("variable initialization requires transaction synchronization");
+            }
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    initializeCommittedVariables(run, def, inputCopy);
+                }
+            });
+        } else {
+            initializeCommittedVariables(run, def, inputCopy);
+        }
+    }
+
+    private void seedVariables(VariableStore store, WorkflowRun run, Map<String, Object> input) {
         store.putRunMetadata("run.id", run.getId());
         String workflowName = run.getWorkflowId() == null ? null
                 : workflowRepository.findById(run.getWorkflowId())
@@ -1242,16 +1729,36 @@ public class WorkflowEngine {
      * condition/transform/ai 都会 fail-closed 跳过，表现为"从队列启动的 run 永远走 false"。</p>
      */
     public void initVariablesIfAbsent(WorkflowRun run) {
-        if (run == null || run.getId() == null || variableStores.containsKey(run.getId())) {
+        if (run == null || run.getId() == null) {
             return;
         }
-        WorkflowDefinition def = loadDefinition(run.getVersionId());
-        if (def == null) {
-            return;
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            throw new IllegalStateException("variable recovery cannot publish inside a transaction");
         }
-        initVariables(run, def, parseRunInput(run.getInputJson()));
-        if (def.getNodes() != null) {
-            restoreSucceededNodeOutputs(run.getId(), def, variableStore(run.getId()));
+        initializeCommittedVariables(run, null, null);
+    }
+
+    private void initializeCommittedVariables(WorkflowRun run, WorkflowDefinition suppliedDefinition,
+                                              Map<String, Object> suppliedInput) {
+        ReentrantLock lock = lockFor(run.getId());
+        lock.lock();
+        try {
+            VariableStore handle = variableStore(run.getId());
+            if (handle.isInitialized()) {
+                return;
+            }
+            WorkflowDefinition def = suppliedDefinition != null ? suppliedDefinition : loadDefinition(run.getVersionId());
+            if (def == null) {
+                return;
+            }
+            VariableStore candidate = new VariableStore();
+            seedVariables(candidate, run, suppliedInput != null ? suppliedInput : parseRunInput(run.getInputJson()));
+            if (def.getNodes() != null) {
+                restoreSucceededNodeOutputs(run.getId(), def, candidate);
+            }
+            handle.publishInitialized(candidate);
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -1261,7 +1768,7 @@ public class WorkflowEngine {
      * <p>重启/队列泵回时内存 store 为空；只恢复 run.input 会让已完成节点变成"输出不存在"，
      * 下游 condition 会静默走 false 分支。succeeded 行按 output_json 反序列化回
      * {@link VariableStore#putNodeOutput}（含 outputVar 别名）。condition 输出无法恢复时
-     * 直接失败（VARIABLE_RESTORE_FAILED），绝不两条分支都不走。</p>
+     * 无法证明输出完整时直接失败（VARIABLE_RESTORE_FAILED），不执行下游。</p>
      */
     private boolean initVariablesIfAbsentOrFail(WorkflowRun run) {
         if (run != null && TERMINAL_RUN.contains(run.getStatus())) {
@@ -1284,14 +1791,24 @@ public class WorkflowEngine {
             if (row == null || !"succeeded".equals(row.getStatus())) {
                 continue;
             }
-            Object parsed = null;
             String json = row.getOutputJson();
-            if (json != null && !json.isBlank()) {
-                try {
-                    parsed = objectMapper.readValue(json, Object.class);
-                } catch (Exception e) {
-                    parsed = null;
+            if (json == null || row.getOutputSha256() == null || row.getPreviewSha256() != null
+                    || !row.getOutputSha256().equals(sha256Output(json))) {
+                throw restoreFailure(node);
+            }
+            Object parsed;
+            try {
+                parsed = objectMapper.readerFor(Object.class)
+                        .with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS).readValue(json);
+                // putNodeOutput serializes again with its own default mapper. Reject values
+                // that would change on that round trip rather than invent a new fingerprint.
+                if (parsed == null || !json.equals(new ObjectMapper().writeValueAsString(parsed))) {
+                    throw restoreFailure(node);
                 }
+            } catch (NodeFailedException e) {
+                throw e;
+            } catch (Exception e) {
+                throw restoreFailure(node);
             }
             if (node.nodeType() == NodeType.CONDITION) {
                 Object result = parsed instanceof Map<?, ?> map ? map.get("result") : null;
@@ -1300,12 +1817,25 @@ public class WorkflowEngine {
                             "条件节点 " + node.getKey() + " 的已成功输出无法恢复（result 缺失或非布尔值）");
                 }
             }
-            if (parsed == null) {
-                store.addWarning("节点 " + node.getKey() + " 的已成功输出无法恢复（output_json 非有效 JSON）");
-                continue;
+            VariableStore.StoredOutput restored = store.putNodeOutput(node.getKey(), node.getOutputVar(), parsed);
+            if (restored.truncated() || !row.getOutputSha256().equals(restored.sha256())) {
+                throw restoreFailure(node);
             }
-            store.putNodeOutput(node.getKey(), node.getOutputVar(), parsed);
             store.putNodeStatus(node.getKey(), row.getStatus(), row.getDurationMs(), row.getAttempt());
+        }
+    }
+
+    private NodeFailedException restoreFailure(WorkflowNode node) {
+        return new NodeFailedException("VARIABLE_RESTORE_FAILED",
+                "节点 " + node.getKey() + " 的已成功输出无法证明完整并恢复");
+    }
+
+    private String sha256Output(String json) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(json.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 unavailable", e);
         }
     }
 

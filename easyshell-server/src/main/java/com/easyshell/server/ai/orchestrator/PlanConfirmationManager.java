@@ -6,40 +6,43 @@ import org.springframework.stereotype.Component;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.UUID;
 
 @Slf4j
 @Component
 public class PlanConfirmationManager {
 
-    private final ConcurrentHashMap<String, CompletableFuture<Boolean>> pending = new ConcurrentHashMap<>();
+    public record PendingPlan(String planId, CompletableFuture<Boolean> future) {}
+
+    private final ConcurrentHashMap<String, PendingPlan> pending = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, CompletableFuture<Boolean>> stepCheckpoints = new ConcurrentHashMap<>();
 
-    public CompletableFuture<Boolean> waitForConfirmation(String sessionId, int timeoutSeconds) {
-        CompletableFuture<Boolean> future = new CompletableFuture<Boolean>()
-                .orTimeout(timeoutSeconds, TimeUnit.SECONDS)
-                .whenComplete((result, ex) -> pending.remove(sessionId));
-        pending.put(sessionId, future);
-        return future;
+    public PendingPlan waitForConfirmation(String sessionId, int timeoutSeconds) {
+        CompletableFuture<Boolean> future = new CompletableFuture<>();
+        PendingPlan registration = new PendingPlan(UUID.randomUUID().toString(), future);
+        if (pending.putIfAbsent(sessionId, registration) != null) {
+            throw new IllegalStateException("A plan is already awaiting confirmation for this session");
+        }
+        future.whenComplete((result, ex) -> pending.remove(sessionId, registration));
+        future.orTimeout(timeoutSeconds, TimeUnit.SECONDS);
+        return registration;
     }
 
-    public void confirm(String sessionId) {
-        CompletableFuture<Boolean> future = pending.remove(sessionId);
-        if (future != null) {
-            future.complete(true);
-            log.info("Plan confirmed for session {}", sessionId);
-        } else {
-            log.warn("No pending confirmation for session {}", sessionId);
-        }
+    public boolean confirm(String sessionId, String planId) {
+        return complete(sessionId, planId, true);
     }
 
-    public void reject(String sessionId) {
-        CompletableFuture<Boolean> future = pending.remove(sessionId);
-        if (future != null) {
-            future.complete(false);
-            log.info("Plan rejected for session {}", sessionId);
-        } else {
-            log.warn("No pending rejection for session {}", sessionId);
+    public boolean reject(String sessionId, String planId) {
+        return complete(sessionId, planId, false);
+    }
+
+    private boolean complete(String sessionId, String planId, boolean accepted) {
+        PendingPlan registration = pending.get(sessionId);
+        if (registration == null || planId == null || !registration.planId().equals(planId)) {
+            return false;
         }
+        // Future completion arbitrates atomically against timeout, cancellation and replay.
+        return registration.future().complete(accepted);
     }
 
     // --- Step-level checkpoint methods for DAG workflow ---
@@ -50,10 +53,12 @@ public class PlanConfirmationManager {
 
     public CompletableFuture<Boolean> waitForStepCheckpoint(String sessionId, int stepIndex, int timeoutSeconds) {
         String key = stepCheckpointKey(sessionId, stepIndex);
-        CompletableFuture<Boolean> future = new CompletableFuture<Boolean>()
-                .orTimeout(timeoutSeconds, TimeUnit.SECONDS)
-                .whenComplete((result, ex) -> stepCheckpoints.remove(key));
-        stepCheckpoints.put(key, future);
+        CompletableFuture<Boolean> future = new CompletableFuture<>();
+        if (stepCheckpoints.putIfAbsent(key, future) != null) {
+            throw new IllegalStateException("A step is already awaiting confirmation");
+        }
+        future.whenComplete((result, ex) -> stepCheckpoints.remove(key, future));
+        future.orTimeout(timeoutSeconds, TimeUnit.SECONDS);
         return future;
     }
 

@@ -25,6 +25,12 @@ public class WorkflowVersionConflictVO {
 
     private Long draftVersionId;
 
+    /** 仅来自锁内读取的当前草稿；null 表示未提供可信快照。 */
+    private String currentDefinitionSha256;
+
+    /** true/false 表示锁内确认存在/不存在；null 表示状态未知。 */
+    private Boolean currentDraftExists;
+
     /** 固定三个选项，顺序即前端弹窗的展示顺序 */
     private List<ConflictOption> options;
 
@@ -40,12 +46,27 @@ public class WorkflowVersionConflictVO {
     }
 
     public static WorkflowVersionConflictVO of(Integer currentBaseVersion, Long draftVersionId) {
+        return create(currentBaseVersion, draftVersionId, null, null);
+    }
+
+    public static WorkflowVersionConflictVO currentDraft(Integer baseVersion, Long draftId, String sha256) {
+        return create(baseVersion, draftId, sha256, true);
+    }
+
+    public static WorkflowVersionConflictVO noDraft() {
+        return create(null, null, null, false);
+    }
+
+    private static WorkflowVersionConflictVO create(Integer currentBaseVersion, Long draftVersionId,
+                                                     String sha256, Boolean draftExists) {
         return WorkflowVersionConflictVO.builder()
                 .code("VERSION_CONFLICT")
-                .message("他人在你之后保存过草稿（base_version 已从 " + currentBaseVersion
-                        + " 前进一步）。请选择：覆盖保存 / 另存副本 / 放弃重载。M1 不做自动合并。")
+                .message(Boolean.FALSE.equals(draftExists) ? "当前没有草稿，请重新加载后确认首次创建。"
+                        : "草稿已更改，请选择：覆盖保存 / 另存副本 / 放弃重载。M1 不做自动合并。")
                 .currentBaseVersion(currentBaseVersion)
                 .draftVersionId(draftVersionId)
+                .currentDefinitionSha256(sha256)
+                .currentDraftExists(draftExists)
                 .options(List.of(
                         ConflictOption.builder()
                                 .action("overwrite")

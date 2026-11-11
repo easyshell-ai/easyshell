@@ -20,6 +20,7 @@ import com.easyshell.server.repository.AgentRepository;
 import com.easyshell.server.repository.JobRepository;
 import com.easyshell.server.repository.ScriptRepository;
 import com.easyshell.server.repository.TaskRepository;
+import com.easyshell.server.repository.TaskTargetSnapshotRepository;
 import com.easyshell.server.repository.WorkflowApprovalRepository;
 import com.easyshell.server.repository.WorkflowNodeRunRepository;
 import com.easyshell.server.repository.WorkflowRepository;
@@ -28,19 +29,24 @@ import com.easyshell.server.repository.WorkflowVersionRepository;
 import com.easyshell.server.service.AuditLogService;
 import com.easyshell.server.service.ClusterService;
 import com.easyshell.server.service.DispatchEvidenceVerifier;
+import com.easyshell.server.service.HostAclService;
+import com.easyshell.server.service.HostIdentityService;
 import com.easyshell.server.service.TagService;
 import com.easyshell.server.service.TaskService;
 import com.easyshell.server.websocket.AgentWebSocketHandler;
 import com.easyshell.server.websocket.TaskLogWebSocketHandler;
 import com.easyshell.server.workflow.approval.WorkflowApprovalStore;
+import com.easyshell.server.workflow.approval.WorkflowApprovalAttemptBinding;
 import com.easyshell.server.workflow.approval.WorkflowResumeService;
 import com.easyshell.server.workflow.engine.AttemptAllocator;
 import com.easyshell.server.workflow.engine.AttemptConflictException;
+import com.easyshell.server.workflow.engine.DagScheduler;
 import com.easyshell.server.workflow.engine.NodeContext;
 import com.easyshell.server.workflow.engine.NodeExecutor;
 import com.easyshell.server.workflow.engine.NodeExecutorRegistry;
 import com.easyshell.server.workflow.engine.NodeFailedException;
 import com.easyshell.server.workflow.engine.NodeOutcome;
+import com.easyshell.server.workflow.engine.VariableStore;
 import com.easyshell.server.workflow.engine.WorkflowEngine;
 import com.easyshell.server.workflow.engine.WorkflowEvent;
 import com.easyshell.server.workflow.engine.WorkflowPendingWakeupScanner;
@@ -59,26 +65,33 @@ import com.easyshell.server.workflow.node.EndNodeExecutor;
 import com.easyshell.server.workflow.node.LlmNodeExecutor;
 import com.easyshell.server.workflow.node.NotifyNodeExecutor;
 import com.easyshell.server.workflow.node.StartNodeExecutor;
+import com.easyshell.server.workflow.node.ScriptExecNodeExecutor;
 import com.easyshell.server.workflow.node.TransformNodeExecutor;
 import com.easyshell.server.workflow.properties.WorkflowProperties;
 import com.easyshell.server.workflow.service.WorkflowRunService;
+import com.easyshell.server.workflow.service.WorkflowRunProvenanceService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -86,6 +99,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
+import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.List;
@@ -111,7 +125,9 @@ import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -123,6 +139,7 @@ import static org.mockito.Mockito.when;
  * 取消（含"取消后不再接受 job 回传"）、超时看门狗、attempt 抢占冲突。</p>
  */
 @DataJpaTest
+@Import({WorkflowApprovalStore.class, WorkflowApprovalAttemptBinding.class})
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ActiveProfiles("test")
 @TestPropertySource(properties = {"spring.jpa.show-sql=false", "logging.level.org.hibernate.SQL=warn"})
@@ -150,6 +167,10 @@ class WorkflowEngineH2Test {
     private PlatformTransactionManager transactionManager;
     @Autowired
     private jakarta.persistence.EntityManager entityManager;
+    @Autowired
+    private WorkflowApprovalAttemptBinding approvalAttemptBinding;
+    @Autowired
+    private JdbcTemplate jdbc;
 
     @MockitoBean
     private AuditLogService auditLogService;
@@ -169,6 +190,7 @@ class WorkflowEngineH2Test {
     private ThreadPoolTaskScheduler retryScheduler;
     private WorkflowEngine engine;
     private WorkflowRunService runService;
+    private WorkflowRunProvenanceService provenanceService;
     private WorkflowResumeService resumeService;
     private WorkflowWatchdog watchdog;
     private ChannelMessageRouter channelMessageRouter;
@@ -208,12 +230,12 @@ class WorkflowEngineH2Test {
 
     /** 抢占必然冲突的分配器：用于确定性地验证引擎对 AttemptConflictException 的反应 */
     static class ConflictingAllocator extends AttemptAllocator {
-        ConflictingAllocator(WorkflowNodeRunRepository repo, PlatformTransactionManager tx) {
-            super(repo, tx);
+        ConflictingAllocator(WorkflowNodeRunRepository repo, WorkflowRunRepository runs, PlatformTransactionManager tx) {
+            super(repo, runs, tx);
         }
 
         @Override
-        public WorkflowNodeRun startAttempt(String runId, String nodeKey, String nodeType) {
+        public WorkflowNodeRun startAttempt(String runId, String nodeKey, String nodeType, int expectedPrevious) {
             throw new AttemptConflictException(runId, nodeKey, 1);
         }
     }
@@ -232,9 +254,11 @@ class WorkflowEngineH2Test {
         objectMapper = new ObjectMapper();
         expressionEvaluator = new ExpressionEvaluator(objectMapper);
         dagValidator = new DagValidator(expressionEvaluator);
-        attemptAllocator = new AttemptAllocator(nodeRunRepository, transactionManager);
+        attemptAllocator = new AttemptAllocator(nodeRunRepository, runRepository, transactionManager);
         approvalStore = new WorkflowApprovalStore(approvalRepository, entityManager, transactionManager);
         properties = new WorkflowProperties();
+        // These legacy watchdog/scanner scenarios explicitly exercise opt-in recovery behavior.
+        properties.getEngine().setAutomaticRecoveryEnabled(true);
         properties.getEngine().setDefaultRunTimeoutSec(3600);
         properties.getEngine().setDefaultNodeTimeoutSec(300);
         properties.getEngine().setMaxConcurrentNodes(5);
@@ -268,6 +292,8 @@ class WorkflowEngineH2Test {
                 .thenReturn(PushOutcome.DELIVERED);
         Consumer<WorkflowEvent> sink = events::add;
 
+        provenanceService = mock(WorkflowRunProvenanceService.class);
+        lenient().when(provenanceService.verifiedIdentity(any())).thenReturn(WorkflowRunProvenanceService.VerifiedIdentity.LEGACY);
         engine = new WorkflowEngine(runRepository, nodeRunRepository, approvalRepository, versionRepository, workflowRepository,
                 jobRepository, registry(), dagValidator, expressionEvaluator, attemptAllocator,
                 auditLogService, new SensitiveDataFilter(), Optional.of(sink), enginePool, retryScheduler,
@@ -275,6 +301,7 @@ class WorkflowEngineH2Test {
         runService = new WorkflowRunService(workflowRepository, versionRepository, runRepository,
                 nodeRunRepository, approvalRepository, engine, auditLogService, properties, objectMapper,
                 transactionManager);
+        ReflectionTestUtils.setField(runService, "provenanceService", provenanceService);
         resumeService = new WorkflowResumeService(approvalStore, runRepository, nodeRunRepository, engine,
                 auditLogService, properties, transactionManager);
         watchdog = new WorkflowWatchdog(runRepository, nodeRunRepository, approvalRepository,
@@ -309,7 +336,8 @@ class WorkflowEngineH2Test {
                 new ConditionNodeExecutor(expressionEvaluator),
                 new EndNodeExecutor(expressionEvaluator),
                 new NotifyNodeExecutor(channelMessageRouter, expressionEvaluator, new SensitiveDataFilter()),
-                new ApprovalNodeExecutor(approvalStore, expressionEvaluator, properties),
+                new ApprovalNodeExecutor(approvalStore, new com.easyshell.server.workflow.approval.WorkflowApprovalSuspensionService(
+                        approvalAttemptBinding, transactionManager), expressionEvaluator, properties, provenanceService),
                 new LlmNodeExecutor(chatModelFactory, new SensitiveDataFilter(), aiQuotaService,
                         expressionEvaluator, workflowAiPool, properties, objectMapper),
                 new ClassifierNodeExecutor(chatModelFactory, new SensitiveDataFilter(), aiQuotaService,
@@ -384,8 +412,8 @@ class WorkflowEngineH2Test {
                    {"key":"b","type":"script-exec","name":"b","config":{"script":"echo b","targets":{"mode":"explicit","agentIds":["ag-1"]}}}],
                  "edges":[
                    {"id":"e1","from":"start","to":"gate"},
-                   {"id":"e2","from":"gate","to":"a"},
-                   {"id":"e3","from":"gate","to":"b"}]}
+                   {"id":"e2","from":"gate","to":"a","sourceHandle":"true"},
+                   {"id":"e3","from":"gate","to":"b","sourceHandle":"true"}]}
                 """;
     }
 
@@ -704,7 +732,7 @@ class WorkflowEngineH2Test {
     }
 
     @Test
-    @DisplayName("工作流 2.1：llm JSON 输出 → code 沙箱变换 → end 输出")
+    @DisplayName("工作流 2.1：旧定义到达 code 节点时安全拒绝执行")
     void llmAndCodeProduceOutputs() throws Exception {
         when(chatModel.call(any(Prompt.class)))
                 .thenReturn(chatResponse("```json\n{\"summary\":\"disk ok\",\"score\":90}\n```"));
@@ -712,15 +740,11 @@ class WorkflowEngineH2Test {
         WorkflowRun run = startRun(llmCodeDefinition(), Map.of("question", "检查磁盘"));
         WorkflowRun terminal = awaitTerminal(run.getId());
 
-        assertThat(terminal.getStatus()).as(dumpRun()).isEqualTo("succeeded");
+        assertThat(terminal.getStatus()).as(dumpRun()).isEqualTo("failed");
         assertThat(nodeRun(run.getId(), "llm").getOutputJson())
                 .contains("\"structured\":true").contains("\"score\":90");
-        assertThat(nodeRun(run.getId(), "code").getOutputJson())
-                .contains("\"score\":90").contains("\"doubled\":180");
-
-        @SuppressWarnings("unchecked")
-        Map<String, Object> output = objectMapper.readValue(terminal.getOutputJson(), Map.class);
-        assertThat(((Number) output.get("score")).intValue()).isEqualTo(90);
+        assertThat(nodeRun(run.getId(), "code").getOutputJson()).isNull();
+        assertThat(nodeRun(run.getId(), "code").getErrorMessage()).contains("CODE_RUNTIME_UNAVAILABLE");
     }
 
     @Test
@@ -805,22 +829,30 @@ class WorkflowEngineH2Test {
     @DisplayName("幂等重投：同一 run 并发 drive 两次，节点只执行一次（per-run 锁）")
     void concurrentDriveIsIdempotent() throws Exception {
         AtomicInteger executions = new AtomicInteger();
+        CountDownLatch started = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
         stub(NodeType.SCRIPT_EXEC).behavior = ctx -> {
             executions.incrementAndGet();
+            started.countDown();
             try {
                 release.await(10, TimeUnit.SECONDS);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
+            ctx.variables().putNodeOutput(ctx.node().getKey(), ctx.node().getOutputVar(),
+                    Map.of("maxPcent", 93.2));
             return NodeOutcome.SUCCEEDED;
         };
 
         WorkflowRun run = startRun(linearDefinition("skip"), Map.of("threshold", 90));
-        // 第一个 drive 已在引擎池里跑；再直接调 drive() 两次（模拟消息重投）
-        engine.drive(run);
-        engine.drive(run);
-        release.countDown();
+        try {
+            assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+            // 确认第一个 drive 持锁执行节点后再重投，避免测试退化为串行调用。
+            engine.drive(run);
+            engine.drive(run);
+        } finally {
+            release.countDown();
+        }
 
         WorkflowRun terminal = awaitTerminal(run.getId());
         assertThat(terminal.getStatus()).isEqualTo("succeeded");
@@ -831,14 +863,455 @@ class WorkflowEngineH2Test {
     @Test
     @DisplayName("幂等：run 已终态后再次 drive 不产生任何新 attempt")
     void driveAfterTerminalIsNoop() {
-        stub(NodeType.SCRIPT_EXEC).behavior = ctx -> NodeOutcome.SUCCEEDED;
+        stub(NodeType.SCRIPT_EXEC).behavior = ctx -> {
+            ctx.variables().putNodeOutput(ctx.node().getKey(), ctx.node().getOutputVar(),
+                    Map.of("maxPcent", 93.2));
+            return NodeOutcome.SUCCEEDED;
+        };
         WorkflowRun run = startRun(linearDefinition("skip"), Map.of("threshold", 90));
-        awaitTerminal(run.getId());
+        assertThat(awaitTerminal(run.getId()).getStatus()).as(dumpRun()).isEqualTo("succeeded");
 
         int before = nodeRunRepository.findByRunId(run.getId()).size();
         engine.drive(run);
         assertThat(nodeRunRepository.findByRunId(run.getId())).hasSize(before);
         assertThat(events).anySatisfy(e -> assertThat(e.type()).isEqualTo("RUN_SUCCEEDED"));
+    }
+
+    @Test
+    void checkpointCannotOverwriteTerminalRun() {
+        WorkflowRun run = startRun(linearDefinition("skip"), Map.of("threshold", 90));
+        awaitTerminal(run.getId());
+        WorkflowRun before = runRepository.findById(run.getId()).orElseThrow();
+        Integer updated = new TransactionTemplate(transactionManager).execute(tx ->
+                runRepository.checkpointAtomically(run.getId(), LocalDateTime.now(),
+                        "[\"late\"]", "{\"late\":true}", true));
+        WorkflowRun after = runRepository.findById(run.getId()).orElseThrow();
+        assertThat(updated).isZero();
+        assertThat(after.getVariablesJson()).isEqualTo(before.getVariablesJson());
+        assertThat(after.getCurrentNodes()).isEqualTo(before.getCurrentNodes());
+        assertThat(after.getHeartbeatAt()).isEqualTo(before.getHeartbeatAt());
+        assertThat(after.getVariablesTruncated()).isEqualTo(before.getVariablesTruncated());
+    }
+
+    @Test
+    void terminalCleanupAndEventsWaitForCommit() {
+        AtomicInteger callbacks = new AtomicInteger();
+        TransactionTemplate tx = new TransactionTemplate(transactionManager);
+        tx.execute(status -> {
+            ReflectionTestUtils.invokeMethod(engine, "afterCommit", (Runnable) callbacks::incrementAndGet);
+            status.setRollbackOnly();
+            return null;
+        });
+        assertThat(callbacks.get()).isZero();
+        tx.execute(status -> {
+            ReflectionTestUtils.invokeMethod(engine, "afterCommit", (Runnable) callbacks::incrementAndGet);
+            return null;
+        });
+        assertThat(callbacks.get()).isEqualTo(1);
+    }
+
+    @Test
+    void runTerminalReasonsAreMaskedInDatabaseAndEvents() {
+        Long version = publishDefinition(linearDefinition("skip"));
+        WorkflowRun cancelled = newRunningRun(version, "{}");
+        engine.cancelRun(cancelled, "failed", "token=nodesecret", "password=runsecret");
+        assertThat(runRepository.findById(cancelled.getId()).orElseThrow().getErrorMessage())
+                .isEqualTo("password=***");
+        assertThat(nodeRunRepository.findByRunId(cancelled.getId()))
+                .isNotEmpty().allSatisfy(row -> assertThat(row.getErrorMessage()).isEqualTo("token=***"));
+        assertThat(events).anySatisfy(event -> {
+            assertThat(event.runId()).isEqualTo(cancelled.getId());
+            assertThat(event.message()).isEqualTo("password=***");
+        });
+
+        WorkflowRun failed = newRunningRun(version, "{}");
+        ReflectionTestUtils.invokeMethod(engine, "failRun", failed, "token=failsecret");
+        assertThat(runRepository.findById(failed.getId()).orElseThrow().getErrorMessage())
+                .isEqualTo("token=***");
+        assertThat(events).anySatisfy(event -> {
+            assertThat(event.runId()).isEqualTo(failed.getId());
+            assertThat(event.message()).isEqualTo("token=***");
+        });
+    }
+
+    @Test
+    void cancelTerminalRunDoesNotSetFlagOrWriteAudit() throws Exception {
+        stub(NodeType.SCRIPT_EXEC).behavior = ctx -> NodeOutcome.SUCCEEDED;
+        WorkflowRun run = startRun(linearDefinition("skip"), Map.of("threshold", 90));
+        awaitTerminal(run.getId());
+        events.clear();
+        engine.requestCancel(run.getId(), 42L);
+        assertThat(runRepository.findById(run.getId()).orElseThrow().getCancelRequested()).isFalse();
+        verify(auditLogService, never()).logSync(eq(42L), any(), eq("WORKFLOW_RUN_CANCEL"),
+                any(), eq(run.getId()), any(), nullable(String.class), any());
+        assertThat(events).noneMatch(e -> "RUN_CANCELLED".equals(e.type()));
+    }
+
+    @Test
+    @DisplayName("节点失败事件复用持久化的脱敏错误")
+    void finishNodeMasksPersistedAndEventError() throws Exception {
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        stub(NodeType.SCRIPT_EXEC).behavior = ctx -> {
+            started.countDown();
+            awaitQuietly(release);
+            return NodeOutcome.SUCCEEDED;
+        };
+        WorkflowRun run = startRun(linearDefinition("skip"), Map.of("threshold", 90));
+        try {
+            assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+            WorkflowNodeRun row = attemptAllocator.startAttempt(run.getId(), "sensitive-test", "script-exec", 0);
+            assertThat(row).isNotNull();
+            ReflectionTestUtils.invokeMethod(engine, "finishNode", new VariableStore(), run, row,
+                    "failed", "TEST_ERROR", "password=secret-test-value", null);
+
+            String persisted = nodeRunRepository.findById(row.getId()).orElseThrow().getErrorMessage();
+            assertThat(persisted).startsWith("TEST_ERROR:").doesNotContain("secret-test-value");
+            assertThat(events.stream().filter(e -> "NODE_FAILED".equals(e.type())
+                    && run.getId().equals(e.runId()) && "sensitive-test".equals(e.nodeKey())))
+                    .singleElement().satisfies(e -> assertThat(e.message()).isEqualTo(persisted)
+                            .doesNotContain("secret-test-value"));
+        } finally {
+            release.countDown();
+        }
+    }
+
+    @Test
+    void standaloneTerminalEventRequiresNewCommittedRow() throws Exception {
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        stub(NodeType.SCRIPT_EXEC).behavior = ctx -> {
+            started.countDown();
+            awaitQuietly(release);
+            return NodeOutcome.SUCCEEDED;
+        };
+        WorkflowRun run = startRun(linearDefinition("skip"), Map.of("threshold", 90));
+        try {
+            assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+            WorkflowNode existing = node("check", "script-exec", Map.of());
+            WorkflowNode missing = node("unreached", "script-exec", Map.of());
+            events.clear();
+            ReflectionTestUtils.invokeMethod(engine, "insertStandaloneTerminalRow", run.getId(), existing,
+                    "skipped", "gate", "NODE_SKIPPED");
+            assertThat(events).noneMatch(e -> "NODE_SKIPPED".equals(e.type()));
+            TransactionTemplate tx = new TransactionTemplate(transactionManager);
+            tx.executeWithoutResult(status -> {
+                ReflectionTestUtils.invokeMethod(engine, "insertStandaloneTerminalRow", run.getId(), missing,
+                        "cancelled", "gate", "NODE_CANCELLED");
+                assertThat(events).noneMatch(e -> "NODE_CANCELLED".equals(e.type()));
+                status.setRollbackOnly();
+            });
+            assertThat(statusOf(run.getId(), "unreached")).isEmpty();
+            assertThat(events).noneMatch(e -> "NODE_CANCELLED".equals(e.type()));
+            ReflectionTestUtils.invokeMethod(engine, "insertStandaloneTerminalRow", run.getId(), missing,
+                    "cancelled", "gate", "NODE_CANCELLED");
+            assertThat(events.stream().filter(e -> "NODE_CANCELLED".equals(e.type())
+                    && "unreached".equals(e.nodeKey()))).hasSize(1);
+        } finally {
+            release.countDown();
+        }
+    }
+
+    @Test
+    void finalizeAndCancelSerializeRunBeforeTerminalNodeInsert() throws Exception {
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch releaseNode = new CountDownLatch(1);
+        CountDownLatch insertReached = new CountDownLatch(1);
+        CountDownLatch releaseInsert = new CountDownLatch(1);
+        CountDownLatch cancelStarted = new CountDownLatch(1);
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        WorkflowRunRepository gatedRuns = (WorkflowRunRepository) Proxy.newProxyInstance(
+                WorkflowRunRepository.class.getClassLoader(), new Class<?>[]{WorkflowRunRepository.class},
+                (proxy, method, args) -> {
+                    if ("requestCancelAtomically".equals(method.getName())) {
+                        cancelStarted.countDown();
+                    }
+                    try {
+                        return method.invoke(runRepository, args);
+                    } catch (InvocationTargetException e) {
+                        throw e.getCause();
+                    }
+                });
+        WorkflowNodeRunRepository gatedRepo = (WorkflowNodeRunRepository) Proxy.newProxyInstance(
+                WorkflowNodeRunRepository.class.getClassLoader(), new Class<?>[]{WorkflowNodeRunRepository.class},
+                (proxy, method, args) -> {
+                    if ("saveAndFlush".equals(method.getName()) && args[0] instanceof WorkflowNodeRun row
+                            && isTerminalRow(row, "gate")) {
+                        insertReached.countDown();
+                        awaitQuietly(releaseInsert);
+                    }
+                    try {
+                        return method.invoke(nodeRunRepository, args);
+                    } catch (InvocationTargetException e) {
+                        throw e.getCause();
+                    }
+                });
+        WorkflowEngine gatedEngine = new WorkflowEngine(gatedRuns, gatedRepo, approvalRepository,
+                versionRepository, workflowRepository, jobRepository, registry(), dagValidator, expressionEvaluator,
+                attemptAllocator, auditLogService, new SensitiveDataFilter(), Optional.of(events::add), enginePool,
+                retryScheduler, properties, objectMapper, transactionManager);
+        stub(NodeType.SCRIPT_EXEC).behavior = ctx -> {
+            started.countDown();
+            awaitQuietly(releaseNode);
+            return NodeOutcome.SUCCEEDED;
+        };
+        WorkflowRunService gatedService = new WorkflowRunService(workflowRepository, versionRepository,
+                gatedRuns, gatedRepo, approvalRepository, gatedEngine, auditLogService, properties, objectMapper,
+                transactionManager);
+        ReflectionTestUtils.setField(gatedService, "provenanceService", provenanceService);
+        publishDefinition(linearDefinition("skip"));
+        WorkflowRun run = gatedService.startRun(workflowId, versionId, Map.of("threshold", 90), 42L, null, "manual");
+        Thread finalizer = new Thread(() -> {
+            try {
+                ReflectionTestUtils.invokeMethod(gatedEngine, "finalizeRun", run);
+            } catch (Throwable t) {
+                failure.compareAndSet(null, t);
+            }
+        });
+        Thread canceller = new Thread(() -> {
+            try {
+                gatedEngine.requestCancel(run.getId(), 42L);
+            } catch (Throwable t) {
+                failure.compareAndSet(null, t);
+            }
+        });
+        try {
+            assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+            finalizer.start();
+            assertThat(insertReached.await(5, TimeUnit.SECONDS)).isTrue();
+            canceller.start();
+            assertThat(cancelStarted.await(5, TimeUnit.SECONDS)).isTrue();
+            releaseInsert.countDown();
+            finalizer.join(10_000);
+            canceller.join(10_000);
+            assertThat(finalizer.isAlive()).isFalse();
+            assertThat(canceller.isAlive()).isFalse();
+            assertThat(failure.get()).isNull();
+            WorkflowRun result = runRepository.findById(run.getId()).orElseThrow();
+            assertThat(result.getStatus()).isEqualTo("succeeded");
+            assertThat(result.getCancelRequested()).isFalse();
+            assertThat(statusOf(run.getId(), "gate")).isEqualTo("skipped");
+            verify(auditLogService, never()).logSync(eq(42L), any(), eq("WORKFLOW_RUN_CANCEL"),
+                    any(), eq(run.getId()), any(), nullable(String.class), any());
+        } finally {
+            releaseInsert.countDown();
+            releaseNode.countDown();
+        }
+    }
+
+    @Test
+    void terminalConflictRecognitionRequiresNamedUniqueKeyAndDuplicateCode() {
+        assertThat((Boolean) ReflectionTestUtils.invokeMethod(WorkflowEngine.class, "isNodeRunUniqueConflict",
+                new SQLException("Duplicate entry for key 'workflow_node_run.uk_node_run'", "23000", 1062)))
+                .isTrue();
+        assertThat((Boolean) ReflectionTestUtils.invokeMethod(WorkflowEngine.class, "isNodeRunUniqueConflict",
+                new SQLException("Unique index UK_NODE_RUN_INDEX_1", "23505", 23505))).isTrue();
+        assertThat((Boolean) ReflectionTestUtils.invokeMethod(WorkflowEngine.class, "isNodeRunUniqueConflict",
+                new SQLException("Duplicate entry for key 'PRIMARY'", "23000", 1062))).isFalse();
+        assertThat((Boolean) ReflectionTestUtils.invokeMethod(WorkflowEngine.class, "isNodeRunUniqueConflict",
+                new SQLException("uk_node_run", "23000", 1048))).isFalse();
+    }
+
+    @Test
+    void cancellationAuditFailureRollsBackRunAndNodeChanges() throws Exception {
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        stub(NodeType.SCRIPT_EXEC).behavior = ctx -> {
+            started.countDown();
+            awaitQuietly(release);
+            return NodeOutcome.SUCCEEDED;
+        };
+        WorkflowRun run = startRun(linearDefinition("skip"), Map.of("threshold", 90));
+        try {
+            assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+            doThrow(new IllegalStateException("audit unavailable")).when(auditLogService)
+                    .logSync(eq(42L), any(), eq("WORKFLOW_RUN_CANCEL"), any(), eq(run.getId()),
+                            any(), nullable(String.class), any());
+            assertThatThrownBy(() -> engine.requestCancel(run.getId(), 42L))
+                    .isInstanceOf(IllegalStateException.class).hasMessageContaining("audit unavailable");
+            WorkflowRun current = runRepository.findById(run.getId()).orElseThrow();
+            assertThat(current.getStatus()).isEqualTo("running");
+            assertThat(current.getCancelRequested()).isFalse();
+            assertThat(statusOf(run.getId(), "check")).isEqualTo("running");
+            assertThat(statusOf(run.getId(), "gate")).isEmpty();
+        } finally {
+            release.countDown();
+        }
+    }
+
+    @Test
+    @DisplayName("取消与真实 attempt 事务竞争：run 锁串行化并保留唯一 attempt")
+    void cancelRacingEngineAttemptInsert_stillCancels() throws Exception {
+        Long version = publishNodes(List.of(node("b", "script-exec", Map.of("script", "echo b"))), List.of());
+        WorkflowRun run = newRunningRun(version, "{}");
+        CountDownLatch inserted = new CountDownLatch(1);
+        CountDownLatch releaseInsert = new CountDownLatch(1);
+        CountDownLatch cancelAtUpdate = new CountDownLatch(1);
+        AtomicReference<WorkflowNodeRun> attempt = new AtomicReference<>();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+
+        WorkflowNodeRunRepository nodeRepo = (WorkflowNodeRunRepository) Proxy.newProxyInstance(
+                getClass().getClassLoader(), new Class<?>[]{WorkflowNodeRunRepository.class}, (proxy, method, args) -> {
+                    try {
+                        Object result = method.invoke(nodeRunRepository, args);
+                        if (method.getName().equals("saveAndFlush") && args[0] instanceof WorkflowNodeRun row
+                                && "b".equals(row.getNodeKey()) && "running".equals(row.getStatus())) {
+                            inserted.countDown();
+                            if (!releaseInsert.await(15, TimeUnit.SECONDS)) {
+                                throw new IllegalStateException("等待释放 attempt 事务超时");
+                            }
+                        }
+                        return result;
+                    } catch (InvocationTargetException e) {
+                        throw e.getCause();
+                    }
+                });
+        WorkflowRunRepository runRepo = (WorkflowRunRepository) Proxy.newProxyInstance(
+                getClass().getClassLoader(), new Class<?>[]{WorkflowRunRepository.class}, (proxy, method, args) -> {
+                    if (method.getName().equals("requestCancelAtomically")) cancelAtUpdate.countDown();
+                    try {
+                        return method.invoke(runRepository, args);
+                    } catch (InvocationTargetException e) {
+                        throw e.getCause();
+                    }
+                });
+        AttemptAllocator allocator = new AttemptAllocator(nodeRepo, runRepo, transactionManager);
+        WorkflowEngine raceEngine = new WorkflowEngine(runRepo, nodeRepo, approvalRepository, versionRepository,
+                workflowRepository, jobRepository, registry(), dagValidator, expressionEvaluator, allocator,
+                auditLogService, new SensitiveDataFilter(), Optional.of(events::add), enginePool,
+                retryScheduler, properties, objectMapper, transactionManager);
+        Thread starter = new Thread(() -> {
+            try {
+                attempt.set(allocator.startAttempt(run.getId(), "b", "script-exec"));
+            } catch (Throwable t) {
+                failure.compareAndSet(null, t);
+            }
+        }, "attempt-racer");
+        Thread canceller = new Thread(() -> {
+            try {
+                raceEngine.requestCancel(run.getId(), 42L);
+            } catch (Throwable t) {
+                failure.compareAndSet(null, t);
+            }
+        }, "cancel-racer");
+        try {
+            starter.start();
+            assertThat(inserted.await(5, TimeUnit.SECONDS)).isTrue();
+            canceller.start();
+            assertThat(cancelAtUpdate.await(5, TimeUnit.SECONDS)).isTrue();
+            releaseInsert.countDown();
+            starter.join(15_000);
+            canceller.join(15_000);
+            assertThat(starter.isAlive()).isFalse();
+            assertThat(canceller.isAlive()).isFalse();
+            assertThat(failure.get()).isNull();
+            assertThat(attempt.get()).isNotNull();
+            WorkflowRun terminal = runRepository.findById(run.getId()).orElseThrow();
+            assertThat(terminal.getStatus()).isEqualTo("cancelled");
+            assertThat(terminal.getErrorMessage()).contains("user_cancelled");
+            assertThat(allocator.finishAttempt(attempt.get(),
+                    AttemptAllocator.AttemptResult.builder().status("succeeded").build())).isZero();
+            List<WorkflowNodeRun> rows = nodeRunRepository.findByRunId(run.getId()).stream()
+                    .filter(row -> "b".equals(row.getNodeKey())).toList();
+            assertThat(rows).hasSize(1);
+            assertThat(rows.get(0).getId()).isEqualTo(attempt.get().getId());
+            assertThat(rows.get(0).getAttempt()).isEqualTo(1);
+            assertThat(rows.get(0).getStatus()).isEqualTo("cancelled");
+        } finally {
+            releaseInsert.countDown();
+            starter.join(15_000);
+            canceller.join(15_000);
+        }
+    }
+
+    @Test
+    void terminalInsertConflictRollsBackWholeCancellationAndRetries() throws Exception {
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicInteger insertAttempts = new AtomicInteger();
+        WorkflowNodeRunRepository conflictingRepo = (WorkflowNodeRunRepository) Proxy.newProxyInstance(
+                WorkflowNodeRunRepository.class.getClassLoader(), new Class<?>[]{WorkflowNodeRunRepository.class},
+                (proxy, method, args) -> {
+                    if ("saveAndFlush".equals(method.getName()) && args[0] instanceof WorkflowNodeRun row
+                            && isTerminalRow(row, "gate") && insertAttempts.incrementAndGet() == 1) {
+                        throw new org.springframework.dao.DataIntegrityViolationException("duplicate",
+                                new SQLException("Duplicate entry for key 'uk_node_run'", "23000", 1062));
+                    }
+                    try {
+                        return method.invoke(nodeRunRepository, args);
+                    } catch (InvocationTargetException e) {
+                        throw e.getCause();
+                    }
+                });
+        WorkflowEngine retryEngine = new WorkflowEngine(runRepository, conflictingRepo, approvalRepository,
+                versionRepository, workflowRepository, jobRepository, registry(), dagValidator, expressionEvaluator,
+                attemptAllocator, auditLogService, new SensitiveDataFilter(), Optional.of(events::add), enginePool,
+                retryScheduler, properties, objectMapper, transactionManager);
+        stub(NodeType.SCRIPT_EXEC).behavior = ctx -> {
+            started.countDown();
+            awaitQuietly(release);
+            return NodeOutcome.SUCCEEDED;
+        };
+        WorkflowRunService retryService = new WorkflowRunService(workflowRepository, versionRepository,
+                runRepository, conflictingRepo, approvalRepository, retryEngine, auditLogService, properties,
+                objectMapper, transactionManager);
+        ReflectionTestUtils.setField(retryService, "provenanceService", provenanceService);
+        Long versionId = publishNodes(List.of(node("check", "script-exec", Map.of("script", "echo ok")),
+                node("gate", "script-exec", Map.of("script", "echo later"))),
+                List.of(edge("check", "gate")));
+        WorkflowRun run = retryService.startRun(workflowId, versionId, Map.of(), 42L, null, "manual");
+        try {
+            assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+            retryEngine.requestCancel(run.getId(), 42L);
+            assertThat(insertAttempts.get()).isEqualTo(2);
+            assertThat(runRepository.findById(run.getId()).orElseThrow().getStatus()).isEqualTo("cancelled");
+            assertThat(statusOf(run.getId(), "gate")).isEqualTo("cancelled");
+        } finally {
+            release.countDown();
+        }
+    }
+
+    @Test
+    @DisplayName("节点超时后迟到输出不进入 attempt 或运行变量")
+    void timedOutAttemptCannotPublishLateOutput() throws Exception {
+        properties.getEngine().setDefaultNodeTimeoutSec(1);
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        CountDownLatch wroteLate = new CountDownLatch(1);
+        stub(NodeType.SCRIPT_EXEC).behavior = ctx -> {
+            started.countDown();
+            try {
+                if (!release.await(15, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("等待测试释放超时");
+                }
+                ctx.variables().putNodeOutput(ctx.node().getKey(), ctx.node().getOutputVar(),
+                        Map.of("maxPcent", 999));
+                wroteLate.countDown();
+                return NodeOutcome.SUCCEEDED;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(e);
+            }
+        };
+
+        WorkflowRun run = startRun(linearDefinition("skip"), Map.of("threshold", 90));
+        try {
+            assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+            WorkflowRun terminal = awaitTerminal(run.getId());
+            assertThat(terminal.getStatus()).as(dumpRun()).isEqualTo("failed");
+            assertThat(nodeRun(run.getId(), "check").getErrorMessage()).contains("NODE_TIMEOUT");
+            release.countDown();
+            assertThat(wroteLate.await(5, TimeUnit.SECONDS)).isTrue();
+            WorkflowNodeRun check = nodeRun(run.getId(), "check");
+            assertThat(check.getStatus()).isEqualTo("failed");
+            assertThat(check.getOutputJson()).isNull();
+            WorkflowRun reloaded = runRepository.findById(run.getId()).orElseThrow();
+            assertThat(reloaded.getVariablesJson()).doesNotContain("nodes.check.output", "maxPcent");
+            assertThat(reloaded.getOutputJson()).doesNotContain("maxPcent");
+            assertThat(statusOf(run.getId(), "gate")).isEqualTo("skipped");
+        } finally {
+            release.countDown();
+        }
     }
 
     @Test
@@ -848,12 +1321,13 @@ class WorkflowEngineH2Test {
         // 这里用必然冲突的分配器确定性地验证引擎的兜底路径（§3.6）
         WorkflowEngine conflictingEngine = new WorkflowEngine(runRepository, nodeRunRepository,
                 approvalRepository, versionRepository, workflowRepository, jobRepository, registry(), dagValidator,
-                expressionEvaluator, new ConflictingAllocator(nodeRunRepository, transactionManager),
+                expressionEvaluator, new ConflictingAllocator(nodeRunRepository, runRepository, transactionManager),
                 auditLogService, new SensitiveDataFilter(), Optional.of(events::add), enginePool,
                 retryScheduler, properties, objectMapper, transactionManager);
         WorkflowRunService conflictingRunService = new WorkflowRunService(workflowRepository,
                 versionRepository, runRepository, nodeRunRepository, approvalRepository,
                 conflictingEngine, auditLogService, properties, objectMapper, transactionManager);
+        ReflectionTestUtils.setField(conflictingRunService, "provenanceService", provenanceService);
 
         publishDefinition(linearDefinition("skip"));
         WorkflowRun run = conflictingRunService.startRun(workflowId, versionId, Map.of("threshold", 90),
@@ -891,7 +1365,7 @@ class WorkflowEngineH2Test {
     }
 
     @Test
-    @DisplayName("失败策略 partial：上游失败也执行本节点，边条件不可求值走 false 分支")
+    @DisplayName("失败策略 partial：上游失败后仍尝试条件求值，求值失败不选择分支")
     void failurePolicyPartial() {
         stub(NodeType.SCRIPT_EXEC).behavior = failCheckThenSucceed();
 
@@ -900,9 +1374,71 @@ class WorkflowEngineH2Test {
 
         assertThat(terminal.getStatus()).isEqualTo("failed");
         assertThat(statusOf(run.getId(), "check")).isEqualTo("failed");
-        assertThat(statusOf(run.getId(), "gate")).as(dumpRun()).isEqualTo("succeeded");
-        assertThat(nodeRun(run.getId(), "gate").getWarningMessage()).contains("条件求值失败");
+        assertThat(statusOf(run.getId(), "gate")).as(dumpRun()).isEqualTo("failed");
+        assertThat(nodeRun(run.getId(), "gate").getErrorMessage()).contains("CONDITION_EVALUATION_FAILED");
+        assertThat(nodeRun(run.getId(), "gate").getOutputJson()).isNull();
         assertThat(statusOf(run.getId(), "notify")).isEqualTo("skipped");
+    }
+
+    @Test
+    void strictAiFailureAbortsPartialMultiHopWithoutSideEffects() {
+        when(chatModel.call(any(Prompt.class))).thenReturn(chatResponse("{\"answer\":42}"));
+        WorkflowRun run = startRun(strictPartialDefinition(), Map.of());
+        WorkflowRun terminal = awaitTerminal(run.getId());
+        assertThat(terminal.getStatus()).isEqualTo("failed");
+        assertThat(statusOf(run.getId(), "ai")).isEqualTo("failed");
+        assertThat(statusOf(run.getId(), "middle")).isEqualTo("cancelled");
+        assertThat(statusOf(run.getId(), "effect")).isEqualTo("cancelled");
+        verify(channelMessageRouter, never()).pushMessage(anyString(), anyString());
+        assertThat(nodeRunRepository.findByRunId(run.getId()).stream()
+                .filter(row -> "ai".equals(row.getNodeKey())).count()).isEqualTo(1);
+    }
+
+    @Test
+    void strictAiFailureOnRecoveryPreventsRedriveAndResume() {
+        Long version = publishDefinition(strictPartialDefinition());
+        for (boolean resume : List.of(false, true)) {
+            WorkflowRun run = newRunningRun(version, "{}");
+            WorkflowNodeRun failed = new WorkflowNodeRun();
+            failed.setId("wnr_" + java.util.UUID.randomUUID().toString().replace("-", ""));
+            failed.setRunId(run.getId());
+            failed.setNodeKey("ai");
+            failed.setNodeType("llm");
+            failed.setAttempt(1);
+            failed.setStatus("failed");
+            nodeRunRepository.saveAndFlush(failed);
+            if (resume) {
+                WorkflowNodeRun running = new WorkflowNodeRun();
+                running.setId("wnr_" + java.util.UUID.randomUUID().toString().replace("-", ""));
+                running.setRunId(run.getId());
+                running.setNodeKey("effect");
+                running.setNodeType("notify");
+                running.setAttempt(1);
+                running.setStatus("running");
+                nodeRunRepository.saveAndFlush(running);
+                engine.resumeNodes(run.getId(), List.of("effect"));
+            } else {
+                engine.drive(run);
+            }
+            assertThat(awaitTerminal(run.getId()).getStatus()).isEqualTo("failed");
+            // An unclaimed running attempt is not falsely reported as physically stopped.
+            assertThat(statusOf(run.getId(), "effect")).isEqualTo(resume ? "running" : "cancelled");
+        }
+        verify(channelMessageRouter, never()).pushMessage(anyString(), anyString());
+    }
+
+    private String strictPartialDefinition() {
+        return """
+                {"schemaVersion":1,"defaultOnUpstreamFailure":"partial",
+                 "nodes":[
+                   {"key":"ai","type":"llm","onFailure":"partial","retryMax":3,
+                    "config":{"userPrompt":"answer","outputMode":"json_schema_v1",
+                              "jsonSchema":"{\\"type\\":\\"object\\",\\"properties\\":{\\"answer\\":{\\"type\\":\\"string\\"}},\\"required\\":[\\"answer\\"],\\"additionalProperties\\":false}"}},
+                   {"key":"middle","type":"transform","onFailure":"partial","config":{}},
+                   {"key":"effect","type":"notify","config":{"channels":["telegram"],"messageTemplate":"side effect"}}],
+                 "edges":[{"id":"e1","from":"ai","to":"middle","onUpstreamFailure":"partial"},
+                          {"id":"e2","from":"middle","to":"effect","onUpstreamFailure":"partial"}]}
+                """;
     }
 
     @Test
@@ -996,7 +1532,9 @@ class WorkflowEngineH2Test {
                 .orElseThrow();
 
         // 绕过 decide() 的事件路径，直接改库（模拟"事件丢了"）
-        assertThat(approvalStore.decide(approval.getId(), "approved", 9L, "同意")).isNotNull();
+        WorkflowApproval decided = new TransactionTemplate(transactionManager).execute(
+                status -> approvalStore.decide(approval.getId(), "approved", 9L, "同意"));
+        assertThat(decided).isNotNull();
 
         resumeService.resumeIfReady(run.getId());
         WorkflowRun terminal = awaitTerminal(run.getId());
@@ -1075,111 +1613,6 @@ class WorkflowEngineH2Test {
                 .satisfies(e -> assertThat(((BusinessException) e).getCode()).isEqualTo(409));
         assertThat(runRepository.findById(run.getId()).orElseThrow().getStatus()).isEqualTo("cancelled");
         assertThat(statusOf(run.getId(), "notify")).isEqualTo("cancelled");
-    }
-
-    @Test
-    @DisplayName("取消 vs 引擎并发 attempt：uk_node_run 撞键不许把取消路径炸成 500")
-    void cancelRacingEngineAttemptInsert_stillCancels() throws Exception {
-        // 两个独立根节点 a / b。全部闩点落在仓储装饰代理上（不靠 sleep 赌时序）：
-        //   ① 引擎线程给 b 插 attempt=1（running）——停在 INSERT 之前；
-        //   ② 取消线程按 latestByKey 判定 b 从未开始——停在它的终态留痕 INSERT 之前。
-        // 放行顺序：先放①让 b#1 落库并提交，再放②，于是②的 INSERT 撞同一个 uk_node_run。
-        // 这正是生产时序：取消请求与引擎 drive 同时想给同一个 attempt=1 落库。
-        CountDownLatch aExecuting = new CountDownLatch(1);
-        CountDownLatch releaseA = new CountDownLatch(1);
-        CountDownLatch bExecuting = new CountDownLatch(1);
-        CountDownLatch releaseB = new CountDownLatch(1);
-
-        // ① 引擎线程的 attempt INSERT / ② 取消线程的终态留痕 INSERT：分别闩住，放行时机交给主线程
-        CountDownLatch engineAtAttemptInsert = new CountDownLatch(1);
-        CountDownLatch releaseEngineAttempt = new CountDownLatch(1);
-        CountDownLatch cancelAtTerminalInsert = new CountDownLatch(1);
-        CountDownLatch releaseCancelTerminal = new CountDownLatch(1);
-
-        // registry() 会重建桩集合，必须先建再灌行为，否则 behavior 被新桩覆盖
-        NodeExecutorRegistry raceRegistry = registry();
-        WorkflowNodeRunRepository latchingRepo = latchingNodeRunRepository("b",
-                engineAtAttemptInsert, releaseEngineAttempt,
-                cancelAtTerminalInsert, releaseCancelTerminal);
-        AttemptAllocator raceAllocator = new AttemptAllocator(latchingRepo, transactionManager);
-        WorkflowEngine raceEngine = new WorkflowEngine(runRepository, latchingRepo,
-                approvalRepository, versionRepository, workflowRepository, jobRepository, raceRegistry, dagValidator,
-                expressionEvaluator, raceAllocator, auditLogService, new SensitiveDataFilter(),
-                Optional.of(events::add), enginePool, retryScheduler, properties, objectMapper,
-                transactionManager);
-        WorkflowRunService raceRunService = new WorkflowRunService(workflowRepository,
-                versionRepository, runRepository, latchingRepo, approvalRepository,
-                raceEngine, auditLogService, properties, objectMapper, transactionManager);
-
-        stub(NodeType.SCRIPT_EXEC).behavior = ctx -> {
-            switch (ctx.node().getKey()) {
-                case "a" -> {
-                    aExecuting.countDown();
-                    awaitQuietly(releaseA);
-                }
-                case "b" -> {
-                    bExecuting.countDown();
-                    awaitQuietly(releaseB);
-                }
-                default -> {
-                }
-            }
-            return NodeOutcome.SUCCEEDED;
-        };
-
-        Long versionId = publishNodes(
-                List.of(node("a", "script-exec", Map.of("script", "echo a")),
-                        node("b", "script-exec", Map.of("script", "echo b"))),
-                List.of());
-        WorkflowRun run = raceRunService.startRun(workflowId, versionId, Map.of(), 42L, null, "manual");
-        // a 的执行体在跑（run 活着），b 的 attempt=1 已停在 INSERT 之前
-        assertThat(aExecuting.await(5, TimeUnit.SECONDS)).isTrue();
-        assertThat(engineAtAttemptInsert.await(5, TimeUnit.SECONDS)).isTrue();
-
-        AtomicReference<Throwable> cancelFailure = new AtomicReference<>();
-        Thread canceller = new Thread(() -> {
-            CANCEL_PATH.set(true);
-            try {
-                raceEngine.requestCancel(run.getId(), 42L);
-            } catch (Throwable t) {
-                cancelFailure.set(t);
-            } finally {
-                CANCEL_PATH.remove();
-            }
-        }, "cancel-racer");
-        canceller.start();
-        // 取消线程此刻已读完 latestByKey（b 无行），正停在它的留痕 INSERT 上
-        assertThat(cancelAtTerminalInsert.await(5, TimeUnit.SECONDS)).isTrue();
-
-        // 引擎侧先落库并提交 b#1，取消线程的 INSERT 随即撞同一个唯一键
-        releaseEngineAttempt.countDown();
-        assertThat(bExecuting.await(5, TimeUnit.SECONDS)).isTrue();
-        releaseCancelTerminal.countDown();
-        canceller.join(15_000);
-
-        if (cancelFailure.get() != null) {
-            cancelFailure.get().printStackTrace(System.out);
-        }
-        assertThat(cancelFailure.get())
-                .as("取消路径撞 uk_node_run 只能按'已有 attempt 行'作废本次留痕，不能抛异常（对外即 500）")
-                .isNull();
-
-        releaseB.countDown();
-        releaseA.countDown();
-        WorkflowRun terminal = awaitTerminal(run.getId());
-        assertThat(terminal.getStatus()).as(dumpRun()).isEqualTo("cancelled");
-        assertThat(terminal.getErrorMessage()).contains("user_cancelled");
-        // run 已终态不代表两个执行体都已收尾：它们的 finishNode 在放行后才跑，
-        // 必须各自等到终态再断言，否则读到的是抢跑中的 running 行
-        awaitNodeStatus(run.getId(), "a", "cancelled");
-        awaitNodeStatus(run.getId(), "b", "cancelled");
-        assertThat(statusOf(run.getId(), "a")).isEqualTo("cancelled");
-        assertThat(statusOf(run.getId(), "b")).isEqualTo("cancelled");
-        // 幂等语义：同一节点同一 attempt 只允许一行，且取消不得覆盖引擎侧已写的那条
-        List<WorkflowNodeRun> bRows = nodeRunRepository.findByRunId(run.getId()).stream()
-                .filter(r -> r.getNodeKey().equals("b")).toList();
-        assertThat(bRows).as(dumpRun()).hasSize(1);
-        assertThat(bRows.get(0).getAttempt()).isEqualTo(1);
     }
 
     /**
@@ -1273,8 +1706,8 @@ class WorkflowEngineH2Test {
                    {"key":"b","type":"script-exec","config":{"script":"echo b"}}],
                  "edges":[
                    {"id":"e1","from":"root","to":"gate"},
-                   {"id":"e2","from":"gate","to":"a"},
-                   {"id":"e3","from":"gate","to":"c"},
+                   {"id":"e2","from":"gate","to":"a","sourceHandle":"true"},
+                   {"id":"e3","from":"gate","to":"c","sourceHandle":"true"},
                    {"id":"e4","from":"c","to":"b"}]}
                 """;
         WorkflowRun run = startRun(definition, Map.of());
@@ -1340,6 +1773,40 @@ class WorkflowEngineH2Test {
     }
 
     @Test
+    @DisplayName("恢复 condition 失败后重试不得复用部分变量存储")
+    void failedVariableRestoreDoesNotPublishPartialStore() throws Exception {
+        String definition = """
+                {"schemaVersion":1,
+                 "nodes":[
+                   {"key":"begin","type":"start","config":{}},
+                   {"key":"gate","type":"condition","config":{"expression":"true"}}],
+                 "edges":[{"id":"e1","from":"begin","to":"gate"}]}
+                """;
+        WorkflowRun run = newRunningRun(publishDefinition(definition), "{\"threshold\":90}");
+        saveSucceededNodeRun(run.getId(), "begin", "start", "{\"value\":1}");
+        saveSucceededNodeRun(run.getId(), "gate", "condition", "{\"result\":\"yes\"}");
+
+        for (int attempt = 0; attempt < 2; attempt++) {
+            assertThatThrownBy(() -> engine.initVariablesIfAbsent(run))
+                    .isInstanceOf(NodeFailedException.class)
+                    .hasMessageContaining("gate");
+        }
+
+        String repairedFixture = "{\"result\":true}";
+        String fixtureDigest = java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                .digest(repairedFixture.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        jdbc.update("UPDATE workflow_node_run SET output_json = ?, output_sha256 = ? WHERE run_id = ? AND node_key = ?",
+                repairedFixture, fixtureDigest, run.getId(), "gate");
+        engine.initVariablesIfAbsent(run);
+
+        assertThat(engine.variableStore(run.getId()).resolve("run.input.threshold")).contains(90);
+        assertThat(engine.variableStore(run.getId()).nodeOutput("begin").value())
+                .isEqualTo(Map.of("value", 1));
+        assertThat(engine.variableStore(run.getId()).nodeOutput("gate").value())
+                .isEqualTo(Map.of("result", true));
+    }
+
+    @Test
     @DisplayName("大 End 输出（>8KB）：run.output_json 仍是合法对象，API presenter 可解析")
     void largeEndOutputSurvivesPreviewChannel() throws Exception {
         String definition = """
@@ -1370,7 +1837,7 @@ class WorkflowEngineH2Test {
         assertThat(presented).isNotNull();
         assertThat((String) presented.get("summary")).hasSize(9000);
         // End 从 run.input 复制的秘密在 API 出口被现有 SensitiveDataFilter 掩码
-        assertThat((String) presented.get("token")).isEqualTo("token=***");
+        assertThat((String) presented.get("token")).isEqualTo("***");
     }
 
     @Test
@@ -1535,6 +2002,615 @@ class WorkflowEngineH2Test {
         release.countDown();
     }
 
+    @ParameterizedTest(name = "claimed approval cleanup: {0}")
+    @ValueSource(strings = {"cancel", "variables", "missingDefinition", "abort"})
+    void resumeClosesClaimedAttemptWhenStoppedBeforeExecution(String scenario) {
+        WorkflowNode gate = node("gate", "approval", Map.of("title", "gate"));
+        WorkflowNode condition = node("condition", "condition", Map.of("expression", "true"));
+        WorkflowNode failedNode = node("failed", "script-exec", Map.of());
+        failedNode.setOnFailure("abort");
+        WorkflowNode secondGate = node("gate2", "approval", Map.of("title", "gate2"));
+        Long version = publishNodes(List.of(gate, secondGate, condition, failedNode), List.of());
+        WorkflowRun run = newRunningRun("missingDefinition".equals(scenario) ? Long.MAX_VALUE : version, "{}");
+        run.setStatus("waiting");
+        run.setCancelRequested("cancel".equals(scenario));
+        runRepository.saveAndFlush(run);
+        WorkflowNodeRun claimed = waitingAttempt(run.getId(), "gate");
+        WorkflowNodeRun secondClaimed = waitingAttempt(run.getId(), "gate2");
+
+        WorkflowNodeRun unrelated = new WorkflowNodeRun();
+        unrelated.setId("wnr_" + java.util.UUID.randomUUID());
+        unrelated.setRunId(run.getId());
+        unrelated.setNodeKey("unrelated");
+        unrelated.setNodeType("script-exec");
+        unrelated.setStatus("running");
+        nodeRunRepository.saveAndFlush(unrelated);
+
+        if ("variables".equals(scenario) || "abort".equals(scenario)) {
+            WorkflowNodeRun prior = new WorkflowNodeRun();
+            prior.setId("wnr_" + java.util.UUID.randomUUID());
+            prior.setRunId(run.getId());
+            prior.setNodeKey("variables".equals(scenario) ? "condition" : "failed");
+            prior.setNodeType("variables".equals(scenario) ? "condition" : "script-exec");
+            prior.setStatus("variables".equals(scenario) ? "succeeded" : "failed");
+            // A succeeded condition without a boolean result cannot be restored.
+            prior.setOutputJson("{}");
+            nodeRunRepository.saveAndFlush(prior);
+        }
+
+        engine.resumeRun(run.getId());
+
+        WorkflowRun terminal = runRepository.findById(run.getId()).orElseThrow();
+        assertThat(terminal.getStatus()).isEqualTo("cancel".equals(scenario) ? "cancelled" : "failed");
+        if ("variables".equals(scenario)) {
+            assertThat(terminal.getErrorMessage()).contains("VARIABLE_RESTORE_FAILED");
+        }
+        if ("missingDefinition".equals(scenario)) {
+            assertThat(terminal.getErrorMessage()).contains("definition_missing");
+        }
+        WorkflowNodeRun closed = nodeRunRepository.findById(claimed.getId()).orElseThrow();
+        assertThat(closed.getStatus()).isEqualTo("cancelled");
+        assertThat(closed.getFinishedAt()).isNotNull();
+        WorkflowNodeRun secondClosed = nodeRunRepository.findById(secondClaimed.getId()).orElseThrow();
+        assertThat(secondClosed.getStatus()).isEqualTo("cancelled");
+        assertThat(secondClosed.getFinishedAt()).isNotNull();
+        assertThat(nodeRunRepository.findById(unrelated.getId()).orElseThrow().getStatus()).isEqualTo("running");
+        assertThat(nodeRunRepository.findByRunId(run.getId()).stream()
+                .filter(row -> "gate".equals(row.getNodeKey()))).hasSize(1);
+        assertThat(events.stream().filter(e -> "NODE_STARTED".equals(e.type())
+                && run.getId().equals(e.runId()) && List.of("gate", "gate2").contains(e.nodeKey()))).isEmpty();
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {0, 1})
+    void resumePoolRejectionClosesOnlyNeverAcceptedClaims(int accepted) {
+        properties.getEngine().setMaxConcurrentNodes(2);
+        Long version = publishNodes(List.of(
+                node("first", "approval", Map.of("title", "first")),
+                node("second", "approval", Map.of("title", "second"))), List.of());
+        WorkflowRun run = newRunningRun(version, "{}");
+        run.setStatus("waiting");
+        runRepository.saveAndFlush(run);
+        waitingAttempt(run.getId(), "first");
+        waitingAttempt(run.getId(), "second");
+
+        java.util.concurrent.atomic.AtomicInteger submissions = new java.util.concurrent.atomic.AtomicInteger();
+        CountDownLatch rejected = new CountDownLatch(1);
+        java.util.concurrent.ThreadPoolExecutor controlled = new java.util.concurrent.ThreadPoolExecutor(
+                4, 4, 0L, TimeUnit.MILLISECONDS, new java.util.concurrent.LinkedBlockingQueue<>()) {
+            @Override public void execute(Runnable command) {
+                int number = submissions.incrementAndGet();
+                if (number == accepted + 1) {
+                    rejected.countDown();
+                    throw new java.util.concurrent.RejectedExecutionException("controlled rejection");
+                }
+                if (accepted == 1 && number == 1) {
+                    super.execute(() -> {
+                        try {
+                            if (!rejected.await(5, TimeUnit.SECONDS)) throw new AssertionError("rejection timeout");
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            throw new AssertionError(e);
+                        }
+                        command.run();
+                    });
+                } else {
+                    super.execute(command);
+                }
+            }
+        };
+        WorkflowEngine testEngine = new WorkflowEngine(runRepository, nodeRunRepository, approvalRepository,
+                versionRepository, workflowRepository, jobRepository, registry(), dagValidator, expressionEvaluator,
+                attemptAllocator, auditLogService, new SensitiveDataFilter(), Optional.of(events::add), controlled,
+                retryScheduler, properties, objectMapper, transactionManager);
+        try {
+            testEngine.resumeRun(run.getId());
+            assertThat(runRepository.findById(run.getId()).orElseThrow().getStatus()).isEqualTo("failed");
+            List<WorkflowNodeRun> rows = nodeRunRepository.findByRunId(run.getId());
+            assertThat(rows).hasSize(2);
+            assertThat(rows.stream().filter(row -> "succeeded".equals(row.getStatus())).count()).isEqualTo(accepted);
+            assertThat(rows.stream().filter(row -> "cancelled".equals(row.getStatus()))
+                    .filter(row -> row.getErrorMessage().contains("resume_aborted")).count()).isEqualTo(2 - accepted);
+            assertThat(events.stream().filter(e -> run.getId().equals(e.runId())
+                    && "NODE_STARTED".equals(e.type())).count()).isEqualTo(accepted);
+            assertThat(events.stream().filter(e -> run.getId().equals(e.runId())
+                    && "RUN_FAILED".equals(e.type())).count()).isEqualTo(1);
+            testEngine.resumeRun(run.getId());
+            assertThat(submissions.get()).isEqualTo(accepted == 0 ? 1 : 3);
+        } finally {
+            controlled.shutdownNow();
+        }
+    }
+
+    @Test
+    void resumesAllClaimedApprovalsInWavesOfOne() {
+        properties.getEngine().setMaxConcurrentNodes(1);
+        Long version = publishNodes(List.of(
+                node("first", "approval", Map.of("title", "first")),
+                node("second", "approval", Map.of("title", "second"))), List.of());
+        WorkflowRun run = newRunningRun(version, "{}");
+        run.setStatus("waiting");
+        runRepository.saveAndFlush(run);
+        WorkflowNodeRun first = waitingAttempt(run.getId(), "first");
+        WorkflowNodeRun second = waitingAttempt(run.getId(), "second");
+
+        engine.resumeRun(run.getId());
+
+        assertThat(runRepository.findById(run.getId()).orElseThrow().getStatus()).isEqualTo("succeeded");
+        assertThat(nodeRunRepository.findById(first.getId()).orElseThrow().getStatus()).isEqualTo("succeeded");
+        assertThat(nodeRunRepository.findById(second.getId()).orElseThrow().getStatus()).isEqualTo("succeeded");
+        assertThat(nodeRunRepository.findByRunId(run.getId())).hasSize(2);
+        assertThat(events.stream().filter(e -> "NODE_STARTED".equals(e.type()))).hasSize(2);
+    }
+
+    @Test
+    void rejectedApprovalRunsAloneAndAbortCancelsApprovedAttempt() {
+        assertApprovalDecisionWaves("abort", "rejected", "reject", "cancelled", "failed");
+    }
+
+    @Test
+    void rejectedApprovalCanContinueWhenPolicyAllows() {
+        assertApprovalDecisionWaves("continue", "rejected", "reject", "succeeded", "failed");
+    }
+
+    @Test
+    void timedOutApprovalCanContinueWhenFailurePolicyAllows() {
+        assertApprovalDecisionWaves("continue", "timeout", "reject", "succeeded", "failed");
+    }
+
+    @Test
+    void timeoutWithNodeAbortStopsRemainingApproval() {
+        properties.getEngine().setMaxConcurrentNodes(5);
+        WorkflowNode negativeNode = node("negative", "approval", Map.of("title", "gate", "onTimeout", "fail"));
+        negativeNode.setOnFailure("abort");
+        Long version = publishNodes(List.of(negativeNode, node("approved", "approval", Map.of("title", "ok"))),
+                List.of());
+        WorkflowRun run = newRunningRun(version, "{}");
+        run.setStatus("waiting");
+        runRepository.saveAndFlush(run);
+        WorkflowNodeRun negative = waitingAttempt(run.getId(), "negative");
+        WorkflowNodeRun approved = waitingAttempt(run.getId(), "approved");
+        WorkflowApproval decision = approvalRepository.findById(negative.getApprovalId()).orElseThrow();
+        decision.setStatus("timeout");
+        approvalRepository.saveAndFlush(decision);
+
+        engine.resumeRun(run.getId());
+
+        assertThat(runRepository.findById(run.getId()).orElseThrow().getStatus()).isEqualTo("failed");
+        assertThat(nodeRunRepository.findById(negative.getId()).orElseThrow().getErrorMessage())
+                .contains("approval_timeout");
+        assertThat(nodeRunRepository.findById(approved.getId()).orElseThrow().getStatus()).isEqualTo("cancelled");
+        assertThat(events.stream().filter(e -> "NODE_STARTED".equals(e.type()))).hasSize(1);
+    }
+
+    @Test
+    void timeoutApproveCompletesBothAttempts() {
+        assertApprovalDecisionWaves("abort", "timeout", "approve", "succeeded", "succeeded");
+    }
+
+    private void assertApprovalDecisionWaves(String onRejection, String decision, String onTimeout,
+                                             String otherStatus, String expectedRunStatus) {
+        properties.getEngine().setMaxConcurrentNodes(5);
+        WorkflowDefinition def = new WorkflowDefinition();
+        def.setSchemaVersion(1);
+        def.setDefaultOnUpstreamFailure("skip");
+        def.setOnRejection(onRejection);
+        def.setNodes(List.of(node("negative", "approval", Map.of("title", "negative", "onTimeout", onTimeout)),
+                node("approved", "approval", Map.of("title", "approved"))));
+        def.setEdges(List.of());
+        Long version;
+        try {
+            version = publishDefinition(objectMapper.writeValueAsString(def));
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+        WorkflowRun run = newRunningRun(version, "{}");
+        run.setStatus("waiting");
+        runRepository.saveAndFlush(run);
+        WorkflowNodeRun negative = waitingAttempt(run.getId(), "negative");
+        WorkflowNodeRun approved = waitingAttempt(run.getId(), "approved");
+        WorkflowApproval decisionRow = approvalRepository.findById(negative.getApprovalId()).orElseThrow();
+        decisionRow.setStatus(decision);
+        approvalRepository.saveAndFlush(decisionRow);
+
+        engine.resumeRun(run.getId());
+
+        assertThat(runRepository.findById(run.getId()).orElseThrow().getStatus()).isEqualTo(expectedRunStatus);
+        assertThat(nodeRunRepository.findById(approved.getId()).orElseThrow().getStatus()).isEqualTo(otherStatus);
+        WorkflowNodeRun result = nodeRunRepository.findById(negative.getId()).orElseThrow();
+        if ("timeout".equals(decision) && "approve".equals(onTimeout)) {
+            assertThat(result.getStatus()).isEqualTo("succeeded");
+            assertThat(result.getOutputJson()).contains("\"decision\":\"timeout\"");
+        } else {
+            assertThat(result.getStatus()).isEqualTo("failed");
+            assertThat(result.getErrorMessage()).contains("approval_" + decision);
+        }
+        List<WorkflowEvent> starts = events.stream().filter(e -> "NODE_STARTED".equals(e.type())).toList();
+        assertThat(starts).isNotEmpty();
+        assertThat(starts.get(0).nodeKey()).isEqualTo("negative");
+        assertThat(starts).hasSize("cancelled".equals(otherStatus) ? 1 : 2);
+    }
+
+    @Test
+    void nonApprovalWaitingIsNotRetriedEvenWithRetryConfigured() {
+        stub(NodeType.WAIT).behavior = ctx -> NodeOutcome.WAITING;
+        WorkflowRun run = startRun("""
+                {"schemaVersion":1,"nodes":[{"key":"wait","type":"wait","onFailure":"abort",
+                 "retryMax":2,"retryIntervalSec":1,"config":{"durationSec":1}}],"edges":[]}
+                """, Map.of());
+
+        assertThat(awaitTerminal(run.getId()).getStatus()).isEqualTo("failed");
+        sleepQuietly(1500);
+        var rows = nodeRunRepository.findByRunId(run.getId());
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0).getStatus()).isEqualTo("failed");
+        assertThat(rows.get(0).getErrorMessage()).startsWith("WAITING_UNSUPPORTED:");
+        assertThat(stub(NodeType.WAIT).calls).hasValue(1);
+    }
+
+    @ParameterizedTest(name = "non-approval WAITING, foreign approval={0}")
+    @ValueSource(booleans = {false, true})
+    void nonApprovalWaitingMustNotCreateOrOverwriteApprovalBinding(boolean foreignApproval) {
+        Long version = publishNodes(List.of(node("script", "script-exec", Map.of())), List.of());
+        WorkflowRun run = newRunningRun(version, "{}");
+        WorkflowRun other = newRunningRun(version, "{}");
+        WorkflowApproval original = foreignApproval ? approvalFixture(run.getId(), "script", "approval") : null;
+        WorkflowApproval foreign = foreignApproval ? approvalFixture(other.getId(), "script", "approval") : null;
+        long approvalCount = approvalRepository.count();
+        stub(NodeType.SCRIPT_EXEC).behavior = ctx -> {
+            if (original != null) {
+                WorkflowNodeRun persisted = nodeRunRepository.findById(ctx.nodeRun().getId()).orElseThrow();
+                persisted.setApprovalId(original.getId());
+                nodeRunRepository.saveAndFlush(persisted);
+                ctx.nodeRun().setApprovalId(foreign.getId());
+            } else {
+                // An unpersisted executor-supplied binding must not be installed either.
+                ctx.nodeRun().setApprovalId(123456789L);
+            }
+            return NodeOutcome.WAITING;
+        };
+
+        engine.drive(run);
+
+        WorkflowNodeRun actual = nodeRun(run.getId(), "script");
+        assertThat(actual.getApprovalId()).as("existing binding must not be overwritten")
+                .isEqualTo(original == null ? null : original.getId());
+        assertThat(actual.getStatus()).isNotEqualTo("waiting");
+        assertThat(runRepository.findById(run.getId()).orElseThrow().getStatus()).isNotEqualTo("waiting");
+        assertThat(approvalRepository.count()).isEqualTo(approvalCount);
+        if (foreign != null) {
+            assertThat(approvalRepository.findById(foreign.getId()).orElseThrow().getRunId()).isEqualTo(other.getId());
+        }
+    }
+
+    @ParameterizedTest(name = "cancel before non-approval WAITING, foreign approval={0}")
+    @ValueSource(booleans = {false, true})
+    void cancellationWinsAgainstLateNonApprovalWaiting(boolean foreignApproval) throws Exception {
+        terminalWinsAgainstLateNonApprovalWaiting(foreignApproval, "cancelled");
+    }
+
+    @ParameterizedTest(name = "timeout before non-approval WAITING, foreign approval={0}")
+    @ValueSource(booleans = {false, true})
+    void timeoutWinsAgainstLateNonApprovalWaiting(boolean foreignApproval) throws Exception {
+        terminalWinsAgainstLateNonApprovalWaiting(foreignApproval, "timeout");
+    }
+
+    private void terminalWinsAgainstLateNonApprovalWaiting(boolean foreignApproval, String terminal) throws Exception {
+        Long version = publishNodes(List.of(node("script", "script-exec", Map.of())), List.of());
+        WorkflowRun run = newRunningRun(version, "{}");
+        WorkflowRun other = newRunningRun(version, "{}");
+        WorkflowApproval original = foreignApproval ? approvalFixture(run.getId(), "script", "approval") : null;
+        WorkflowApproval foreign = foreignApproval ? approvalFixture(other.getId(), "script", "approval") : null;
+        long approvalCount = approvalRepository.count();
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicReference<Throwable> driveFailure = new AtomicReference<>();
+        stub(NodeType.SCRIPT_EXEC).behavior = ctx -> {
+            if (original != null) {
+                WorkflowNodeRun persisted = nodeRunRepository.findById(ctx.nodeRun().getId()).orElseThrow();
+                persisted.setApprovalId(original.getId());
+                nodeRunRepository.saveAndFlush(persisted);
+                ctx.nodeRun().setApprovalId(foreign.getId());
+            }
+            entered.countDown();
+            try {
+                if (!release.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("executor release timed out");
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(e);
+            }
+            return NodeOutcome.WAITING;
+        };
+        Thread driver = new Thread(() -> {
+            try { engine.drive(run); } catch (Throwable failure) { driveFailure.set(failure); }
+        }, "late-waiting-driver");
+        driver.start();
+        try {
+            assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+            engine.cancelRun(run, terminal, "cancelled".equals(terminal) ? "user_cancelled" : "run_timeout");
+        } finally {
+            release.countDown();
+            driver.join(15_000);
+        }
+        assertThat(driver.isAlive()).isFalse();
+        assertThat(driveFailure.get()).isNull();
+        WorkflowNodeRun actual = nodeRun(run.getId(), "script");
+        assertThat(actual.getApprovalId()).isEqualTo(original == null ? null : original.getId());
+        assertThat(actual.getStatus()).isEqualTo(terminal);
+        assertThat(runRepository.findById(run.getId()).orElseThrow().getStatus()).isEqualTo(terminal);
+        assertThat(approvalRepository.count()).isEqualTo(approvalCount);
+        if (foreign != null) {
+            assertThat(approvalRepository.findById(foreign.getId()).orElseThrow().getRunId()).isEqualTo(other.getId());
+        }
+    }
+
+    @Test
+    void historicalScriptApprovalResumeFailsClosedWithoutExecutingScript() {
+        Long version = publishNodes(List.of(node("script", "script-exec", Map.of())), List.of());
+        WorkflowRun run = newRunningRun(version, "{}");
+        run.setStatus("waiting");
+        runRepository.saveAndFlush(run);
+        WorkflowApproval approval = approvalFixture(run.getId(), "script", "script-exec");
+        approval.setStatus("approved");
+        approvalRepository.saveAndFlush(approval);
+        WorkflowNodeRun row = new WorkflowNodeRun();
+        row.setId("wnr_" + java.util.UUID.randomUUID());
+        row.setRunId(run.getId());
+        row.setNodeKey("script");
+        row.setNodeType("script-exec");
+        row.setStatus("waiting");
+        row.setApprovalId(approval.getId());
+        nodeRunRepository.saveAndFlush(row);
+
+        engine.resumeRun(run.getId());
+
+        WorkflowRun failed = runRepository.findById(run.getId()).orElseThrow();
+        assertThat(failed.getStatus()).isEqualTo("failed");
+        assertThat(failed.getErrorMessage()).contains("SCRIPT_APPROVAL_RESUME_UNSUPPORTED");
+        assertThat(stub(NodeType.SCRIPT_EXEC).calls).hasValue(0);
+        assertThat(nodeRunRepository.findById(row.getId()).orElseThrow().getStatus()).isEqualTo("cancelled");
+    }
+
+    @Test
+    void resumeRejectsOuterTransactionBeforeClaimOrExecutionEvenWhenItRollsBack() {
+        WorkflowRun run = newRunningRun(1L, "{}");
+        run.setStatus("waiting");
+        runRepository.saveAndFlush(run);
+        WorkflowNodeRun row = waitingAttempt(run.getId(), "gate");
+        AtomicInteger executions = new AtomicInteger();
+        WorkflowEngine testEngine = new WorkflowEngine(runRepository, nodeRunRepository, approvalRepository,
+                versionRepository, workflowRepository, jobRepository, registry(), dagValidator, expressionEvaluator,
+                attemptAllocator, auditLogService, new SensitiveDataFilter(), Optional.of(events::add),
+                enginePool, retryScheduler, properties, objectMapper, transactionManager) {
+            @Override public void resumeNodes(String id, List<String> keys) { executions.incrementAndGet(); }
+        };
+        events.clear();
+
+        new TransactionTemplate(transactionManager).executeWithoutResult(tx -> {
+            assertThat(org.springframework.transaction.support.TransactionSynchronizationManager
+                    .isActualTransactionActive()).isTrue();
+            assertThatThrownBy(() -> testEngine.resumeRun(run.getId()))
+                    .isInstanceOf(IllegalStateException.class).hasMessageContaining("active transaction");
+            assertThat(runRepository.findById(run.getId()).orElseThrow().getStatus()).isEqualTo("waiting");
+            assertThat(nodeRunRepository.findById(row.getId()).orElseThrow().getStatus()).isEqualTo("waiting");
+            assertThat(executions).hasValue(0);
+            assertThat(events).isEmpty();
+            tx.setRollbackOnly();
+        });
+
+        assertThat(runRepository.findById(run.getId()).orElseThrow().getStatus()).isEqualTo("waiting");
+        assertThat(nodeRunRepository.findById(row.getId()).orElseThrow().getStatus()).isEqualTo("waiting");
+        assertThat(executions).hasValue(0);
+        assertThat(events).isEmpty();
+    }
+
+    @Test
+    void resumeRollsBackRunAndFirstAttemptWhenSecondConditionalUpdateFails() {
+        WorkflowRun run = newRunningRun(1L, "{}");
+        run.setStatus("waiting");
+        runRepository.saveAndFlush(run);
+        WorkflowNodeRun first = waitingAttempt(run.getId(), "first");
+        WorkflowNodeRun second = waitingAttempt(run.getId(), "second");
+        AtomicInteger updates = new AtomicInteger();
+        WorkflowNodeRunRepository failingRepo = (WorkflowNodeRunRepository) Proxy.newProxyInstance(
+                getClass().getClassLoader(), new Class<?>[]{WorkflowNodeRunRepository.class}, (proxy, method, args) -> {
+                    if (method.getName().equals("resumeWaitingAttempt") && updates.incrementAndGet() == 2) {
+                        return 0;
+                    }
+                    try {
+                        return method.invoke(nodeRunRepository, args);
+                    } catch (InvocationTargetException e) {
+                        throw e.getCause();
+                    }
+                });
+        AtomicInteger executions = new AtomicInteger();
+        WorkflowEngine testEngine = new WorkflowEngine(runRepository, failingRepo, approvalRepository,
+                versionRepository, workflowRepository, jobRepository, registry(), dagValidator, expressionEvaluator,
+                attemptAllocator, auditLogService, new SensitiveDataFilter(), Optional.of(events::add),
+                enginePool, retryScheduler, properties, objectMapper, transactionManager) {
+            @Override public void resumeNodes(String id, List<String> keys) { executions.incrementAndGet(); }
+        };
+
+        assertThatThrownBy(() -> testEngine.resumeRun(run.getId()))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("attempt resume conflict");
+        assertThat(updates).hasValue(2);
+        assertThat(runRepository.findById(run.getId()).orElseThrow().getStatus()).isEqualTo("waiting");
+        assertThat(nodeRunRepository.findById(first.getId()).orElseThrow().getStatus()).isEqualTo("waiting");
+        assertThat(nodeRunRepository.findById(second.getId()).orElseThrow().getStatus()).isEqualTo("waiting");
+        assertThat(executions).hasValue(0);
+    }
+
+    @Test
+    void resumeRejectsMultipleWaitingAttemptsForSameNode() {
+        WorkflowRun run = newRunningRun(1L, "{}");
+        run.setStatus("waiting");
+        runRepository.saveAndFlush(run);
+        WorkflowNodeRun first = waitingAttempt(run.getId(), "gate");
+        WorkflowNodeRun second = new WorkflowNodeRun();
+        second.setId("wnr_" + java.util.UUID.randomUUID());
+        second.setRunId(run.getId());
+        second.setNodeKey("gate");
+        second.setNodeType("approval");
+        second.setAttempt(2);
+        second.setStatus("waiting");
+        second.setApprovalId(first.getApprovalId());
+        nodeRunRepository.saveAndFlush(second);
+        engine.resumeRun(run.getId());
+        assertThat(runRepository.findById(run.getId()).orElseThrow().getStatus()).isEqualTo("waiting");
+        assertThat(nodeRunRepository.findById(first.getId()).orElseThrow().getStatus()).isEqualTo("waiting");
+        assertThat(nodeRunRepository.findById(second.getId()).orElseThrow().getStatus()).isEqualTo("waiting");
+    }
+
+    @Test
+    void resumeRejectsWaitingAttemptSupersededByNewerAttempt() {
+        WorkflowRun run = newRunningRun(1L, "{}");
+        run.setStatus("waiting");
+        runRepository.saveAndFlush(run);
+        WorkflowNodeRun first = waitingAttempt(run.getId(), "gate");
+        WorkflowNodeRun newer = new WorkflowNodeRun();
+        newer.setId("wnr_" + java.util.UUID.randomUUID());
+        newer.setRunId(run.getId());
+        newer.setNodeKey("gate");
+        newer.setNodeType("approval");
+        newer.setAttempt(2);
+        newer.setStatus("failed");
+        nodeRunRepository.saveAndFlush(newer);
+        engine.resumeRun(run.getId());
+        assertThat(runRepository.findById(run.getId()).orElseThrow().getStatus()).isEqualTo("waiting");
+        assertThat(nodeRunRepository.findById(first.getId()).orElseThrow().getStatus()).isEqualTo("waiting");
+        assertThat(nodeRunRepository.findById(newer.getId()).orElseThrow().getStatus()).isEqualTo("failed");
+    }
+
+    @Test
+    void resumeRunConflictDoesNotWakeAttempt() {
+        WorkflowRun run = newRunningRun(1L, "{}");
+        WorkflowNodeRun row = waitingAttempt(run.getId(), "gate");
+        assertThatThrownBy(() -> engine.resumeRun(run.getId()))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("run resume conflict");
+        assertThat(nodeRunRepository.findById(row.getId()).orElseThrow().getStatus()).isEqualTo("waiting");
+        assertThat(runRepository.findById(run.getId()).orElseThrow().getStatus()).isEqualTo("running");
+    }
+
+    @Test
+    void resumeDoesNotWakeWaitingAttemptAddedAfterSelection() {
+        WorkflowRun run = newRunningRun(1L, "{}");
+        run.setStatus("waiting");
+        runRepository.saveAndFlush(run);
+        WorkflowNodeRun selected = waitingAttempt(run.getId(), "selected");
+        WorkflowApproval lateApproval = approvalFixture(run.getId(), "late", "approval");
+        AtomicReference<String> lateId = new AtomicReference<>();
+        WorkflowNodeRunRepository repo = (WorkflowNodeRunRepository) Proxy.newProxyInstance(
+                getClass().getClassLoader(), new Class<?>[]{WorkflowNodeRunRepository.class}, (proxy, method, args) -> {
+                    if (method.getName().equals("resumeWaitingAttempt")) {
+                        WorkflowNodeRun late = new WorkflowNodeRun();
+                        late.setId("wnr_" + java.util.UUID.randomUUID());
+                        late.setRunId(run.getId());
+                        late.setNodeKey("late");
+                        late.setNodeType("approval");
+                        late.setStatus("waiting");
+                        late.setApprovalId(lateApproval.getId());
+                        nodeRunRepository.saveAndFlush(late);
+                        lateId.set(late.getId());
+                    }
+                    try {
+                        return method.invoke(nodeRunRepository, args);
+                    } catch (InvocationTargetException e) {
+                        throw e.getCause();
+                    }
+                });
+        AtomicReference<List<String>> executed = new AtomicReference<>();
+        WorkflowEngine testEngine = new WorkflowEngine(runRepository, repo, approvalRepository,
+                versionRepository, workflowRepository, jobRepository, registry(), dagValidator, expressionEvaluator,
+                attemptAllocator, auditLogService, new SensitiveDataFilter(), Optional.of(events::add),
+                enginePool, retryScheduler, properties, objectMapper, transactionManager) {
+            @Override public void resumeNodes(String id, List<String> keys) { executed.set(keys); }
+        };
+        testEngine.resumeRun(run.getId());
+        assertThat(executed.get()).containsExactly("selected");
+        assertThat(nodeRunRepository.findById(selected.getId()).orElseThrow().getStatus()).isEqualTo("running");
+        assertThat(nodeRunRepository.findById(lateId.get()).orElseThrow().getStatus()).isEqualTo("waiting");
+    }
+
+    @Test
+    void conditionalResumeRequiresExactBindingAndDecidedMatchingApproval() {
+        WorkflowRun run = newRunningRun(1L, "{}");
+        WorkflowNodeRun row = waitingAttempt(run.getId(), "gate");
+        TransactionTemplate tx = new TransactionTemplate(transactionManager);
+        assertThat(tx.<Integer>execute(s -> nodeRunRepository.resumeWaitingAttempt(row.getId(), run.getId(), row.getApprovalId() + 1)))
+                .isEqualTo(0);
+        WorkflowApproval approval = approvalRepository.findById(row.getApprovalId()).orElseThrow();
+        approval.setNodeType("script-exec");
+        approvalRepository.saveAndFlush(approval);
+        assertThat(tx.<Integer>execute(s -> nodeRunRepository.resumeWaitingAttempt(row.getId(), run.getId(), row.getApprovalId())))
+                .isEqualTo(0);
+        approval = approvalRepository.findById(row.getApprovalId()).orElseThrow();
+        approval.setNodeType("approval");
+        approval.setStatus("pending");
+        approvalRepository.saveAndFlush(approval);
+        assertThat(tx.<Integer>execute(s -> nodeRunRepository.resumeWaitingAttempt(row.getId(), run.getId(), row.getApprovalId())))
+                .isEqualTo(0);
+        approval = approvalRepository.findById(row.getApprovalId()).orElseThrow();
+        approval.setStatus("approved");
+        approvalRepository.saveAndFlush(approval);
+        assertThat(tx.<Integer>execute(s -> nodeRunRepository.resumeWaitingAttempt(row.getId(), run.getId(), row.getApprovalId())))
+                .isEqualTo(1);
+        assertThat(tx.<Integer>execute(s -> nodeRunRepository.resumeWaitingAttempt(row.getId(), run.getId(), row.getApprovalId())))
+                .isEqualTo(0);
+    }
+
+    private WorkflowNodeRun waitingAttempt(String runId, String key) {
+        WorkflowApproval approval = approvalFixture(runId, key, "approval");
+        approval.setStatus("approved");
+        approvalRepository.saveAndFlush(approval);
+        WorkflowNodeRun row = new WorkflowNodeRun();
+        row.setId("wnr_" + java.util.UUID.randomUUID());
+        row.setRunId(runId);
+        row.setNodeKey(key);
+        row.setNodeType("approval");
+        row.setStatus("waiting");
+        row.setApprovalId(approval.getId());
+        return nodeRunRepository.saveAndFlush(row);
+    }
+
+    /** 构造恢复测试所需的历史审批，而非调用生产挂起入口。 */
+    private WorkflowApproval approvalFixture(String runId, String key, String type) {
+        WorkflowApproval approval = new WorkflowApproval();
+        approval.setRunId(runId);
+        approval.setNodeKey(key);
+        approval.setNodeType(type);
+        approval.setTitle("gate");
+        approval.setExpiresAt(LocalDateTime.now().plusSeconds(60));
+        return approvalRepository.saveAndFlush(approval);
+    }
+
+    @Test
+    void recoveryAbortsPersistedNonRetryableFailureBeforePartialDownstream() {
+        WorkflowNode failed = node("failed", "script-exec", Map.of());
+        failed.setOnFailure("abort");
+        WorkflowNode downstream = node("downstream", "wait", Map.of());
+        downstream.setOnFailure("partial");
+        WorkflowRun run = newRunningRun(publishNodes(List.of(failed, downstream),
+                List.of(edge("failed", "downstream"))), "{}");
+        WorkflowNodeRun row = new WorkflowNodeRun();
+        row.setId("wnr_recovery_" + java.util.UUID.randomUUID().toString().replace("-", ""));
+        row.setRunId(run.getId());
+        row.setNodeKey("failed");
+        row.setNodeType("script-exec");
+        row.setAttempt(1);
+        row.setStatus("failed");
+        row.setErrorMessage("SCRIPT_RETRY_UNSAFE: interrupted after failure");
+        row.setStartedAt(LocalDateTime.now());
+        row.setFinishedAt(LocalDateTime.now());
+        nodeRunRepository.saveAndFlush(row);
+
+        engine.drive(run);
+
+        assertThat(runRepository.findById(run.getId()).orElseThrow().getStatus()).isEqualTo("failed");
+        assertThat(stub(NodeType.WAIT).calls.get()).isZero();
+        assertThat(statusOf(run.getId(), "downstream")).isEqualTo("cancelled");
+        assertThat(nodeRunRepository.findById(row.getId()).orElseThrow().getStatus()).isEqualTo("failed");
+    }
+
     private WorkflowRun newRunningRun(Long versionId, String inputJson) {
         WorkflowRun run = new WorkflowRun();
         run.setId("wfr_rd_" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 12));
@@ -1558,6 +2634,12 @@ class WorkflowEngineH2Test {
         row.setAttempt(1);
         row.setStatus("succeeded");
         row.setOutputJson(outputJson);
+        try {
+            row.setOutputSha256(java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(outputJson.getBytes(java.nio.charset.StandardCharsets.UTF_8))));
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new AssertionError(e);
+        }
         row.setStartedAt(LocalDateTime.now());
         row.setFinishedAt(LocalDateTime.now());
         nodeRunRepository.saveAndFlush(row);
@@ -1586,6 +2668,7 @@ class WorkflowEngineH2Test {
         reloaded.setStartedAt(LocalDateTime.now().minusSeconds(120));
         runRepository.saveAndFlush(reloaded);
 
+        events.clear();
         watchdog.scanOnce();
         release.countDown();
         awaitNodeStatus(run.getId(), "check", "succeeded", "failed", "skipped", "cancelled", "timeout");
@@ -1636,8 +2719,15 @@ class WorkflowEngineH2Test {
         // 造一个"执行线程已死"的 running attempt：started_at 提前到超时线之外。
         // 节点键必须存在于定义里（看门狗要按节点 timeoutSec 判定），这里复用 check
         String runId = run.getId();
-        WorkflowNodeRun zombie = attemptAllocator.startAttempt(runId, "check", "script-exec");
+        WorkflowNodeRun zombie = new WorkflowNodeRun();
+        zombie.setId("zombie-test");
+        zombie.setRunId(runId);
+        zombie.setNodeKey("check");
+        zombie.setNodeType("script-exec");
+        zombie.setAttempt(2);
+        zombie.setStatus("running");
         zombie.setStartedAt(LocalDateTime.now().minusSeconds(600));
+        zombie.setApprovalId(456L);
         nodeRunRepository.saveAndFlush(zombie);
         WorkflowNodeRun persisted = nodeRunRepository.findById(zombie.getId()).orElseThrow();
         assertThat(persisted.getStartedAt()).isBefore(LocalDateTime.now().minusSeconds(500));
@@ -1655,8 +2745,136 @@ class WorkflowEngineH2Test {
                 .orElseThrow();
         assertThat(timedOut.getAttempt()).isEqualTo(2);
         assertThat(timedOut.getStatus()).as(dumpRun()).isEqualTo("timeout");
+        assertThat(timedOut.getApprovalId()).isEqualTo(456L);
         // 看门狗把"为什么超时"写进 error_message（异常终态的原因字段）
         assertThat(timedOut.getErrorMessage()).contains("看门狗兜底");
+        assertThat(events.stream().filter(e -> "NODE_FAILED".equals(e.type())
+                && runId.equals(e.runId()) && "check".equals(e.nodeKey())))
+                .anySatisfy(e -> { assertThat(e.message()).isNull(); assertThat(e.payload()).isNull(); });
+    }
+
+    @Test
+    @DisplayName("历史脚本失败或看门狗超时不可自动重试，即使 task 绑定未知")
+    void historicalScriptFailuresNeverBecomeReady() {
+        WorkflowNode script = node("script", "script-exec", Map.of());
+        script.setRetryMax(3);
+        WorkflowDefinition def = new WorkflowDefinition();
+        def.setNodes(List.of(script));
+        def.setEdges(List.of());
+        WorkflowNodeRun row = new WorkflowNodeRun();
+        row.setNodeKey("script");
+        row.setAttempt(1);
+        for (String status : List.of("failed", "timeout")) {
+            row.setStatus(status);
+            for (String taskId : java.util.Arrays.asList(null, "existing-task")) {
+                row.setTaskId(taskId);
+                assertThat(DagScheduler.findReady(def, Map.of("script", row), n -> true)).isEmpty();
+                assertThat(DagScheduler.hasPendingRetry(def, Map.of("script", row))).isFalse();
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("真实脚本执行器超时后保留绑定 task 且不重派")
+    void scriptTimeoutDoesNotRedispatchBoundTask() {
+        properties.getEngine().setDefaultNodeTimeoutSec(1);
+        properties.getEngine().setPollIntervalMs(100);
+        TaskService dispatch = mock(TaskService.class);
+        AtomicInteger dispatches = new AtomicInteger();
+        when(dispatch.createAndDispatch(any(), any(), any(), any())).thenAnswer(invocation -> {
+            int count = dispatches.incrementAndGet();
+            Task task = new Task();
+            task.setId("script-timeout-" + count);
+            task.setName("script timeout");
+            task.setTotalCount(1);
+            return taskRepository.saveAndFlush(task);
+        });
+        var config = mock(com.easyshell.server.ai.config.AgenticConfigService.class);
+        lenient().when(config.getStringSet(anyString(), eq(Set.of()))).thenReturn(Set.of());
+        lenient().when(config.getStringList(anyString(), eq(List.of()))).thenReturn(List.of());
+        var script = new ScriptExecNodeExecutor(dispatch, mock(ClusterService.class), mock(TagService.class),
+                agentRepository, jobRepository, taskRepository, approvalRepository, nodeRunRepository,
+                runRepository, entityManager, approvalStore, expressionEvaluator, new com.easyshell.server.ai.risk.CommandRiskEngine(config),
+                dagValidator, new SensitiveDataFilter(), objectMapper, properties, transactionManager);
+        ReflectionTestUtils.setField(script, "provenanceService", provenanceService);
+        WorkflowEngine realScriptEngine = new WorkflowEngine(runRepository, nodeRunRepository, approvalRepository,
+                versionRepository, workflowRepository, jobRepository, new NodeExecutorRegistry(List.of(script)),
+                dagValidator, expressionEvaluator, attemptAllocator, auditLogService, new SensitiveDataFilter(),
+                Optional.empty(), enginePool, retryScheduler, properties, objectMapper, transactionManager);
+        WorkflowRunService realScriptService = new WorkflowRunService(workflowRepository, versionRepository,
+                runRepository, nodeRunRepository, approvalRepository, realScriptEngine, auditLogService, properties,
+                objectMapper, transactionManager);
+        ReflectionTestUtils.setField(realScriptService, "provenanceService", provenanceService);
+        Long version = publishDefinition("""
+                {"schemaVersion":1,"nodes":[{"key":"script","type":"script-exec",
+                 "retryMax":2,"retryIntervalSec":1,"timeoutSec":1,
+                 "config":{"script":"echo ok","targets":{"mode":"explicit","agentIds":["ag-1"]}}}],"edges":[]}
+                """);
+        WorkflowRun run = realScriptService.startRun(workflowId, version, Map.of(), 42L, null, "manual");
+        assertThat(awaitTerminal(run.getId()).getStatus()).isEqualTo("failed");
+        sleepQuietly(1500);
+        var rows = nodeRunRepository.findByRunId(run.getId());
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0).getTaskId()).isEqualTo("script-timeout-1");
+        assertThat(rows.get(0).getErrorMessage()).startsWith("NODE_TIMEOUT:").contains("禁止自动重派");
+        assertThat(dispatches).hasValue(1);
+        assertThat(taskRepository.findById("script-timeout-1")).isPresent();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"PARAM_MISSING", "RISK_BLOCKED", "AI_APPROVAL_REQUIRED", "AGENT_DISPATCH_FAILED"})
+    @DisplayName("脚本失败保留原始错误码、脱敏并禁止自动重派")
+    void scriptFailurePreservesErrorCode(String code) {
+        stub(NodeType.SCRIPT_EXEC).behavior = ctx -> {
+            throw new NodeFailedException(code, "password=secret-test-value");
+        };
+        WorkflowRun run = startRun("""
+                {"schemaVersion":1,"nodes":[{"key":"script","type":"script-exec",
+                 "retryMax":2,"retryIntervalSec":1,"config":{}}],"edges":[]}
+                """, Map.of());
+        assertThat(awaitTerminal(run.getId()).getStatus()).isEqualTo("failed");
+        var rows = nodeRunRepository.findByRunId(run.getId());
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0).getErrorMessage()).startsWith(code + ":")
+                .contains("禁止自动重派").doesNotContain("secret-test-value", "SCRIPT_RETRY_UNSAFE");
+        assertThat(stub(NodeType.SCRIPT_EXEC).calls).hasValue(1);
+    }
+
+    @Test
+    void watchdogClosesStaleAttemptAfterRunTerminalWithoutResumingIt() {
+        stub(NodeType.SCRIPT_EXEC).behavior = ctx -> {
+            ctx.variables().putNodeOutput(ctx.node().getKey(), ctx.node().getOutputVar(),
+                    Map.of("maxPcent", 93.2));
+            return NodeOutcome.SUCCEEDED;
+        };
+        WorkflowRun run = startRun(linearDefinition("skip"), Map.of("threshold", 90));
+        assertThat(awaitTerminal(run.getId()).getStatus()).as(dumpRun()).isEqualTo("succeeded");
+        WorkflowNodeRun zombie = new WorkflowNodeRun();
+        zombie.setId("zombie-terminal-test");
+        zombie.setRunId(run.getId());
+        zombie.setNodeKey("check");
+        zombie.setNodeType("script-exec");
+        zombie.setAttempt(2);
+        zombie.setStatus("running");
+        zombie.setStartedAt(LocalDateTime.now().minusSeconds(600));
+        zombie.setApprovalId(789L);
+        nodeRunRepository.saveAndFlush(zombie);
+
+        events.clear();
+        watchdog.scanOnce();
+
+        WorkflowNodeRun closed = nodeRunRepository.findById(zombie.getId()).orElseThrow();
+        assertThat(closed.getStatus()).isEqualTo("cancelled");
+        assertThat(closed.getApprovalId()).isEqualTo(789L);
+        assertThat(closed.getCancelDelivered()).isFalse();
+        assertThat(closed.getErrorMessage()).contains("外部执行可能仍在运行");
+        assertThat(runRepository.findById(run.getId()).orElseThrow().getStatus()).isEqualTo("succeeded");
+        assertThat(events.stream().filter(e -> "NODE_CANCELLED".equals(e.type())
+                && run.getId().equals(e.runId()) && "check".equals(e.nodeKey())))
+                .singleElement().satisfies(e -> {
+                    assertThat(e.message()).isNull();
+                    assertThat(e.payload()).isNull();
+                });
     }
 
     @Test
@@ -1674,10 +2892,19 @@ class WorkflowEngineH2Test {
         lenient().when(agentHandler.dispatchJob(any(), any(), any(), anyInt())).thenReturn(true);
         com.easyshell.server.service.impl.TaskCounterService counterService =
                 new com.easyshell.server.service.impl.TaskCounterService(taskRepository, jobRepository);
+        jdbc.execute("CREATE TABLE IF NOT EXISTS host_identity (agent_id VARCHAR(64) PRIMARY KEY, generation BIGINT NOT NULL, active TINYINT NOT NULL)");
+        jdbc.execute("CREATE TABLE IF NOT EXISTS task_target_snapshot (task_id VARCHAR(64) PRIMARY KEY, target_count INT NOT NULL, completed TINYINT NOT NULL)");
+        jdbc.execute("CREATE TABLE IF NOT EXISTS task_target_snapshot_item (task_id VARCHAR(64) NOT NULL, agent_id VARCHAR(64) NOT NULL, generation BIGINT NOT NULL, PRIMARY KEY (task_id, agent_id), FOREIGN KEY (task_id) REFERENCES task_target_snapshot(task_id))");
+        jdbc.update("DELETE FROM host_identity WHERE agent_id = ?", "ag-cancel");
+        jdbc.update("INSERT INTO host_identity (agent_id, generation, active) VALUES (?, ?, ?)", "ag-cancel", 1L, 1);
+        TaskTargetSnapshotRepository targetSnapshots = new TaskTargetSnapshotRepository(jdbc);
+        HostAclService acl = mock(HostAclService.class);
+        lenient().when(acl.allowedForGeneration(42L, "ag-cancel", 1L, HostAclService.Permission.EXECUTE)).thenReturn(true);
         TaskService taskService = new com.easyshell.server.service.impl.TaskServiceImpl(
-                taskRepository, jobRepository, mock(ScriptRepository.class), agentRepository, counterService,
+                taskRepository, jobRepository, mock(com.easyshell.server.security.ScriptAccess.class), agentRepository, counterService,
                 logHandler, agentHandler, mock(ClusterService.class), mock(TagService.class), riskEngine,
-                auditLogService, List.of(mock(DispatchEvidenceVerifier.class)));
+                auditLogService, List.of(mock(DispatchEvidenceVerifier.class)), acl,
+                new HostIdentityService(jdbc, agentRepository), targetSnapshots);
 
         Agent agent = new Agent();
         agent.setId("ag-cancel");
@@ -1688,7 +2915,14 @@ class WorkflowEngineH2Test {
 
         WorkflowRun run = startRun(linearDefinition("skip"), Map.of("threshold", 90));
         awaitTerminal(run.getId());
-        WorkflowNodeRun row = attemptAllocator.startAttempt(run.getId(), "late", "script-exec");
+        WorkflowNodeRun row = new WorkflowNodeRun();
+        row.setId("late-test");
+        row.setRunId(run.getId());
+        row.setNodeKey("late");
+        row.setNodeType("script-exec");
+        row.setAttempt(1);
+        row.setStatus("running");
+        row.setStartedAt(LocalDateTime.now());
         TaskCreateRequest request = new TaskCreateRequest();
         request.setName("late-task");
         request.setScriptContent("echo late");
@@ -1697,6 +2931,8 @@ class WorkflowEngineH2Test {
         // createAndDispatch 里要注册 afterCommit 回调，必须放在事务里跑
         TransactionTemplate dispatchTx = new TransactionTemplate(transactionManager);
         Task task = dispatchTx.execute(tx -> taskService.createAndDispatch(request, 42L));
+        assertThat(targetSnapshots.findComplete(task.getId()).orElseThrow().targets())
+                .containsExactly(new com.easyshell.server.model.dto.TaskTargetSnapshot.Target("ag-cancel", 1L));
         row.setTaskId(task.getId());
         nodeRunRepository.saveAndFlush(row);
 

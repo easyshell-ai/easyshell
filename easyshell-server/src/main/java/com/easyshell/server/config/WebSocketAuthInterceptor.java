@@ -1,11 +1,14 @@
 package com.easyshell.server.config;
 
 import com.easyshell.server.security.JwtUtils;
+import com.easyshell.server.security.AgentCredentialGenerationValidator;
+import com.easyshell.server.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.server.ServerHttpRequest;
 import org.springframework.http.server.ServerHttpResponse;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 import org.springframework.web.socket.WebSocketHandler;
 import org.springframework.web.socket.server.HandshakeInterceptor;
 
@@ -31,8 +34,16 @@ public class WebSocketAuthInterceptor implements HandshakeInterceptor {
     public static final String ATTR_USERNAME = "WS_USERNAME";
     public static final String ATTR_ROLE = "WS_ROLE";
     public static final String ATTR_AGENT_ID = "WS_AGENT_ID";
+    public static final String ATTR_BOUND_AGENT = "WS_BOUND_AGENT";
+    public static final String ATTR_AGENT_AUTH_KIND = "WS_AGENT_AUTH_KIND";
+
+    public enum AgentAuthKind { LEGACY, BOUND }
+
+    public record BoundAgent(String agentId, long generation, java.time.Instant expiresAt) { }
 
     private final JwtUtils jwtUtils;
+    private final UserRepository userRepository;
+    private final AgentCredentialGenerationValidator generationValidator;
 
     @Override
     public boolean beforeHandshake(ServerHttpRequest request, ServerHttpResponse response,
@@ -48,10 +59,18 @@ public class WebSocketAuthInterceptor implements HandshakeInterceptor {
 
         try {
             String type = jwtUtils.getTokenType(token);
-            String subject = jwtUtils.parseToken(token).getSubject();
+            var claims = jwtUtils.parseToken(token);
+            String subject = claims.getSubject();
 
             if (path != null && path.startsWith("/ws/agent/")) {
-                if (!JwtUtils.TOKEN_TYPE_AGENT.equals(type)) {
+                BoundAgent boundAgent = null;
+                if (AgentCredentialGenerationValidator.TOKEN_TYPE_BOUND_AGENT.equals(type)) {
+                    var identity = generationValidator.validate(token).orElse(null);
+                    if (identity == null || !identity.agentId().equals(subject) || claims.getExpiration() == null) {
+                        return reject(response, path, "bound agent token rejected");
+                    }
+                    boundAgent = new BoundAgent(identity.agentId(), identity.generation(), claims.getExpiration().toInstant());
+                } else if (!JwtUtils.TOKEN_TYPE_AGENT.equals(type) || !generationValidator.permitsLegacy(subject)) {
                     return reject(response, path, "agent token required");
                 }
                 String pathAgentId = lastSegment(path);
@@ -59,20 +78,23 @@ public class WebSocketAuthInterceptor implements HandshakeInterceptor {
                     return reject(response, path, "agent token subject mismatch");
                 }
                 attributes.put(ATTR_AGENT_ID, subject);
+                attributes.put(ATTR_AGENT_AUTH_KIND, boundAgent == null ? AgentAuthKind.LEGACY : AgentAuthKind.BOUND);
+                if (boundAgent != null) attributes.put(ATTR_BOUND_AGENT, boundAgent);
                 return true;
             }
 
             if (type != null && !JwtUtils.TOKEN_TYPE_ACCESS.equals(type)) {
                 return reject(response, path, "access token required");
             }
-            String role = jwtUtils.getRoleFromToken(token);
-            if (role == null) {
-                return reject(response, path, "token has no role claim");
-            }
             Long userId = Long.valueOf(subject);
+            var user = userRepository.findById(userId).orElse(null);
+            if (user == null || !Integer.valueOf(1).equals(user.getStatus())
+                    || !StringUtils.hasText(user.getRole()) || !StringUtils.hasText(user.getUsername())) {
+                return reject(response, path, "user unavailable");
+            }
             attributes.put(ATTR_USER_ID, userId);
-            attributes.put(ATTR_USERNAME, jwtUtils.getUsernameFromToken(token));
-            attributes.put(ATTR_ROLE, role);
+            attributes.put(ATTR_USERNAME, user.getUsername());
+            attributes.put(ATTR_ROLE, user.getRole());
             return true;
         } catch (Exception e) {
             return reject(response, path, "token rejected: " + e.getClass().getSimpleName());

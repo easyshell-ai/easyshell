@@ -3,10 +3,6 @@ package com.easyshell.server.workflow.node;
 import com.easyshell.server.ai.security.SensitiveDataFilter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
 
 /**
  * LLM/classifier 的结构化输出解析工具（工作流 2.1）。
@@ -66,25 +62,7 @@ final class AiStructuredOutput {
      * 先解析模型原文再脱敏，避免掩码把 JSON 结构改坏。
      */
     static Object maskJson(Object value, SensitiveDataFilter filter) {
-        if (value == null) {
-            return null;
-        }
-        if (value instanceof String text) {
-            return filter.filter(text);
-        }
-        if (value instanceof Map<?, ?> map) {
-            Map<String, Object> masked = new LinkedHashMap<>();
-            map.forEach((key, item) -> masked.put(String.valueOf(key), maskJson(item, filter)));
-            return masked;
-        }
-        if (value instanceof List<?> list) {
-            List<Object> masked = new ArrayList<>();
-            for (Object item : list) {
-                masked.add(maskJson(item, filter));
-            }
-            return masked;
-        }
-        return value;
+        return filter.filterJson(value);
     }
 
     /** json 模式追加到 system prompt 的输出纪律与可选 schema 提示。 */

@@ -219,4 +219,36 @@ class LlmNodeExecutorTest {
                         assertThat(e.getCode()).isEqualTo("AI_QUOTA_EXCEEDED"));
         verify(chatModel, never()).call(any(Prompt.class));
     }
+
+    @Test
+    void legacyJsonRequestsMaskSystemSchemaInputAndRepair() {
+        when(chatModel.call(any(Prompt.class)))
+                .thenReturn(response("invalid token=previoussecret"), response("{\"ok\":true}"));
+        WorkflowNode node = node("password=inputsecret", "json", Map.of(
+                "systemPrompt", "password=systemsecret", "jsonSchema", "token=schemasecret"));
+        executor.execute(context(node, new VariableStore()));
+        ArgumentCaptor<Prompt> prompts = ArgumentCaptor.forClass(Prompt.class);
+        verify(chatModel, times(2)).call(prompts.capture());
+        for (Prompt prompt : prompts.getAllValues()) {
+            String text = String.join("\n", prompt.getInstructions().stream().map(Message::getText).toList());
+            assertThat(text).contains("***").doesNotContain("inputsecret", "systemsecret", "schemasecret", "previoussecret");
+        }
+    }
+
+    @Test
+    void strictSchemaFailureDoesNotPublishOutput() {
+        String schema = "{\"type\":\"object\",\"properties\":{\"ok\":{\"type\":\"boolean\"}},\"required\":[\"ok\"],\"additionalProperties\":false}";
+        WorkflowNode node = node("password=inputsecret", "json_schema_v1", Map.of("jsonSchema", schema,
+                "systemPrompt", "token=systemsecret"));
+        when(chatModel.call(any(Prompt.class))).thenReturn(response("{\"ok\":\"wrong\"}"));
+        VariableStore variables = new VariableStore();
+        assertThatThrownBy(() -> executor.execute(context(node, variables)))
+                .isInstanceOfSatisfying(NodeFailedException.class, e ->
+                        assertThat(e.getCode()).isEqualTo("AI_OUTPUT_INVALID_JSON"));
+        assertThat(variables.nodeOutput("llm")).isNull();
+        ArgumentCaptor<Prompt> prompt = ArgumentCaptor.forClass(Prompt.class);
+        verify(chatModel).call(prompt.capture());
+        String text = String.join("\n", prompt.getValue().getInstructions().stream().map(Message::getText).toList());
+        assertThat(text).contains("***", "additionalProperties").doesNotContain("inputsecret", "systemsecret");
+    }
 }

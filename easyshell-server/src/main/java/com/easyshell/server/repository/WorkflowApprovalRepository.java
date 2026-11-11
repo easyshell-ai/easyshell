@@ -41,7 +41,8 @@ public interface WorkflowApprovalRepository extends JpaRepository<WorkflowApprov
     @Modifying(flushAutomatically = true)
     @Query("update WorkflowApproval a set a.status = :status, a.decidedBy = :decidedBy, " +
             "a.decidedAt = :decidedAt, a.decisionComment = :decisionComment, a.version = a.version + 1 " +
-            "where a.id = :id and a.status = 'pending' and a.version = :expectedVersion")
+            "where a.id = :id and a.status = 'pending' and a.version = :expectedVersion " +
+            "and a.expiresAt is not null and a.expiresAt > :decidedAt")
     int decideIfPending(@Param("id") Long approvalId,
                         @Param("status") String status,
                         @Param("decidedBy") Long decidedBy,

@@ -2,6 +2,7 @@ package com.easyshell.server.workflow.service;
 
 import com.easyshell.server.ai.security.SensitiveDataFilter;
 import com.easyshell.server.model.entity.WorkflowNodeRun;
+import com.easyshell.server.model.entity.WorkflowApproval;
 import com.easyshell.server.model.entity.WorkflowRun;
 import com.easyshell.server.model.vo.WorkflowNodeRunVO;
 import com.easyshell.server.model.vo.WorkflowRunVO;
@@ -55,5 +56,18 @@ class WorkflowApiPresenterTest {
         Map<String, Object> nodeOutput = (Map<String, Object>) nodeVo.getOutput();
         assertThat(nodeOutput.get("text")).isEqualTo("Bearer ***");
         assertThat(nodeVo.getErrorMessage()).doesNotContain("sk-abcdefghijklmnopqrstuvwxyz012345");
+    }
+
+    @Test
+    void approvalDynamicContentIsMasked() {
+        WorkflowApproval approval = new WorkflowApproval();
+        approval.setRunId("r");
+        approval.setTitle("token=supersecret-value");
+        approval.setDetailJson("{\"password\":\"secret-value\",\"message\":\"Bearer abcdefghijklmnop\"}");
+        approval.setDecisionComment("password=hunter2");
+        var result = presenter.approval(approval);
+        assertThat(result.getTitle()).isEqualTo("token=***");
+        assertThat(result.getDetail()).containsEntry("password", "***").containsEntry("message", "Bearer ***");
+        assertThat(result.getReason()).isEqualTo("password=***");
     }
 }

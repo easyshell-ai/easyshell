@@ -30,8 +30,7 @@ class DispatchAuthorityArchTest {
             "AiExecutionService.java",              // HUMAN_APPROVED（管理员审批通过）
             "HostIntelligenceService.java",         // BUILTIN_READONLY_SCRIPT（内置探测脚本）
             "BuiltinDetectionScriptVerifier.java",  // BUILTIN_READONLY_SCRIPT 证据
-            "AiSchedulerService.java",              // USER_SCHEDULED_TASK（用户自建定时巡检）
-            "ScheduledTaskEvidenceVerifier.java",   // USER_SCHEDULED_TASK 证据
+            "ScheduledTaskEvidenceVerifier.java",   // USER_SCHEDULED_TASK：未完成意图绑定，恒拒绝
             // 1.2.0 工作流：approval 祖先授权 script-exec 派发（设计 §6.3.2 初始白名单即含工作流执行器）
             "ScriptExecNodeExecutor.java",          // HUMAN_APPROVED（工作流审批祖先授权）
             "WorkflowApprovalEvidenceVerifier.java" // HUMAN_APPROVED 证据（workflow_approval 行）

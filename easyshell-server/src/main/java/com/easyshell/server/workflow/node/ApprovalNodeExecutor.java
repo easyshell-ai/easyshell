@@ -2,6 +2,7 @@ package com.easyshell.server.workflow.node;
 
 import com.easyshell.server.model.entity.WorkflowApproval;
 import com.easyshell.server.workflow.approval.WorkflowApprovalStore;
+import com.easyshell.server.workflow.approval.WorkflowApprovalSuspensionService;
 import com.easyshell.server.workflow.engine.NodeContext;
 import com.easyshell.server.workflow.engine.NodeExecutor;
 import com.easyshell.server.workflow.engine.NodeFailedException;
@@ -12,12 +13,13 @@ import com.easyshell.server.workflow.model.NodeType;
 import com.easyshell.server.workflow.model.WorkflowDefinition;
 import com.easyshell.server.workflow.model.WorkflowNode;
 import com.easyshell.server.workflow.properties.WorkflowProperties;
+import com.easyshell.server.workflow.service.WorkflowRunProvenanceService;
+import com.easyshell.server.workflow.service.WorkflowRunProvenanceService.VerifiedIdentity;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -44,15 +46,19 @@ public class ApprovalNodeExecutor implements NodeExecutor {
     private static final int MAX_TIMEOUT_SEC = 604800;
 
     private final WorkflowApprovalStore approvalStore;
+    private final WorkflowApprovalSuspensionService suspensionService;
     private final ExpressionEvaluator expressionEvaluator;
     private final WorkflowProperties properties;
+    private final WorkflowRunProvenanceService provenanceService;
 
-    public ApprovalNodeExecutor(WorkflowApprovalStore approvalStore,
+    public ApprovalNodeExecutor(WorkflowApprovalStore approvalStore, WorkflowApprovalSuspensionService suspensionService,
                                 ExpressionEvaluator expressionEvaluator,
-                                WorkflowProperties properties) {
+                                WorkflowProperties properties, WorkflowRunProvenanceService provenanceService) {
         this.approvalStore = approvalStore;
+        this.suspensionService = suspensionService;
         this.expressionEvaluator = expressionEvaluator;
         this.properties = properties;
+        this.provenanceService = provenanceService;
     }
 
     @Override
@@ -87,11 +93,26 @@ public class ApprovalNodeExecutor implements NodeExecutor {
     public NodeOutcome execute(NodeContext ctx) {
         WorkflowNode node = ctx.node();
         String runId = ctx.run().getId();
+        VerifiedIdentity identity;
+        try {
+            identity = provenanceService.verifiedIdentity(runId);
+        } catch (Exception ex) {
+            identity = VerifiedIdentity.UNKNOWN;
+        }
+        if (identity != VerifiedIdentity.V3 && identity != VerifiedIdentity.LEGACY) {
+            throw new NodeFailedException("APPROVAL_PROVENANCE_UNKNOWN", "审批运行来源无法验证");
+        }
 
         // resume 语义：审批行已存在 → 按决策收尾（不新建第二个审批行）
-        Optional<WorkflowApproval> existing = approvalStore.findByRunAndNode(runId, node.getKey());
-        if (existing.isPresent()) {
-            return completeByDecision(ctx, existing.get());
+        Long approvalId = ctx.nodeRun().getApprovalId();
+        if (approvalId != null) {
+            WorkflowApproval existing = approvalStore.findById(approvalId)
+                    .filter(a -> java.util.Objects.equals(runId, a.getRunId())
+                            && java.util.Objects.equals(node.getKey(), a.getNodeKey())
+                            && java.util.Objects.equals(ctx.nodeRun().getNodeType(), a.getNodeType())
+                            && NodeType.APPROVAL.code().equals(a.getNodeType()))
+                    .orElseThrow(() -> new NodeFailedException("APPROVAL_MISMATCH", "审批绑定缺失或不匹配"));
+            return completeByDecision(ctx, existing, identity);
         }
 
         boolean humanConfirm = "human-confirm".equals(node.configString("mode", "approval"));
@@ -108,28 +129,31 @@ public class ApprovalNodeExecutor implements NodeExecutor {
 
         int timeoutSec = node.configInt("timeoutSec", properties.getApproval().getDefaultTimeoutSec());
         timeoutSec = Math.min(timeoutSec, properties.getApproval().getMaxWaitSeconds());
-        WorkflowApproval approval = approvalStore.create(runId, node.getKey(), NodeType.APPROVAL.code(),
-                (humanConfirm ? "[人工确认] " : "") + renderedTitle, detailJson, null, null,
+        long approvalIdCreated = suspensionService.suspend(ctx,
+                (humanConfirm ? "[人工确认] " : "") + renderedTitle, detailJson,
                 node.configString("approverRole", "ADMIN"), timeoutSec);
-        ctx.nodeRun().setApprovalId(approval.getId());
-        ctx.emit("APPROVAL_REQUESTED", "等待审批 approval=" + approval.getId());
+        ctx.nodeRun().setApprovalId(approvalIdCreated);
         return NodeOutcome.WAITING;
     }
 
     /** 审批决策 → 节点终态（resume 时调用；decision/comment/decidedBy 进 output，§2.11） */
-    private NodeOutcome completeByDecision(NodeContext ctx, WorkflowApproval approval) {
+    private NodeOutcome completeByDecision(NodeContext ctx, WorkflowApproval approval, VerifiedIdentity identity) {
         WorkflowNode node = ctx.node();
-        Map<String, Object> output = new LinkedHashMap<>();
-        output.put("decision", approval.getStatus());
-        output.put("comment", approval.getDecisionComment());
-        output.put("decidedBy", approval.getDecidedBy());
+        Map<String, Object> output = identity == VerifiedIdentity.V3
+                ? NonHostApprovalResult.output(approval) : new LinkedHashMap<>();
+        if (identity == VerifiedIdentity.LEGACY) {
+            output.put("decision", approval.getStatus());
+            output.put("comment", approval.getDecisionComment());
+            output.put("decidedBy", approval.getDecidedBy());
+        }
         switch (approval.getStatus()) {
             case "approved" -> {
                 ctx.variables().putNodeOutput(node.getKey(), node.getOutputVar(), output);
                 return NodeOutcome.SUCCEEDED;
             }
             case "rejected" -> throw new NodeFailedException("approval_rejected",
-                    "审批被拒绝: " + approval.getDecisionComment());
+                    identity == VerifiedIdentity.V3 ? NonHostApprovalResult.rejectionMessage()
+                            : "审批被拒绝: " + approval.getDecisionComment());
             case "timeout" -> {
                 String onTimeout = node.configString("onTimeout", "reject");
                 if ("approve".equals(onTimeout)) {

@@ -1,5 +1,9 @@
 package com.easyshell.server.service;
 
+import com.easyshell.server.model.dto.TaskTargetSnapshot;
+
+import java.util.List;
+
 /**
  * 派发授权（{@link DispatchAuthority}）的证据校验器。
  *
@@ -10,8 +14,37 @@ package com.easyshell.server.service;
  */
 public interface DispatchEvidenceVerifier {
 
+    /** 事务内准备的证据句柄；由所属校验器解释，不向客户端暴露。 */
+    interface PreparedEvidence {
+    }
+
+    /** 最终派发内容；目标集合固定，taskId 与随后落库的真实任务一致。 */
+    record DispatchContext(String scriptContent, Long userId,
+                           List<TaskTargetSnapshot.Target> targets,
+                           int timeoutSeconds, String taskId) {
+        public DispatchContext {
+            targets = List.copyOf(targets);
+        }
+
+        @Override
+        public String toString() {
+            return "DispatchContext[userId=" + userId + ", targets=" + targets
+                    + ", timeoutSeconds=" + timeoutSeconds + ", taskId=" + taskId + "]";
+        }
+    }
+
     /** 该校验器负责的授权值 */
     DispatchAuthority supports();
+
+    /** 在目标 identity 锁之前准备证据；未实现的校验器默认不支持此流程。 */
+    default PreparedEvidence prepare(String evidenceRef, Long userId) {
+        return null;
+    }
+
+    /** 在唯一风险门禁内校验并消费证据，与真实任务写入共享事务。 */
+    default String verifyAndConsume(PreparedEvidence prepared, String evidenceRef, DispatchContext context) {
+        return verify(evidenceRef, context.scriptContent(), context.userId());
+    }
 
     /**
      * 校验证据是否成立。

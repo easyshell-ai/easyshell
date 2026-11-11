@@ -22,6 +22,7 @@ import com.easyshell.server.service.ClusterService;
 import com.easyshell.server.service.TagService;
 import com.easyshell.server.service.TaskService;
 import com.easyshell.server.workflow.approval.WorkflowApprovalStore;
+import com.easyshell.server.workflow.approval.WorkflowApprovalAttemptBinding;
 import com.easyshell.server.workflow.engine.NodeExecutorRegistry;
 import com.easyshell.server.workflow.expression.ExpressionEvaluator;
 import com.easyshell.server.workflow.graph.DagValidator;
@@ -41,6 +42,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.security.core.Authentication;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -73,6 +75,7 @@ import static org.mockito.Mockito.mock;
  * 证明这条契约真的在执法，不是空跑。</p>
  */
 @DataJpaTest
+@Import({WorkflowApprovalStore.class, WorkflowApprovalAttemptBinding.class})
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ActiveProfiles("test")
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
@@ -95,6 +98,8 @@ class NodeConfigFieldNameContractTest {
     private PlatformTransactionManager transactionManager;
     @Autowired
     private jakarta.persistence.EntityManager entityManager;
+    @Autowired
+    private WorkflowApprovalAttemptBinding approvalAttemptBinding;
 
     @MockitoBean
     private AuditLogService auditLogService;
@@ -173,16 +178,20 @@ class NodeConfigFieldNameContractTest {
         NodeExecutorRegistry registry = new NodeExecutorRegistry(List.of(
                 new ScriptExecNodeExecutor(mock(TaskService.class), mock(ClusterService.class),
                         mock(TagService.class), mock(AgentRepository.class), mock(JobRepository.class),
-                        mock(TaskRepository.class), approvalRepository, approvalStore,
+                        mock(TaskRepository.class), approvalRepository,
+                        mock(com.easyshell.server.repository.WorkflowNodeRunRepository.class), runRepository, entityManager, approvalStore,
                         expressionEvaluator, riskEngine, dagValidator, new SensitiveDataFilter(),
                         objectMapper, properties, transactionManager),
                 new ConditionNodeExecutor(expressionEvaluator),
                 new NotifyNodeExecutor(mock(ChannelMessageRouter.class), expressionEvaluator,
                         new SensitiveDataFilter()),
-                new ApprovalNodeExecutor(approvalStore, expressionEvaluator, properties),
+                new ApprovalNodeExecutor(approvalStore, new com.easyshell.server.workflow.approval.WorkflowApprovalSuspensionService(
+                        approvalAttemptBinding, transactionManager), expressionEvaluator, properties,
+                        mock(com.easyshell.server.workflow.service.WorkflowRunProvenanceService.class)),
                 new WaitNodeExecutor()));
 
-        service = new WorkflowDefinitionService(workflowRepository, versionRepository, dagValidator,
+        service = new WorkflowDefinitionService(workflowRepository, versionRepository,
+                org.mockito.Mockito.mock(com.easyshell.server.security.ScriptAccess.class), dagValidator,
                 registry, riskEngine, auditLogService, objectMapper, transactionManager);
     }
 
@@ -201,7 +210,7 @@ class NodeConfigFieldNameContractTest {
         Workflow workflow = newWorkflow();
         service.saveDraft(workflow.getId(), draft(UI_BUILT_DEFINITION, 0, null), OWNER, authOf(OWNER), null);
 
-        WorkflowVersion published = service.publish(workflow.getId(), "built from the UI", OWNER,
+        WorkflowVersion published = service.publish(workflow.getId(), publishRequest(workflow.getId(), "built from the UI"), OWNER,
                 authOf(OWNER), null);
 
         assertThat(published.getIsValid()).isTrue();
@@ -230,7 +239,7 @@ class NodeConfigFieldNameContractTest {
         Workflow workflow = newWorkflow();
         service.saveDraft(workflow.getId(), draft(definition, 0, null), OWNER, authOf(OWNER), null);
 
-        assertThat(service.publish(workflow.getId(), null, OWNER, authOf(OWNER), null).getIsValid()).isTrue();
+        assertThat(service.publish(workflow.getId(), publishRequest(workflow.getId(), null), OWNER, authOf(OWNER), null).getIsValid()).isTrue();
     }
 
     @Test
@@ -256,7 +265,7 @@ class NodeConfigFieldNameContractTest {
         service.saveDraft(workflow.getId(), draft(LEGACY_SCRIPT_CONTENT_DEFINITION, 0, null),
                 OWNER, authOf(OWNER), null);
 
-        assertThatThrownBy(() -> service.publish(workflow.getId(), null, OWNER, authOf(OWNER), null))
+        assertThatThrownBy(() -> service.publish(workflow.getId(), publishRequest(workflow.getId(), null), OWNER, authOf(OWNER), null))
                 .isInstanceOfSatisfying(WorkflowValidationFailedException.class, e ->
                         assertThat(e.getResult().getIssues())
                                 .anyMatch(i -> "NODE_CONFIG_INVALID".equals(i.getCode())
@@ -283,7 +292,7 @@ class NodeConfigFieldNameContractTest {
 
         Workflow workflow = newWorkflow();
         service.saveDraft(workflow.getId(), draft(definition, 0, null), OWNER, authOf(OWNER), null);
-        assertThatThrownBy(() -> service.publish(workflow.getId(), null, OWNER, authOf(OWNER), null))
+        assertThatThrownBy(() -> service.publish(workflow.getId(), publishRequest(workflow.getId(), null), OWNER, authOf(OWNER), null))
                 .isInstanceOfSatisfying(WorkflowValidationFailedException.class, e ->
                         assertThat(e.getResult().getIssues())
                                 .anyMatch(i -> "NODE_EXECUTOR_MISSING".equals(i.getCode())
@@ -297,7 +306,7 @@ class NodeConfigFieldNameContractTest {
         service.saveDraft(workflow.getId(), draft(LEGACY_CHANNEL_MESSAGE_DEFINITION, 0, null),
                 OWNER, authOf(OWNER), null);
 
-        assertThatThrownBy(() -> service.publish(workflow.getId(), null, OWNER, authOf(OWNER), null))
+        assertThatThrownBy(() -> service.publish(workflow.getId(), publishRequest(workflow.getId(), null), OWNER, authOf(OWNER), null))
                 .isInstanceOfSatisfying(WorkflowValidationFailedException.class, e -> {
                     assertThat(e.getResult().getIssues())
                             .anyMatch(i -> "NODE_CONFIG_INVALID".equals(i.getCode())
@@ -328,6 +337,7 @@ class NodeConfigFieldNameContractTest {
         WorkflowDraftSaveRequest request = new WorkflowDraftSaveRequest();
         request.setDefinition(json(definitionJson));
         request.setBaseVersion(baseVersion);
+        request.setExpectedAbsent(true);
         request.setOnConflict(onConflict);
         request.setChangelog("edit");
         return request;
@@ -339,5 +349,14 @@ class NodeConfigFieldNameContractTest {
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }
+    }
+    private com.easyshell.server.model.dto.WorkflowPublishRequest publishRequest(Long workflowId, String changelog) {
+        var draft = versionRepository.findFirstByWorkflowIdAndIsValidFalseOrderByVersionDesc(workflowId).orElseThrow();
+        var request = new com.easyshell.server.model.dto.WorkflowPublishRequest();
+        request.setDraftId(draft.getId());
+        request.setBaseVersion(draft.getBaseVersion());
+        request.setDefinitionSha256(draft.getDefinitionSha256());
+        request.setChangelog(changelog);
+        return request;
     }
 }

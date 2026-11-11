@@ -115,12 +115,15 @@ public class AiAnalyzeNodeExecutor implements NodeExecutor {
                             + MAX_INPUT_CHARS + " 之间，实际 " + maxInputChars, node.getKey());
         }
         String outputMode = node.configString("outputMode", "text");
-        if (!"text".equals(outputMode) && !"json".equals(outputMode)) {
+        if (!"text".equals(outputMode) && !"json".equals(outputMode) && !AiJsonSchemaV1.MODE.equals(outputMode)) {
             issues.error("NODE_CONFIG_INVALID",
-                    "ai-analyze 节点 outputMode 只能是 text / json，实际 '" + outputMode + "'", node.getKey());
+                    "ai-analyze 节点 outputMode 只能是 text / json / json_schema_v1，实际 '" + outputMode + "'", node.getKey());
         }
         Object rawSchema = node.getConfig() == null ? null : node.getConfig().get("jsonSchema");
-        if (rawSchema instanceof String schema && !schema.isBlank()) {
+        if (AiJsonSchemaV1.MODE.equals(outputMode)) {
+            try { new AiJsonSchemaV1(rawSchema, objectMapper); }
+            catch (IllegalArgumentException e) { issues.error("NODE_CONFIG_INVALID", "无效的严格 JSON Schema", node.getKey()); }
+        } else if (rawSchema instanceof String schema && !schema.isBlank()) {
             try {
                 objectMapper.readTree(schema);
             } catch (Exception e) {
@@ -177,9 +180,14 @@ public class AiAnalyzeNodeExecutor implements NodeExecutor {
         }
 
         String outputMode = node.configString("outputMode", "text");
-        if (!"text".equals(outputMode) && !"json".equals(outputMode)) {
+        if (!"text".equals(outputMode) && !"json".equals(outputMode) && !AiJsonSchemaV1.MODE.equals(outputMode)) {
             throw new NodeFailedException("NODE_CONFIG_INVALID",
-                    "ai-analyze 节点 outputMode 只能是 text / json，实际 '" + outputMode + "'");
+                    "ai-analyze 节点 outputMode 只能是 text / json / json_schema_v1，实际 '" + outputMode + "'");
+        }
+        AiJsonSchemaV1 strict = null;
+        if (AiJsonSchemaV1.MODE.equals(outputMode)) {
+            try { strict = new AiJsonSchemaV1(node.getConfig().get("jsonSchema"), objectMapper); }
+            catch (IllegalArgumentException e) { throw new NodeFailedException("NODE_CONFIG_INVALID", "无效的严格 JSON Schema"); }
         }
         String systemPrompt = SYSTEM_PROMPT;
         if ("json".equals(outputMode)) {
@@ -188,7 +196,12 @@ public class AiAnalyzeNodeExecutor implements NodeExecutor {
             systemPrompt = systemPrompt + "\n\n" + AiStructuredOutput.jsonInstruction(schema);
         }
 
-        String userText = buildUserMessage(instructions, filteredInput);
+        if (strict != null) {
+            systemPrompt += "\n\n只输出符合以下 schema 的 JSON 对象：\n"
+                    + sensitiveDataFilter.filter(node.configString("jsonSchema"));
+        }
+        systemPrompt = sensitiveDataFilter.filter(systemPrompt);
+        String userText = buildUserMessage(sensitiveDataFilter.filter(instructions), filteredInput);
         int waitSec = Math.max(1, Math.min(
                 node.timeoutSecOrDefault(properties.getEngine().getDefaultNodeTimeoutSec()),
                 MAX_WAIT_SECONDS));
@@ -209,7 +222,18 @@ public class AiAnalyzeNodeExecutor implements NodeExecutor {
         output.put("text", filteredText);
         output.put("model", MODEL_LABEL);
         output.put("truncated", truncated);
-        if ("json".equals(outputMode)) {
+        if (strict != null) {
+            try {
+                output.put("model", sensitiveDataFilter.filter((String) output.get("model")));
+                Object parsed = strict.parseAndMask(raw, sensitiveDataFilter);
+                output.put("text", objectMapper.writeValueAsString(parsed));
+                output.put("json", parsed);
+                output.put("structured", true);
+                strict.checkEnvelope(output);
+            } catch (Exception e) {
+                throw new NodeFailedException("AI_OUTPUT_INVALID_JSON", "严格 JSON 输出无效或超限");
+            }
+        } else if ("json".equals(outputMode)) {
             Object parsed;
             try {
                 parsed = AiStructuredOutput.parseJson(raw, objectMapper);
@@ -219,9 +243,9 @@ public class AiAnalyzeNodeExecutor implements NodeExecutor {
                 }
                 String repairPrompt = userText
                         + "\n\n你上一次的输出无法解析为 JSON（错误："
-                        + firstError.getClass().getSimpleName() + "）。\n上一次输出：\n" + filteredText
+                        + firstError.getClass().getSimpleName() + "）。\n上一次输出：\n[无法安全展示无效 JSON]"
                         + "\n\n请只输出修正后的合法 JSON，不要输出 Markdown 代码块或解释文字。";
-                String repaired = callWithBudget(chatModel, systemPrompt, repairPrompt,
+                String repaired = callWithBudget(chatModel, systemPrompt, sensitiveDataFilter.filter(repairPrompt),
                         ctx.run().getStartedBy(), waitSec, "workflow-ai-analyze-repair", "AI 修复");
                 raw = repaired == null ? "" : repaired;
                 try {
@@ -235,13 +259,16 @@ public class AiAnalyzeNodeExecutor implements NodeExecutor {
             if (parsed == null) {
                 throw new NodeFailedException("AI_OUTPUT_INVALID_JSON", "模型输出的 JSON 为 null");
             }
-            output.put("text", filteredText);
-            output.put("json", AiStructuredOutput.maskJson(parsed, sensitiveDataFilter));
+            Object masked = AiStructuredOutput.maskJson(parsed, sensitiveDataFilter);
+            try { output.put("text", objectMapper.writeValueAsString(masked)); }
+            catch (Exception e) { throw new NodeFailedException("AI_OUTPUT_INVALID_JSON", "模型输出无法安全序列化"); }
+            output.put("json", masked);
             output.put("structured", true);
         } else {
             output.put("json", null);
             output.put("structured", false);
         }
+        if (ctx.isCancelled()) throw new NodeCancelledException("运行已取消，丢弃 AI 分析结果");
         ctx.variables().putNodeOutput(node.getKey(), node.getOutputVar(), output);
         return NodeOutcome.SUCCEEDED;
     }

@@ -18,6 +18,7 @@ import java.util.concurrent.*;
 public class BackgroundTaskManager {
 
     private final ConcurrentHashMap<String, BackgroundTask> tasks = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Long> owners = new ConcurrentHashMap<>();
     private final ExecutorService executor;
     private final ScheduledExecutorService scheduler;
     private final int defaultTimeoutSec;
@@ -39,21 +40,23 @@ public class BackgroundTaskManager {
     }
 
     public String submit(AgentDefinition agent, String prompt,
-                         OrchestratorEngine engine, ChatModelFactory chatModelFactory) {
-        return submit(agent, prompt, engine, chatModelFactory, defaultTimeoutSec);
+                         OrchestratorEngine engine, ChatModelFactory chatModelFactory, Long userId, String sourceIp) {
+        return submit(agent, prompt, engine, chatModelFactory, defaultTimeoutSec, userId, sourceIp);
     }
 
     public String submit(AgentDefinition agent, String prompt,
-                         OrchestratorEngine engine, ChatModelFactory chatModelFactory, int timeoutSec) {
+                         OrchestratorEngine engine, ChatModelFactory chatModelFactory, int timeoutSec, Long userId, String sourceIp) {
+        if (userId == null || userId <= 0) throw new IllegalArgumentException("Missing user identity");
         String taskId = "task_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
         BackgroundTask task = new BackgroundTask(taskId, agent.getName());
+        owners.put(taskId, userId);
         tasks.put(taskId, task);
 
         Future<?> future = executor.submit(() -> {
             task.setStatus("running");
             task.setStartedAt(Instant.now());
             try {
-                String result = engine.executeAsSubAgent(agent, prompt, chatModelFactory);
+                String result = engine.executeAsSubAgent(agent, prompt, chatModelFactory, userId, sourceIp);
                 task.setResult(result);
                 task.setStatus("completed");
                 task.setCompletedAt(Instant.now());
@@ -88,11 +91,11 @@ public class BackgroundTaskManager {
 
     public List<BackgroundTask> submitBatchAndWait(List<BatchTaskRequest> requests,
                                                     OrchestratorEngine engine,
-                                                    ChatModelFactory chatModelFactory) {
+                                                    ChatModelFactory chatModelFactory, Long userId, String sourceIp) {
         List<String> taskIds = new ArrayList<>();
         for (BatchTaskRequest req : requests) {
             String taskId = submit(req.getAgentDefinition(), req.getPrompt(), engine, chatModelFactory,
-                    req.getTimeoutSec() > 0 ? req.getTimeoutSec() : defaultTimeoutSec);
+                    req.getTimeoutSec() > 0 ? req.getTimeoutSec() : defaultTimeoutSec, userId, sourceIp);
             BackgroundTask task = tasks.get(taskId);
             if (task != null) {
                 task.setHostId(req.getHostId());
@@ -128,8 +131,8 @@ public class BackgroundTaskManager {
         return results;
     }
 
-    public boolean cancelTask(String taskId) {
-        BackgroundTask task = tasks.get(taskId);
+    public boolean cancelTask(String taskId, Long userId) {
+        BackgroundTask task = getTask(taskId, userId);
         if (task == null) return false;
         if ("completed".equals(task.getStatus()) || "failed".equals(task.getStatus())) return false;
         task.setStatus("failed");
@@ -153,7 +156,8 @@ public class BackgroundTaskManager {
         return sb.toString();
     }
 
-    public BackgroundTask getTask(String taskId) {
+    public BackgroundTask getTask(String taskId, Long userId) {
+        if (userId == null || userId <= 0 || taskId == null || !userId.equals(owners.get(taskId))) return null;
         return tasks.get(taskId);
     }
 

@@ -296,12 +296,12 @@ class WorkflowInjectionTest {
     }
 
     @Test
-    @DisplayName("#22 模板自带 $(hostname) 判 LOW 放行（C-5 判据，插值前评估无效是可接受边界）")
-    void case22_templateCommandSubstitutionIsLow() {
+    @DisplayName("#22 模板自带命令替换仍由风险门禁判 HIGH")
+    void case22_templateCommandSubstitutionRequiresApproval() {
         Outcome outcome = pipeline("echo $(hostname) {{MSG}}", "MSG", "ok");
         assertThat(outcome.rejected()).isFalse();
         assertThat(outcome.rendered()).isEqualTo("echo $(hostname) 'ok'");
-        assertThat(outcome.risk()).isEqualTo(RiskLevel.LOW);
+        assertThat(outcome.risk()).isEqualTo(RiskLevel.HIGH);
     }
 
     @Test

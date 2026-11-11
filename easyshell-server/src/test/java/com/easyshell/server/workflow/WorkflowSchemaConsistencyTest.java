@@ -11,6 +11,8 @@ import com.easyshell.server.repository.WorkflowNodeRunRepository;
 import com.easyshell.server.repository.WorkflowRepository;
 import com.easyshell.server.repository.WorkflowRunRepository;
 import com.easyshell.server.repository.WorkflowVersionRepository;
+import jakarta.persistence.EntityManagerFactory;
+import jakarta.persistence.Table;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -27,13 +29,15 @@ import java.sql.DriverManager;
 import java.sql.Statement;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * 实体 ↔ Flyway DDL 的逐字段一致性（设计 §5.4 / 复核 C-16 的 fail-fast 校验）。
  *
- * <p>正例：真实迁移后的 H2 库上，五个工作流实体与 DDL 零差异；上下文能正常起来、
+ * <p>正例：真实迁移后的 H2 库上，六个工作流实体与 DDL 零差异；上下文能正常起来、
  * 五个仓储可读可写（证明 Flyway 建出的表就是引擎要用的表）。</p>
  *
  * <p>负例（fail-fast 的证据）：迁移后人为制造四类漂移——DROP 列、DROP 唯一键、
@@ -58,6 +62,9 @@ class WorkflowSchemaConsistencyTest {
     private Flyway flyway;
 
     @Autowired
+    private EntityManagerFactory entityManagerFactory;
+
+    @Autowired
     private WorkflowRepository workflowRepository;
 
     @Autowired
@@ -73,7 +80,22 @@ class WorkflowSchemaConsistencyTest {
     private WorkflowApprovalRepository workflowApprovalRepository;
 
     @Test
-    @DisplayName("正例：迁移后的库上五个实体与 DDL 零差异，五个仓储可读可写")
+    @DisplayName("校验器清单覆盖全部工作流 JPA 实体")
+    void checkerEntityListMatchesWorkflowJpaEntities() throws Exception {
+        var field = WorkflowSchemaConsistencyChecker.class.getDeclaredField("WORKFLOW_ENTITIES");
+        field.setAccessible(true);
+        Set<?> checked = Set.copyOf((List<?>) field.get(null));
+        Set<Class<?>> mapped = entityManagerFactory.getMetamodel().getEntities().stream()
+                .map(entity -> entity.getJavaType())
+                .filter(type -> type.isAnnotationPresent(Table.class)
+                        && type.getAnnotation(Table.class).name().startsWith("workflow"))
+                .collect(Collectors.toSet());
+        assertThat(checked).isEqualTo(mapped);
+        assertThat(mapped).hasSize(6);
+    }
+
+    @Test
+    @DisplayName("正例：迁移后的库上六个实体与 DDL 零差异，五个仓储可读可写")
     void migratedSchema_matchesEntitiesAndRepositoriesWork() {
         assertThat(flyway.info().applied()).isNotEmpty();
 
@@ -179,6 +201,32 @@ class WorkflowSchemaConsistencyTest {
 
         assertThat(verifyOn(url))
                 .anyMatch(violation -> violation.contains("workflow_approval") && violation.contains("表不存在"));
+    }
+
+    @Test
+    @DisplayName("绑定表字段漂移和主键漂移均被检测")
+    void failsFastWhenBindingSchemaDrifts() throws Exception {
+        String url = freshMigratedSchema("drift-binding");
+        try (Connection connection = DriverManager.getConnection(url, "sa", "");
+             Statement statement = connection.createStatement()) {
+            statement.execute("alter table workflow_dispatch_approval_binding drop column dispatch_task_id");
+            statement.execute("alter table workflow_dispatch_approval_binding drop primary key");
+        }
+        assertThat(verifyOn(url))
+                .anyMatch(v -> v.contains("workflow_dispatch_approval_binding.dispatch_task_id") && v.contains("实体有、DDL 无"))
+                .anyMatch(v -> v.contains("workflow_dispatch_approval_binding") && v.contains("没有主键"));
+    }
+
+    @Test
+    @DisplayName("绑定表缺失不能被静默忽略")
+    void failsFastWhenBindingTableMissing() throws Exception {
+        String url = freshMigratedSchema("drift-binding-table");
+        try (Connection connection = DriverManager.getConnection(url, "sa", "");
+             Statement statement = connection.createStatement()) {
+            statement.execute("drop table workflow_dispatch_approval_binding");
+        }
+        assertThat(verifyOn(url))
+                .anyMatch(v -> v.contains("workflow_dispatch_approval_binding") && v.contains("表不存在"));
     }
 
     @Test

@@ -19,7 +19,7 @@ public interface AiSopTemplateRepository extends JpaRepository<AiSopTemplate, Lo
     /** Global SOPs (userId is null) + user-private SOPs */
     List<AiSopTemplate> findByUserIdIsNullOrUserId(Long userId);
 
-    Optional<AiSopTemplate> findByTitle(String title);
+    Optional<AiSopTemplate> findFirstByUserIdAndTitleOrderByIdAsc(Long userId, String title);
 
     Page<AiSopTemplate> findByEnabledTrue(Pageable pageable);
 

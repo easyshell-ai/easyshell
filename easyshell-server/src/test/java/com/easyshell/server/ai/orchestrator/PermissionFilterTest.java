@@ -23,8 +23,8 @@ class PermissionFilterTest {
     }
 
     private OrchestratorEngine createMinimalEngine() {
-        // 36 constructor arguments, all unused by filterToolsByPermissions
-        Object[] args = new Object[36];
+        // Constructor dependencies are unused by filterToolsByPermissions.
+        Object[] args = new Object[OrchestratorEngine.class.getConstructors()[0].getParameterCount()];
         return (OrchestratorEngine) createInstance(args);
     }
 

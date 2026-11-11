@@ -1,11 +1,14 @@
 package com.easyshell.server.controller;
 
 import com.easyshell.server.security.AuditUsers;
+import com.easyshell.server.common.exception.BusinessException;
 import com.easyshell.server.common.result.R;
 import com.easyshell.server.model.dto.FileRenameRequest;
 import com.easyshell.server.model.vo.FileInfoVO;
 import com.easyshell.server.service.AuditLogService;
 import com.easyshell.server.service.FileProxyService;
+import com.easyshell.server.service.HostAclService;
+import com.easyshell.server.repository.UserRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -31,6 +34,8 @@ public class FileProxyController {
 
     private final FileProxyService fileProxyService;
     private final AuditLogService auditLogService;
+    private final HostAclService hostAclService;
+    private final UserRepository users;
 
     @GetMapping
     @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
@@ -38,7 +43,7 @@ public class FileProxyController {
             @PathVariable String agentId,
             @RequestParam(defaultValue = "/") String path,
             Authentication auth, HttpServletRequest httpRequest) {
-        Long userId = (Long) auth.getPrincipal();
+        Long userId = requireAccess(auth, agentId);
         List<FileInfoVO> files = fileProxyService.listFiles(agentId, path);
         auditLogService.log(userId, AuditUsers.name(auth), "FILE_LIST", "FILE",
                 agentId, path, httpRequest.getRemoteAddr(), "success");
@@ -51,12 +56,25 @@ public class FileProxyController {
             @PathVariable String agentId,
             @RequestParam String path,
             Authentication auth, HttpServletRequest httpRequest) {
-        Long userId = (Long) auth.getPrincipal();
+        Long userId = requireAccess(auth, agentId);
+        long generation = requireGeneration(userId, agentId);
         try {
             ResponseEntity<StreamingResponseBody> response = fileProxyService.downloadFile(agentId, path);
             auditLogService.log(userId, AuditUsers.name(auth), "FILE_DOWNLOAD", "FILE",
                     agentId, path, httpRequest.getRemoteAddr(), "success");
-            return response;
+            StreamingResponseBody body = response.getBody();
+            if (body == null) return response;
+            return new ResponseEntity<>(output -> {
+                requireCurrentAdmin(userId);
+                try {
+                    if (!hostAclService.allowedForGeneration(userId, agentId, generation, HostAclService.Permission.TERMINAL)) {
+                        throw new BusinessException(403, "Access denied");
+                    }
+                } catch (RuntimeException ex) {
+                    throw new BusinessException(403, "Access denied");
+                }
+                body.writeTo(output);
+            }, response.getHeaders(), response.getStatusCode());
         } catch (Exception e) {
             auditLogService.log(userId, AuditUsers.name(auth), "FILE_DOWNLOAD", "FILE",
                     agentId, path, httpRequest.getRemoteAddr(), "failure");
@@ -71,7 +89,7 @@ public class FileProxyController {
             @RequestParam String path,
             @RequestParam("file") MultipartFile file,
             Authentication auth, HttpServletRequest httpRequest) {
-        Long userId = (Long) auth.getPrincipal();
+        Long userId = requireAccess(auth, agentId);
         try {
             fileProxyService.uploadFile(agentId, path, file);
         } catch (Exception e) {
@@ -90,7 +108,7 @@ public class FileProxyController {
             @PathVariable String agentId,
             @RequestParam String path,
             Authentication auth, HttpServletRequest httpRequest) {
-        Long userId = (Long) auth.getPrincipal();
+        Long userId = requireAccess(auth, agentId);
         try {
             fileProxyService.mkdir(agentId, path);
         } catch (Exception e) {
@@ -109,7 +127,7 @@ public class FileProxyController {
             @PathVariable String agentId,
             @RequestParam String path,
             Authentication auth, HttpServletRequest httpRequest) {
-        Long userId = (Long) auth.getPrincipal();
+        Long userId = requireAccess(auth, agentId);
         try {
             fileProxyService.delete(agentId, path);
         } catch (Exception e) {
@@ -128,7 +146,7 @@ public class FileProxyController {
             @PathVariable String agentId,
             @Valid @RequestBody FileRenameRequest renameRequest,
             Authentication auth, HttpServletRequest httpRequest) {
-        Long userId = (Long) auth.getPrincipal();
+        Long userId = requireAccess(auth, agentId);
         try {
             fileProxyService.rename(agentId, renameRequest.getOldPath(), renameRequest.getNewPath());
         } catch (Exception e) {
@@ -141,5 +159,35 @@ public class FileProxyController {
                 agentId, renameRequest.getOldPath() + " → " + renameRequest.getNewPath(),
                 httpRequest.getRemoteAddr(), "success");
         return R.ok();
+    }
+
+    private Long requireAccess(Authentication auth, String agentId) {
+        if (auth == null || !auth.isAuthenticated() || !(auth.getPrincipal() instanceof Long userId) || userId <= 0) {
+            throw new BusinessException(401, "Authentication required");
+        }
+        requireCurrentAdmin(userId);
+        requireGeneration(userId, agentId);
+        return userId;
+    }
+
+    private void requireCurrentAdmin(Long userId) {
+        try {
+            var user = users.findById(userId).orElse(null);
+            if (user == null || !Integer.valueOf(1).equals(user.getStatus())
+                    || !("admin".equals(user.getRole()) || "super_admin".equals(user.getRole()))) {
+                throw new BusinessException(403, "Access denied");
+            }
+        } catch (RuntimeException ex) {
+            throw new BusinessException(403, "Access denied");
+        }
+    }
+
+    private long requireGeneration(Long userId, String agentId) {
+        try {
+            return hostAclService.authorizedGeneration(userId, agentId, HostAclService.Permission.TERMINAL)
+                    .orElseThrow(() -> new BusinessException(403, "Access denied"));
+        } catch (RuntimeException ex) {
+            throw new BusinessException(403, "Access denied");
+        }
     }
 }

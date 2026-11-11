@@ -1,16 +1,27 @@
 package com.easyshell.server.websocket;
 
 import com.easyshell.server.config.WebSocketAuthInterceptor;
+import com.easyshell.server.ai.security.SensitiveDataFilter;
 import com.easyshell.server.model.entity.Workflow;
 import com.easyshell.server.model.entity.WorkflowRun;
+import com.easyshell.server.model.entity.User;
+import com.easyshell.server.repository.UserRepository;
 import com.easyshell.server.repository.WorkflowRepository;
 import com.easyshell.server.repository.WorkflowRunRepository;
 import com.easyshell.server.service.AuditLogService;
 import com.easyshell.server.workflow.engine.WorkflowEvent;
+import com.easyshell.server.workflow.engine.WorkflowEventBroadcaster;
+import com.easyshell.server.workflow.engine.NodeContext;
+import com.easyshell.server.workflow.model.WorkflowNode;
+import com.easyshell.server.workflow.service.WorkflowRunProvenanceService;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.web.socket.CloseStatus;
@@ -48,15 +59,21 @@ class WorkflowRunWebSocketHandlerTest {
     @Mock
     private WorkflowRunRepository runRepository;
     @Mock
+    private UserRepository userRepository;
+    @Mock
     private WorkflowRepository workflowRepository;
     @Mock
     private AuditLogService auditLogService;
+    @Mock
+    private WorkflowRunProvenanceService provenanceService;
 
     private WorkflowRunWebSocketHandler handler;
 
     @BeforeEach
     void setUp() {
-        handler = new WorkflowRunWebSocketHandler(runRepository, workflowRepository, auditLogService);
+        handler = new WorkflowRunWebSocketHandler(runRepository, workflowRepository, auditLogService, userRepository);
+        ReflectionTestUtils.setField(handler, "provenanceService", provenanceService);
+        lenient().when(provenanceService.canView(any(), any())).thenReturn(true);
     }
 
     private WorkflowRun runStartedBy(Long userId) {
@@ -77,6 +94,9 @@ class WorkflowRunWebSocketHandlerTest {
     }
 
     private WebSocketSession session(Long userId, String role) throws Exception {
+        if (userId != null) {
+            lenient().when(userRepository.findById(userId)).thenReturn(Optional.of(user(role, 1)));
+        }
         WebSocketSession session = org.mockito.Mockito.mock(WebSocketSession.class);
         Map<String, Object> attributes = new HashMap<>();
         if (userId != null) {
@@ -89,6 +109,157 @@ class WorkflowRunWebSocketHandlerTest {
         lenient().when(session.getUri()).thenReturn(new URI(PATH));
         lenient().when(session.isOpen()).thenReturn(true);
         return session;
+    }
+
+    private User user(String role, int status) {
+        User user = new User();
+        user.setRole(role);
+        user.setStatus(status);
+        return user;
+    }
+
+    @Test
+    void broadcasterMasksEventsAndNodeEmissionsAtRealWebSocketBoundary() throws Exception {
+        WorkflowRun run = runStartedBy(42L);
+        when(runRepository.findById(RUN_ID)).thenReturn(Optional.of(run));
+        WebSocketSession session = session(42L, "operator");
+        handler.afterConnectionEstablished(session);
+        WorkflowEventBroadcaster broadcaster = new WorkflowEventBroadcaster(handler, new SensitiveDataFilter());
+        broadcaster.accept(new WorkflowEvent("RUN_FAILED", RUN_ID, null, "password=secretvalue",
+                Map.of("secret", "payloadvalue"), Instant.now()));
+        WorkflowNode node = new WorkflowNode();
+        node.setKey("node1");
+        NodeContext context = new NodeContext(run, null, node, null, null, null, null, null,
+                false, broadcaster, null);
+        context.emit("NODE_STARTED", "token=nodevalue");
+
+        org.mockito.ArgumentCaptor<TextMessage> messages = org.mockito.ArgumentCaptor.forClass(TextMessage.class);
+        verify(session, org.mockito.Mockito.times(2)).sendMessage(messages.capture());
+        assertThat(messages.getAllValues().get(0).getPayload())
+                .contains("password=***", "RUN_FAILED").doesNotContain("secretvalue", "payloadvalue");
+        assertThat(messages.getAllValues().get(1).getPayload())
+                .contains("token=***", "node1").doesNotContain("nodevalue");
+    }
+
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(strings = {"unknown", "Viewer", "ADMIN", "super_Admin", " operator "})
+    void invalidDatabaseRoleRejectsOwnerOnConnect(String role) throws Exception {
+        WebSocketSession session = session(42L, "operator");
+        when(userRepository.findById(42L)).thenReturn(Optional.of(user(role, 1)));
+
+        handler.afterConnectionEstablished(session);
+        handler.broadcast(event("NODE_STARTED"));
+
+        verify(session).close(CloseStatus.POLICY_VIOLATION);
+        verify(session, never()).sendMessage(any());
+        verify(runRepository, never()).findById(any());
+        verify(auditLogService).logSync(eq(42L), eq("SYSTEM"), eq("WS_ACCESS_DENIED"),
+                eq("workflow_run"), eq(RUN_ID), any(), eq(null), eq("denied"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"unknown", "Operator"})
+    void invalidDatabaseRoleRevokesOwnerBeforeBroadcast(String role) throws Exception {
+        when(runRepository.findById(RUN_ID)).thenReturn(Optional.of(runStartedBy(42L)));
+        WebSocketSession session = session(42L, "operator");
+        handler.afterConnectionEstablished(session);
+        when(userRepository.findById(42L)).thenReturn(Optional.of(user(role, 1)));
+
+        handler.broadcast(event("NODE_STARTED"));
+
+        verify(session, never()).sendMessage(any());
+        verify(session).close(CloseStatus.POLICY_VIOLATION);
+        verify(auditLogService).logSync(eq(42L), eq("SYSTEM"), eq("WS_ACCESS_DENIED"),
+                eq("workflow_run"), eq(RUN_ID), any(), eq(null), eq("denied"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"unknown", "Operator"})
+    void invalidDatabaseRoleRevokesOwnerBeforePong(String role) throws Exception {
+        when(runRepository.findById(RUN_ID)).thenReturn(Optional.of(runStartedBy(42L)));
+        WebSocketSession session = session(42L, "operator");
+        handler.afterConnectionEstablished(session);
+        when(userRepository.findById(42L)).thenReturn(Optional.of(user(role, 1)));
+
+        handler.handleTextMessage(session, new TextMessage("PING"));
+
+        verify(session, never()).sendMessage(any());
+        verify(session).close(CloseStatus.POLICY_VIOLATION);
+        verify(auditLogService).logSync(eq(42L), eq("SYSTEM"), eq("WS_ACCESS_DENIED"),
+                eq("workflow_run"), eq(RUN_ID), any(), eq(null), eq("denied"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"viewer", "operator", "admin", "super_admin"})
+    void validDatabaseRolesAllowOwner(String role) throws Exception {
+        when(runRepository.findById(RUN_ID)).thenReturn(Optional.of(runStartedBy(42L)));
+        WebSocketSession session = session(42L, role);
+
+        handler.afterConnectionEstablished(session);
+        handler.handleTextMessage(session, new TextMessage("PING"));
+
+        verify(session, never()).close(any());
+        verify(session).sendMessage(org.mockito.ArgumentMatchers.argThat(
+                (TextMessage m) -> "PONG".equals(m.getPayload())));
+    }
+
+    @Test
+    void demotedAdminCannotReceiveOthersEvents() throws Exception {
+        when(runRepository.findById(RUN_ID)).thenReturn(Optional.of(runStartedBy(42L)));
+        when(workflowRepository.findById(WORKFLOW_ID)).thenReturn(Optional.of(workflowOwnedBy(42L)));
+        WebSocketSession session = session(7L, "admin");
+        handler.afterConnectionEstablished(session);
+        when(userRepository.findById(7L)).thenReturn(Optional.of(user("operator", 1)));
+
+        handler.broadcast(event("NODE_STARTED"));
+        verify(session, never()).sendMessage(any());
+        verify(session).close(CloseStatus.POLICY_VIOLATION);
+        verify(auditLogService).logSync(eq(7L), eq("SYSTEM"), eq("WS_ACCESS_DENIED"),
+                eq("workflow_run"), eq(RUN_ID), any(), eq(null), eq("denied"));
+    }
+
+    @Test
+    void disabledUserCannotReceivePong() throws Exception {
+        when(runRepository.findById(RUN_ID)).thenReturn(Optional.of(runStartedBy(42L)));
+        WebSocketSession session = session(42L, "operator");
+        handler.afterConnectionEstablished(session);
+        when(userRepository.findById(42L)).thenReturn(Optional.of(user("operator", 0)));
+
+        handler.handleTextMessage(session, new TextMessage("PING"));
+        verify(session, never()).sendMessage(any());
+        verify(session).close(CloseStatus.POLICY_VIOLATION);
+    }
+
+    @Test
+    void deletedUserAndDatabaseFailureCloseEstablishedConnections() throws Exception {
+        when(runRepository.findById(RUN_ID)).thenReturn(Optional.of(runStartedBy(42L)));
+        WebSocketSession deleted = session(42L, "operator");
+        handler.afterConnectionEstablished(deleted);
+        when(userRepository.findById(42L)).thenReturn(Optional.empty());
+        handler.broadcast(event("NODE_STARTED"));
+        verify(deleted, never()).sendMessage(any());
+        verify(deleted).close(CloseStatus.POLICY_VIOLATION);
+
+        WebSocketSession failed = session(42L, "operator");
+        handler.afterConnectionEstablished(failed);
+        when(userRepository.findById(42L)).thenThrow(new RuntimeException("db down"));
+        handler.handleTextMessage(failed, new TextMessage("PING"));
+        verify(failed, never()).sendMessage(any());
+        verify(failed).close(CloseStatus.POLICY_VIOLATION);
+    }
+
+    @Test
+    void promotedDatabaseRoleDoesNotElevateExistingSession() throws Exception {
+        when(runRepository.findById(RUN_ID)).thenReturn(Optional.of(runStartedBy(7L)));
+        WebSocketSession session = session(7L, "operator");
+        handler.afterConnectionEstablished(session);
+        when(userRepository.findById(7L)).thenReturn(Optional.of(user("admin", 1)));
+        when(runRepository.findById(RUN_ID)).thenReturn(Optional.of(runStartedBy(42L)));
+        when(workflowRepository.findById(WORKFLOW_ID)).thenReturn(Optional.of(workflowOwnedBy(42L)));
+        handler.broadcast(event("NODE_STARTED"));
+        verify(session, never()).sendMessage(any());
+        verify(session).close(CloseStatus.POLICY_VIOLATION);
     }
 
     private WorkflowEvent event(String type) {
@@ -137,6 +308,28 @@ class WorkflowRunWebSocketHandlerTest {
         handler.broadcast(event("RUN_SUCCEEDED"));
         verify(admin).sendMessage(org.mockito.ArgumentMatchers.argThat(
                 (TextMessage m) -> m.getPayload().contains("RUN_SUCCEEDED")));
+    }
+
+    @Test
+    void revokedProvenanceClosesBeforeSending() throws Exception {
+        when(runRepository.findById(RUN_ID)).thenReturn(Optional.of(runStartedBy(42L)));
+        when(provenanceService.canView(42L, RUN_ID)).thenReturn(true, false);
+        WebSocketSession session = session(42L, "operator");
+        handler.afterConnectionEstablished(session);
+        handler.broadcast(event("NODE_SUCCEEDED"));
+        verify(session, never()).sendMessage(any());
+        verify(session).close(CloseStatus.POLICY_VIOLATION);
+        verify(auditLogService).logSync(eq(42L), eq("SYSTEM"), eq("WS_ACCESS_DENIED"),
+                eq("workflow_run"), eq(RUN_ID), any(), eq(null), eq("denied"));
+    }
+
+    @Test
+    void unknownProvenanceRejectsAdmin() throws Exception {
+        when(runRepository.findById(RUN_ID)).thenReturn(Optional.of(runStartedBy(42L)));
+        when(provenanceService.canView(7L, RUN_ID)).thenReturn(false);
+        WebSocketSession session = session(7L, "admin");
+        handler.afterConnectionEstablished(session);
+        verify(session).close(CloseStatus.POLICY_VIOLATION);
     }
 
     @Test

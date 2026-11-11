@@ -265,4 +265,51 @@ class VariableStoreTest {
         assertThat(output.json()).isEqualTo("{}");
         assertThat(output.truncated()).isFalse();
     }
+
+    @Test
+    void abandonedWriterCannotChangeMasterAfterLaterAttemptCommits() throws Exception {
+        VariableStore abandoned = new VariableStore();
+        VariableStore successful = new VariableStore();
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(1);
+        Thread late = new Thread(() -> {
+            try {
+                release.await();
+                abandoned.putNodeOutput("end", "result", "late");
+                abandoned.setRunOutput(Map.of("value", "late"));
+                abandoned.addWarning("late warning");
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } finally {
+                done.countDown();
+            }
+        });
+        late.start();
+        try {
+            successful.putNodeOutput("end", "result", Map.of("value", "good"));
+            successful.setRunOutput(Map.of("value", "good"));
+            store.mergeAttempt(successful, "end");
+            release.countDown();
+            assertThat(done.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(store.resolve("result.value")).contains("good");
+            assertThat(store.runOutput()).isEqualTo(Map.of("value", "good"));
+            assertThat(store.drainWarnings()).isEmpty();
+        } finally {
+            release.countDown();
+            late.join(5000);
+        }
+    }
+
+    @Test
+    void snapshotWarningsAreIsolatedAndMergedOutputKeepsPreviewMetadata() {
+        VariableStore view = store.createSnapshot(Set.of());
+        view.addWarning("isolated");
+        assertThat(store.drainWarnings()).isEmpty();
+        VariableStore attempt = new VariableStore();
+        VariableStore.StoredOutput output = attempt.putNodeOutput("n", "alias", "x".repeat(20000));
+        store.mergeAttempt(attempt, "n");
+        assertThat(store.nodeOutput("n")).isEqualTo(output);
+        assertThat(store.resolve("alias")).contains(output.value());
+        assertThat(attempt.drainWarnings()).isNotEmpty();
+    }
 }

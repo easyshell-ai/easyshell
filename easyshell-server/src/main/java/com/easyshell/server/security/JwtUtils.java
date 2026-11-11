@@ -87,6 +87,22 @@ public class JwtUtils {
                 .compact();
     }
 
+    /** Only trusted issuance services should call this after verifying the agent's proof. */
+    public String generateBoundAgentToken(String agentId, long generation) {
+        if (agentId == null || agentId.isBlank() || agentId.length() > 64 || generation <= 0) {
+            throw new IllegalArgumentException("Invalid bound agent identity");
+        }
+        return Jwts.builder()
+                .subject(agentId)
+                .claim("type", AgentCredentialGenerationValidator.TOKEN_TYPE_BOUND_AGENT)
+                .claim(AgentCredentialGenerationValidator.GENERATION_CLAIM, generation)
+                .id(UUID.randomUUID().toString())
+                .issuedAt(new Date())
+                .expiration(new Date(System.currentTimeMillis() + agentTokenExpire))
+                .signWith(getSigningKey())
+                .compact();
+    }
+
     public Claims parseToken(String token) {
         return Jwts.parser()
                 .verifyWith(getSigningKey())

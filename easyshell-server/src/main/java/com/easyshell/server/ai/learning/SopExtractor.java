@@ -2,9 +2,11 @@ package com.easyshell.server.ai.learning;
 
 import com.easyshell.server.ai.config.AgenticConfigService;
 import com.easyshell.server.ai.model.entity.AiIterationMessage;
+import com.easyshell.server.ai.model.entity.AiChatSession;
 import com.easyshell.server.ai.model.entity.AiSessionSummary;
 import com.easyshell.server.ai.model.entity.AiSopTemplate;
 import com.easyshell.server.ai.repository.AiIterationMessageRepository;
+import com.easyshell.server.ai.repository.AiChatSessionRepository;
 import com.easyshell.server.ai.repository.AiSessionSummaryRepository;
 import com.easyshell.server.ai.repository.AiSopTemplateRepository;
 import com.easyshell.server.ai.service.ChatModelFactory;
@@ -35,6 +37,7 @@ import java.util.regex.Pattern;
 public class SopExtractor {
 
     private final AiIterationMessageRepository iterationMessageRepository;
+    private final AiChatSessionRepository chatSessionRepository;
     private final AiSessionSummaryRepository sessionSummaryRepository;
     private final AiSopTemplateRepository sopTemplateRepository;
     private final ChatModelFactory chatModelFactory;
@@ -85,6 +88,12 @@ public class SopExtractor {
 
             AiSessionSummary summary = summaryOpt.get();
             if (!"SUCCESS".equals(summary.getOutcome())) return;
+            Optional<AiChatSession> sessionOpt = chatSessionRepository.findById(sessionId);
+            Long ownerId = sessionOpt.map(AiChatSession::getUserId).orElse(null);
+            if (ownerId == null || ownerId <= 0 || !ownerId.equals(summary.getUserId())) {
+                log.warn("Skipping SOP extraction for session {} with missing or inconsistent owner", sessionId);
+                return;
+            }
 
             List<AiIterationMessage> iterations = iterationMessageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
             if (iterations.size() < 2) return;
@@ -133,9 +142,14 @@ public class SopExtractor {
             String title = node.has("title") ? node.get("title").asText() : null;
             if (title == null || title.isBlank()) return;
 
-            Optional<AiSopTemplate> existing = sopTemplateRepository.findByTitle(title);
+            // Without a database unique constraint, concurrent extractions may create duplicates.
+            Optional<AiSopTemplate> existing = sopTemplateRepository.findFirstByUserIdAndTitleOrderByIdAsc(ownerId, title);
             if (existing.isPresent()) {
                 AiSopTemplate existingSop = existing.get();
+                if (!ownerId.equals(existingSop.getUserId())) {
+                    log.warn("Skipping SOP extraction for session {}: owner mismatch", sessionId);
+                    return;
+                }
                 existingSop.setTotalCount(existingSop.getTotalCount() + 1);
                 existingSop.setSuccessCount(existingSop.getSuccessCount() + 1);
                 existingSop.setConfidence(
@@ -167,7 +181,7 @@ public class SopExtractor {
                     .totalCount(1)
                     .confidence(1.0)
                     .sourceSessionIds(sessionId)
-                    .userId(summary.getUserId())
+                    .userId(ownerId)
                     .enabled(true)
                     .build();
 

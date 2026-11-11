@@ -3,6 +3,10 @@ package com.easyshell.server.repository;
 import com.easyshell.server.model.entity.Script;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import jakarta.persistence.LockModeType;
 
 import java.util.List;
 import java.util.Optional;
@@ -17,4 +21,8 @@ public interface ScriptRepository extends JpaRepository<Script, Long> {
     Optional<Script> findByName(String name);
 
     boolean existsByName(String name);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select s from Script s where s.id = :id")
+    Optional<Script> findByIdForSnapshot(@Param("id") Long id);
 }

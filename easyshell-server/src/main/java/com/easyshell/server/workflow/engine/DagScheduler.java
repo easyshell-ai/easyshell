@@ -2,6 +2,7 @@ package com.easyshell.server.workflow.engine;
 
 import com.easyshell.server.workflow.model.WorkflowDefinition;
 import com.easyshell.server.workflow.model.WorkflowNode;
+import com.easyshell.server.workflow.model.NodeType;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -66,9 +67,7 @@ public final class DagScheduler {
             }
             if ("failed".equals(status) || "timeout".equals(status)) {
                 // 重试额度未尽且退避已到期 → 再就绪
-                int attempt = row.getAttempt() == null ? 1 : row.getAttempt();
-                int allowed = node.retryMaxOrDefault(0) + 1;
-                if (attempt < allowed && retryDue.test(node)) {
+                if (hasRetryRemaining(node, row) && retryDue.test(node)) {
                     ready.add(node);
                 }
                 continue;
@@ -102,12 +101,30 @@ public final class DagScheduler {
             }
             String status = row.getStatus();
             if ("failed".equals(status) || "timeout".equals(status)) {
-                int attempt = row.getAttempt() == null ? 1 : row.getAttempt();
-                if (attempt < node.retryMaxOrDefault(0) + 1) {
+                if (hasRetryRemaining(node, row)) {
                     return true;
                 }
             }
         }
         return false;
+    }
+
+    /** A timed-out external call may already be accepted; no blind automatic replay. */
+    public static boolean automaticRetryAllowed(WorkflowNode node) {
+        return node.nodeType() != NodeType.SCRIPT_EXEC && node.nodeType() != NodeType.NOTIFY
+                && node.nodeType() != NodeType.CODE;
+    }
+
+    /** The persisted error message starts with the error code followed by a colon. */
+    public static boolean hasRetryRemaining(WorkflowNode node,
+            com.easyshell.server.model.entity.WorkflowNodeRun row) {
+        if (!("failed".equals(row.getStatus()) || "timeout".equals(row.getStatus()))) {
+            return false;
+        }
+        String error = row.getErrorMessage();
+        int attempt = row.getAttempt() == null ? 1 : row.getAttempt();
+        return automaticRetryAllowed(node)
+                && (error == null || !error.startsWith("WAITING_UNSUPPORTED:"))
+                && attempt < node.retryMaxOrDefault(0) + 1;
     }
 }

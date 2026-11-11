@@ -112,8 +112,10 @@ public class AiExecutionService {
         dispatchReq.setTimeoutSeconds(task.getTimeoutSeconds());
         dispatchReq.setAgentIds(parseAgentIds(task.getTargetAgentIds()));
 
-        Task executedTask = taskService.createAndDispatch(dispatchReq, userId,
+        Task executedTask = taskService.createAndDispatch(dispatchReq, task.getCreatedBy(),
                 DispatchAuthority.HUMAN_APPROVED, taskId);
+        auditLogService.logSync(userId, "USER", "AI_EXECUTION_APPROVE", "task", taskId,
+                "applicant=" + task.getCreatedBy() + ", dispatchedTask=" + executedTask.getId(), null, "success");
         log.info("Approved AI task {} -> dispatched as {} by user {}", taskId, executedTask.getId(), userId);
     }
 

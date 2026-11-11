@@ -14,6 +14,7 @@ import com.easyshell.server.service.AuditLogService;
 import com.easyshell.server.service.ClusterService;
 import com.easyshell.server.service.DispatchAuthority;
 import com.easyshell.server.service.DispatchEvidenceVerifier;
+import com.easyshell.server.service.HostAclService;
 import com.easyshell.server.service.TagService;
 import com.easyshell.server.websocket.AgentWebSocketHandler;
 import com.easyshell.server.websocket.TaskLogWebSocketHandler;
@@ -44,6 +45,7 @@ import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -89,6 +91,28 @@ class TaskServiceImplRiskGateTest {
     @MockitoBean
     private AuditLogService auditLogService;
 
+    @MockitoBean
+    private HostAclService hostAclService;
+
+    @MockitoBean private com.easyshell.server.service.HostIdentityService hostIdentityService;
+    @MockitoBean private com.easyshell.server.repository.TaskTargetSnapshotRepository targetSnapshots;
+    @MockitoBean private com.easyshell.server.security.ScriptAccess scriptAccess;
+
+    @Test
+    void scriptIdIsAuthorizedBeforeAmbiguityOrRiskEvaluation() {
+        var request = new TaskCreateRequest();
+        request.setScriptId(17L);
+        request.setScriptContent("echo forged");
+        when(scriptAccess.requireRead(42L, 17L)).thenThrow(new BusinessException(404, "Script not found"));
+        assertThatThrownBy(() -> taskService.createAndDispatch(request, 42L))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getCode()).isEqualTo(404));
+        org.mockito.Mockito.doReturn(new com.easyshell.server.model.entity.Script()).when(scriptAccess).requireRead(42L, 17L);
+        assertThatThrownBy(() -> taskService.createAndDispatch(request, 42L))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getCode()).isEqualTo(400));
+    }
+
     /**
      * 证据校验器 mock：只认 USER_SCHEDULED_TASK，其余授权值（如 BUILTIN_READONLY_SCRIPT）
      * 因"没有校验器"而 fail-closed —— 与生产里漏注册校验器的行为一致。
@@ -112,7 +136,63 @@ class TaskServiceImplRiskGateTest {
                 .thenReturn(Collections.emptyList());
         riskEngine = new CommandRiskEngine(configService);
         lenient().when(agentWebSocketHandler.isAgentConnected(anyString())).thenReturn(true);
+        lenient().when(hostAclService.allowed(any(), anyString(), eq(HostAclService.Permission.EXECUTE))).thenReturn(true);
+        lenient().when(hostIdentityService.lock(anyString())).thenAnswer(inv ->
+                new com.easyshell.server.service.HostIdentityService.Identity(inv.getArgument(0), 1L, true));
+        lenient().when(hostAclService.allowedForGeneration(any(), anyString(), org.mockito.ArgumentMatchers.anyLong(), eq(HostAclService.Permission.EXECUTE))).thenReturn(true);
         lenient().when(agentWebSocketHandler.dispatchJob(any(), any(), any(), anyInt())).thenReturn(true);
+    }
+
+    @Test
+    void mixedTargetsDenyBeforeAnyTaskOrJobIsWritten() {
+        onlineAgent("ag-gate");
+        TaskCreateRequest request = request("echo hi");
+        request.setClusterIds(List.of(1L));
+        request.setTagIds(List.of(2L));
+        when(clusterService.getAgentIdsByClusterIds(any())).thenReturn(List.of("ag-gate", "cluster-host"));
+        when(tagService.getAgentIdsByTagIds(any())).thenReturn(List.of("tag-host"));
+        onlineAgent("cluster-host");
+        onlineAgent("tag-host");
+        lenient().when(hostAclService.allowedForGeneration(42L, "tag-host", 1L, HostAclService.Permission.EXECUTE)).thenReturn(false);
+        assertThatThrownBy(() -> taskService.createAndDispatch(request, 42L)).isInstanceOf(BusinessException.class);
+        assertThat(taskRepository.count()).isZero();
+        assertThat(jobRepository.count()).isZero();
+    }
+
+    @Test
+    void evidenceIsCheckedOnlyAfterEveryTargetGenerationIsLockedAndAuthorized() {
+        onlineAgent("ag-gate");
+        onlineAgent("z-host");
+        TaskCreateRequest request = request("rm /tmp/old.log");
+        request.setAgentIds(List.of("z-host", "ag-gate"));
+        when(evidenceVerifier.supports()).thenReturn(DispatchAuthority.USER_SCHEDULED_TASK);
+        when(evidenceVerifier.verify("7", "rm /tmp/old.log", 42L)).thenReturn(null);
+
+        assertThatThrownBy(() -> taskService.createAndDispatch(request, 42L,
+                DispatchAuthority.USER_SCHEDULED_TASK, "7"))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getCode()).isEqualTo(449));
+
+        var order = org.mockito.Mockito.inOrder(hostIdentityService, hostAclService, evidenceVerifier);
+        order.verify(hostIdentityService).lock("ag-gate");
+        order.verify(hostAclService).allowedForGeneration(42L, "ag-gate", 1L, HostAclService.Permission.EXECUTE);
+        order.verify(hostIdentityService).lock("z-host");
+        order.verify(hostAclService).allowedForGeneration(42L, "z-host", 1L, HostAclService.Permission.EXECUTE);
+        order.verify(evidenceVerifier).verify("7", "rm /tmp/old.log", 42L);
+        assertThat(taskRepository.count()).isZero();
+        assertThat(jobRepository.count()).isZero();
+    }
+
+    @Test
+    void missingIdentityAndAclFailureDenyBeforeWrites() {
+        onlineAgent("ag-gate");
+        TaskCreateRequest request = request("echo hi");
+        assertThatThrownBy(() -> taskService.createAndDispatch(request, null)).isInstanceOf(BusinessException.class);
+        when(hostAclService.allowedForGeneration(42L, "ag-gate", 1L, HostAclService.Permission.EXECUTE))
+                .thenThrow(new IllegalStateException("database unavailable"));
+        assertThatThrownBy(() -> taskService.createAndDispatch(request, 42L)).isInstanceOf(IllegalStateException.class);
+        assertThat(taskRepository.count()).isZero();
+        assertThat(jobRepository.count()).isZero();
     }
 
     private Agent onlineAgent(String id) {
@@ -288,19 +368,20 @@ class TaskServiceImplRiskGateTest {
     }
 
     @Test
-    @DisplayName("HUMAN_APPROVED：审批通过的任务行 + 脚本一致 → 放行，并写豁免审计")
-    void humanApproved_withApprovedTask_passes() {
+    @DisplayName("HUMAN_APPROVED：旧审批任务未绑定派发目标 → 449")
+    void humanApproved_withApprovedTask_failClosed() {
         onlineAgent("ag-gate");
         String script = "systemctl restart nginx";
         Task approved = approvedTask("task_appr_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8),
                 script, 42L);
 
-        Task created = taskService.createAndDispatch(request(script), 42L,
+        BusinessException ex = catchDispatch(request(script), 42L,
                 DispatchAuthority.HUMAN_APPROVED, approved.getId());
 
-        assertThat(created.getId()).startsWith("task_");
-        verify(auditLogService).logSync(eq(42L), any(), eq("SCRIPT_DISPATCH"), eq("task"), isNull(),
-                contains("authority=HUMAN_APPROVED"), isNull(), eq("success"));
+        assertThat(ex.getCode()).isEqualTo(449);
+        assertThat(taskRepository.count()).isEqualTo(1);
+        verify(auditLogService, never()).logSync(eq(42L), any(), eq("SCRIPT_DISPATCH"), any(), any(),
+                any(), any(), eq("success"));
     }
 
     @Test
@@ -326,15 +407,29 @@ class TaskServiceImplRiskGateTest {
     }
 
     @Test
-    @DisplayName("HUMAN_APPROVED 是唯一能放过 BANNED 的授权（人工审批的 rm -rf / 仍放行）")
-    void humanApproved_bannedScript_passes() {
+    @DisplayName("HUMAN_APPROVED：旧审批任务不能豁免 BANNED")
+    void humanApproved_bannedScript_failClosed() {
         onlineAgent("ag-gate");
         Task approved = approvedTask("task_appr_banned", "rm -rf /", 42L);
 
-        Task created = taskService.createAndDispatch(request("rm -rf /"), 42L,
+        BusinessException ex = catchDispatch(request("rm -rf /"), 42L,
                 DispatchAuthority.HUMAN_APPROVED, approved.getId());
 
-        assertThat(created.getId()).startsWith("task_");
+        assertThat(ex.getCode()).isEqualTo(449);
+        assertThat(taskRepository.count()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("HUMAN_APPROVED：LOW 也不能使用未绑定的旧审批证据")
+    void humanApproved_lowScriptWithLegacyEvidence_failClosed() {
+        onlineAgent("ag-gate");
+        Task approved = approvedTask("task_appr_low", "echo hi", 42L);
+
+        BusinessException ex = catchDispatch(request("echo hi"), 42L,
+                DispatchAuthority.HUMAN_APPROVED, approved.getId());
+
+        assertThat(ex.getCode()).isEqualTo(449);
+        assertThat(taskRepository.count()).isEqualTo(1);
     }
 
     @Test

@@ -41,6 +41,21 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class VariableStore implements VariableResolver {
 
+    // A pre-created public handle stays stable while the complete recovered state is
+    // published in one volatile write. Candidate stores are never themselves handles.
+    private volatile VariableStore initializedState;
+
+    boolean isInitialized() {
+        return initializedState != null;
+    }
+
+    void publishInitialized(VariableStore candidate) {
+        if (candidate == this || candidate.initializedState != null) {
+            throw new IllegalArgumentException("invalid initialization candidate");
+        }
+        initializedState = candidate;
+    }
+
     /** 标量内联阈值（UTF-8 字节，§2.10） */
     public static final long INLINE_THRESHOLD = 8192L;
 
@@ -79,12 +94,6 @@ public class VariableStore implements VariableResolver {
         this.warningLock = new Object();
     }
 
-    /** 快照共享 warning 通道：读视图里执行体记的 warning 仍归 master 的 node_run */
-    private VariableStore(List<String> warnings, Object warningLock) {
-        this.warnings = warnings;
-        this.warningLock = warningLock;
-    }
-
     /** 节点输出的落库形态 */
     public record StoredOutput(String nodeKey, String json, Object value, boolean truncated,
                                long sizeBytes, String sha256, String previewSha256) {
@@ -99,12 +108,16 @@ public class VariableStore implements VariableResolver {
     // ==================================================================
 
     public void putInput(String name, Object value) {
+        VariableStore state = initializedState;
+        if (state != null) { state.putInput(name, value); return; }
         if (value != null) {
             scalars.put("run.input." + name, value);
         }
     }
 
     public void putRunMetadata(String key, Object value) {
+        VariableStore state = initializedState;
+        if (state != null) { state.putRunMetadata(key, value); return; }
         if (key != null && value != null) {
             runMetadata.put(key, value);
         }
@@ -117,6 +130,8 @@ public class VariableStore implements VariableResolver {
      * {@link #RUN_OUTPUT_MAX_BYTES} 时写入一个合法对象并记 warning，保证 API 永远能解析成对象。</p>
      */
     public void setRunOutput(Object value) {
+        VariableStore state = initializedState;
+        if (state != null) { state.setRunOutput(value); return; }
         if (value == null) {
             return;
         }
@@ -135,11 +150,15 @@ public class VariableStore implements VariableResolver {
     }
 
     public Object runOutput() {
+        VariableStore state = initializedState;
+        if (state != null) return state.runOutput();
         return runOutput.get();
     }
 
     /** 记录节点输出（标量/引用通道的唯一入口，负责截断与指纹） */
     public StoredOutput putNodeOutput(String nodeKey, String outputVar, Object value) {
+        VariableStore state = initializedState;
+        if (state != null) return state.putNodeOutput(nodeKey, outputVar, value);
         String json = toJson(value);
         // 计量口径（§2.10）：标量字符串按原文 UTF-8 字节数，结构化值按 JSON 编码字节数
         long sizeBytes = value instanceof String text
@@ -185,6 +204,8 @@ public class VariableStore implements VariableResolver {
     }
 
     public void putNodeStatus(String nodeKey, String status, Long durationMs, Integer attempt) {
+        VariableStore state = initializedState;
+        if (state != null) { state.putNodeStatus(nodeKey, status, durationMs, attempt); return; }
         if (status != null) {
             nodeStatuses.put(nodeKey, status);
         }
@@ -197,6 +218,8 @@ public class VariableStore implements VariableResolver {
     }
 
     public StoredOutput nodeOutput(String nodeKey) {
+        VariableStore state = initializedState;
+        if (state != null) return state.nodeOutput(nodeKey);
         return nodeOutputs.get(nodeKey);
     }
 
@@ -206,6 +229,8 @@ public class VariableStore implements VariableResolver {
 
     @Override
     public Optional<Object> resolve(String path) {
+        VariableStore state = initializedState;
+        if (state != null) return state.resolve(path);
         if (path == null || path.isBlank()) {
             return Optional.empty();
         }
@@ -279,7 +304,9 @@ public class VariableStore implements VariableResolver {
      * 于是"读到自己/同波节点/非祖先节点"在运行期结构上不可能。
      */
     public VariableStore createSnapshot(java.util.Set<String> ancestorKeys) {
-        VariableStore snapshot = new VariableStore(this.warnings, this.warningLock);
+        VariableStore state = initializedState;
+        if (state != null) return state.createSnapshot(ancestorKeys);
+        VariableStore snapshot = new VariableStore();
         this.scalars.forEach((key, value) -> {
             if (key.startsWith("run.input.") || key.startsWith("nodes.")) {
                 String nodeKey = key.startsWith("nodes.") ? key.substring(6).split("\\.")[0] : null;
@@ -311,8 +338,38 @@ public class VariableStore implements VariableResolver {
         return snapshot;
     }
 
+    /** 仅在成功 attempt 的终态事务提交后调用；不重新序列化 preview。 */
+    synchronized void mergeAttempt(VariableStore attempt, String nodeKey) {
+        VariableStore state = initializedState;
+        if (state != null) { state.mergeAttempt(attempt, nodeKey); return; }
+        StoredOutput output = attempt.nodeOutputs.get(nodeKey);
+        if (output != null) {
+            nodeOutputs.put(nodeKey, output);
+            if (output.value() != null) {
+                scalars.put("nodes." + nodeKey + ".output", output.value());
+            }
+            attempt.outputVarWriters.forEach((alias, writer) -> {
+                if (nodeKey.equals(writer)) {
+                    String previous = outputVarWriters.put(alias, writer);
+                    if (previous != null && !previous.equals(writer)) {
+                        addWarning("outputVar '" + alias + "' 出现并发写者（" + previous + " / " + writer
+                                + "），M1 取后写者；fan-in 合并策略在 M2");
+                    }
+                    if (output.value() != null) {
+                        scalars.put(alias, output.value());
+                    }
+                }
+            });
+        }
+        if (attempt.runOutput() != null) {
+            runOutput.set(attempt.runOutput());
+        }
+    }
+
     /** 波末全量快照（落 workflow_run.variables_json） */
     public Snapshot snapshot() {
+        VariableStore state = initializedState;
+        if (state != null) return state.snapshot();
         Map<String, Object> all = new LinkedHashMap<>();
         all.putAll(runMetadata);
         scalars.forEach((key, value) -> all.put(key, value));
@@ -337,6 +394,8 @@ public class VariableStore implements VariableResolver {
     // ==================================================================
 
     public void addWarning(String warning) {
+        VariableStore state = initializedState;
+        if (state != null) { state.addWarning(warning); return; }
         synchronized (warningLock) {
             if (warnings.size() < 32) {
                 warnings.add(warning);
@@ -346,6 +405,8 @@ public class VariableStore implements VariableResolver {
 
     /** 取出并清空 warning（节点结束时合并进 node_run.warning_message） */
     public List<String> drainWarnings() {
+        VariableStore state = initializedState;
+        if (state != null) return state.drainWarnings();
         synchronized (warningLock) {
             List<String> copy = new ArrayList<>(warnings);
             warnings.clear();

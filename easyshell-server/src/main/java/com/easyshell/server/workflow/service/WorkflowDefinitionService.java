@@ -7,9 +7,11 @@ import com.easyshell.server.common.exception.WorkflowValidationFailedException;
 import com.easyshell.server.common.exception.WorkflowVersionConflictException;
 import com.easyshell.server.model.dto.WorkflowCreateRequest;
 import com.easyshell.server.model.dto.WorkflowDraftSaveRequest;
+import com.easyshell.server.model.dto.WorkflowPublishRequest;
 import com.easyshell.server.model.dto.WorkflowUpdateRequest;
 import com.easyshell.server.model.entity.Workflow;
 import com.easyshell.server.model.entity.WorkflowVersion;
+import com.easyshell.server.model.entity.Script;
 import com.easyshell.server.model.vo.WorkflowDetailVO;
 import com.easyshell.server.model.vo.WorkflowValidateResultVO;
 import com.easyshell.server.model.vo.WorkflowVersionConflictVO;
@@ -17,6 +19,7 @@ import com.easyshell.server.model.vo.WorkflowVersionDetailVO;
 import com.easyshell.server.model.vo.WorkflowVersionVO;
 import com.easyshell.server.repository.WorkflowRepository;
 import com.easyshell.server.repository.WorkflowVersionRepository;
+import com.easyshell.server.security.ScriptAccess;
 import com.easyshell.server.security.AuditUsers;
 import com.easyshell.server.service.AuditLogService;
 import com.easyshell.server.workflow.engine.NodeExecutor;
@@ -41,11 +44,13 @@ import java.util.HexFormat;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeSet;
 
 /**
  * 工作流定义与版本服务（§6.1 的定义侧端点：新建 / 元信息 / 软删 / 版本 / 草稿 / 校验 / 发布）。
@@ -67,6 +72,7 @@ public class WorkflowDefinitionService {
 
     private final WorkflowRepository workflowRepository;
     private final WorkflowVersionRepository versionRepository;
+    private final ScriptAccess scriptAccess;
     private final DagValidator dagValidator;
     private final NodeExecutorRegistry nodeExecutorRegistry;
     private final CommandRiskEngine riskEngine;
@@ -78,6 +84,7 @@ public class WorkflowDefinitionService {
 
     public WorkflowDefinitionService(WorkflowRepository workflowRepository,
                                      WorkflowVersionRepository versionRepository,
+                                     ScriptAccess scriptAccess,
                                      DagValidator dagValidator,
                                      NodeExecutorRegistry nodeExecutorRegistry,
                                      CommandRiskEngine riskEngine,
@@ -86,6 +93,7 @@ public class WorkflowDefinitionService {
                                      PlatformTransactionManager transactionManager) {
         this.workflowRepository = workflowRepository;
         this.versionRepository = versionRepository;
+        this.scriptAccess = scriptAccess;
         this.dagValidator = dagValidator;
         this.nodeExecutorRegistry = nodeExecutorRegistry;
         this.riskEngine = riskEngine;
@@ -265,25 +273,31 @@ public class WorkflowDefinitionService {
     private WorkflowVersion saveDraftInTransaction(Long workflowId, WorkflowDraftSaveRequest request,
                                                    Long userId, Authentication auth, String ip) {
         WorkflowDefinition definition = parseDefinition(request.getDefinition());
+        Workflow workflow = lockWorkflow(workflowId);
+        List<WorkflowVersion> drafts = versionRepository.lockDrafts(workflowId);
         String definitionJson = writeDefinition(definition);
         String sha256 = sha256Hex(definitionJson);
         String changelog = request.getChangelog();
-        int expectedBaseVersion = request.getBaseVersion() == null ? 0 : request.getBaseVersion();
         String onConflict = request.getOnConflict() == null || request.getOnConflict().isBlank()
                 ? "reject" : request.getOnConflict().trim().toLowerCase(java.util.Locale.ROOT);
         if (!Set.of("reject", "overwrite", "copy").contains(onConflict)) {
             throw new BusinessException(400, "WORKFLOW_PARAM_INVALID: onConflict 必须是 reject / overwrite / copy");
         }
 
-        Optional<WorkflowVersion> currentDraft =
-                versionRepository.findFirstByWorkflowIdAndIsValidFalseOrderByVersionDesc(workflowId);
+        Optional<WorkflowVersion> currentDraft = drafts.stream().findFirst();
 
-        // ① 没有草稿行：新建一条（version = max+1，baseVersion = 客户端令牌）
+        // 没有草稿时只能显式声明期望不存在，不能把旧客户端请求当作首次创建。
         if (currentDraft.isEmpty()) {
+            if (!Boolean.TRUE.equals(request.getExpectedAbsent()) || !Integer.valueOf(0).equals(request.getBaseVersion())
+                    || request.getDraftId() != null || request.getDefinitionSha256() != null
+                    || !"reject".equals(onConflict)) {
+                throw new WorkflowVersionConflictException(WorkflowVersionConflictVO.noDraft());
+            }
+            requireStrictPreserved(workflow, drafts, definition);
             WorkflowVersion draft = new WorkflowVersion();
             draft.setWorkflowId(workflowId);
             draft.setVersion(nextVersion(workflowId));
-            draft.setBaseVersion(expectedBaseVersion);
+            draft.setBaseVersion(0);
             draft.setDefinitionJson(definitionJson);
             draft.setDefinitionSha256(sha256);
             draft.setChangelog(changelog);
@@ -296,25 +310,22 @@ public class WorkflowDefinitionService {
 
         WorkflowVersion draft = currentDraft.get();
 
-        // ② 覆盖保存（409 三选一之 overwrite）：无条件写 + WORKFLOW_OVERWRITE 审计
-        if ("overwrite".equals(onConflict)) {
-            int updated = versionRepository.overwriteDraft(draft.getId(), definitionJson, sha256, changelog);
-            if (updated == 0) {
-                throw new BusinessException(409, "VERSION_CONFLICT: 草稿行已发布，无法覆盖");
-            }
-            auditLogService.logSync(userId, AuditUsers.name(auth), "WORKFLOW_OVERWRITE", "workflow",
-                    String.valueOf(workflowId),
-                    "draft version=" + draft.getVersion() + " overwritten, baseVersion=" + draft.getBaseVersion(),
-                    ip, "success");
-            return applyWritten(draft, definitionJson, sha256, changelog);
-        }
-
-        // ③ 另存副本（409 三选一之 copy）：不动当前草稿，新建一条
+        // 另存副本不覆盖任何行；来源必须是本工作流未发布草稿，但不验证可能过期的来源快照。
+        // 新副本拥有最高版本号，因此会成为当前草稿；原草稿保留。
         if ("copy".equals(onConflict)) {
+            if (Boolean.TRUE.equals(request.getExpectedAbsent()) || request.getDraftId() == null
+                    || request.getBaseVersion() == null || request.getDefinitionSha256() == null
+                    || request.getDefinitionSha256().isBlank()
+                    || drafts.stream().noneMatch(source -> source.getId().equals(request.getDraftId()))) {
+                throw new WorkflowVersionConflictException(
+                        WorkflowVersionConflictVO.currentDraft(draft.getBaseVersion(), draft.getId(),
+                                draft.getDefinitionSha256()));
+            }
+            requireStrictPreserved(workflow, drafts, definition);
             WorkflowVersion copy = new WorkflowVersion();
             copy.setWorkflowId(workflowId);
             copy.setVersion(nextVersion(workflowId));
-            copy.setBaseVersion(expectedBaseVersion);
+            copy.setBaseVersion(0);
             copy.setDefinitionJson(definitionJson);
             copy.setDefinitionSha256(sha256);
             copy.setChangelog(changelog);
@@ -325,32 +336,37 @@ public class WorkflowDefinitionService {
             return copy;
         }
 
-        // ④ 默认 reject：base_version 条件 UPDATE，影响 0 行 → 409 + 三选一契约
-        int updated = versionRepository.saveDraftIfBaseVersionMatches(draft.getId(), definitionJson, sha256,
-                changelog, expectedBaseVersion);
-        if (updated == 0) {
+        if (Boolean.TRUE.equals(request.getExpectedAbsent()) || request.getDraftId() == null
+                || request.getBaseVersion() == null || request.getDefinitionSha256() == null
+                || !request.getDraftId().equals(draft.getId())
+                || !request.getBaseVersion().equals(draft.getBaseVersion())
+                || !request.getDefinitionSha256().equals(draft.getDefinitionSha256())) {
             throw new WorkflowVersionConflictException(
-                    WorkflowVersionConflictVO.of(draft.getBaseVersion(), draft.getId()));
+                    WorkflowVersionConflictVO.currentDraft(draft.getBaseVersion(), draft.getId(),
+                            draft.getDefinitionSha256()));
         }
-        auditLogService.log(userId, AuditUsers.name(auth), "WORKFLOW_UPDATE", "workflow",
-                String.valueOf(workflowId), "draft saved version=" + draft.getVersion(), ip, "success");
-        return applyWritten(draft, definitionJson, sha256, changelog);
-    }
 
-    /**
-     * 条件 UPDATE 成功后回填内存对象。
-     *
-     * <p><b>为什么不 reload</b>：@Modifying 的批量 UPDATE 不进持久化上下文，同一事务里
-     * {@code findById} 会返回 L1 缓存里的旧行（baseVersion 还是旧值）——客户端拿着旧令牌
-     * 下一次保存就会收到假 409。这里按"刚刚写进去的值"回填，语义等价且无缓存歧义。</p>
-     */
-    private WorkflowVersion applyWritten(WorkflowVersion draft, String definitionJson, String sha256,
-                                         String changelog) {
-        draft.setDefinitionJson(definitionJson);
-        draft.setDefinitionSha256(sha256);
-        draft.setChangelog(changelog);
-        draft.setBaseVersion(draft.getBaseVersion() + 1);
-        return draft;
+        requireStrictPreserved(workflow, drafts, definition);
+        int updated = versionRepository.saveDraftIfBaseVersionMatches(draft.getId(), definitionJson, sha256,
+                changelog, request.getBaseVersion(), request.getDefinitionSha256());
+        if (updated == 0) {
+            // Bulk update clears the persistence context; re-read under lock rather than return a stale token.
+            List<WorkflowVersion> latest = versionRepository.lockDrafts(workflowId);
+            WorkflowVersionConflictVO conflict = latest.isEmpty() ? WorkflowVersionConflictVO.noDraft()
+                    : WorkflowVersionConflictVO.currentDraft(latest.get(0).getBaseVersion(), latest.get(0).getId(),
+                            latest.get(0).getDefinitionSha256());
+            throw new WorkflowVersionConflictException(conflict);
+        }
+        if ("overwrite".equals(onConflict)) {
+            auditLogService.logSync(userId, AuditUsers.name(auth), "WORKFLOW_OVERWRITE", "workflow",
+                    String.valueOf(workflowId),
+                    "draft version=" + draft.getVersion() + " overwritten, baseVersion=" + draft.getBaseVersion(),
+                    ip, "success");
+        } else {
+            auditLogService.log(userId, AuditUsers.name(auth), "WORKFLOW_UPDATE", "workflow",
+                    String.valueOf(workflowId), "draft saved version=" + draft.getVersion(), ip, "success");
+        }
+        return versionRepository.findById(draft.getId()).orElseThrow();
     }
 
     // ------------------------------------------------------------------
@@ -362,6 +378,12 @@ public class WorkflowDefinitionService {
         WorkflowDefinition definition = parseDefinition(definitionNode);
         ValidationIssue.Sink sink = new ValidationIssue.Sink();
         validateDefinition(definition, sink);
+        if (definition.getNodes() != null) {
+            definition.getNodes().stream().filter(n -> n.nodeType() == NodeType.SCRIPT_EXEC
+                    && n.getConfig() != null && n.getConfig().containsKey("scriptSource"))
+                    .forEach(n -> sink.warning("SCRIPT_SOURCE_UNVERIFIED",
+                            "脚本来源和内容尚未验证；风险估算仅基于客户端内容，发布时重新验证", n.getKey()));
+        }
         RiskSummary risk = assessEstimatedRisk(definition);
         return WorkflowValidateResultVO.builder()
                 .valid(!sink.hasError())
@@ -378,14 +400,31 @@ public class WorkflowDefinitionService {
      * <p>审计用 {@code logSync}：WORKFLOW_PUBLISH 是五类高危事件之一（C-13），
      * 写失败即使发布失败。</p>
      */
-    public WorkflowVersion publish(Long workflowId, String changelog, Long userId, Authentication auth,
+    public WorkflowVersion publish(Long workflowId, WorkflowPublishRequest request, Long userId, Authentication auth,
                                    String ip) {
-        WorkflowVersion draft = versionRepository
-                .findFirstByWorkflowIdAndIsValidFalseOrderByVersionDesc(workflowId)
-                .orElseThrow(() -> new BusinessException(400,
-                        "WORKFLOW_PARAM_INVALID: 没有可发布的草稿，请先保存草稿"));
+        return transactionTemplate.execute(status -> {
+        Workflow lockedWorkflow = lockWorkflow(workflowId);
+        List<WorkflowVersion> drafts = versionRepository.lockDrafts(workflowId);
+        WorkflowVersion draft = drafts.stream().findFirst()
+                .orElseThrow(() -> new BusinessException(409,
+                        "VERSION_CONFLICT: 没有可发布的草稿，请重新校验"));
+
+        if (request == null || request.getDraftId() == null || request.getBaseVersion() == null
+                || request.getDefinitionSha256() == null
+                || !java.util.Objects.equals(request.getDraftId(), draft.getId())
+                || !java.util.Objects.equals(request.getBaseVersion(), draft.getBaseVersion())
+                || !request.getDefinitionSha256().equals(draft.getDefinitionSha256())) {
+            throw new BusinessException(409, "VERSION_CONFLICT: 草稿已更改或发布，请重新校验");
+        }
 
         WorkflowDefinition definition = parseDefinitionNode(draft.getDefinitionJson());
+        if (!sha256Hex(draft.getDefinitionJson()).equals(draft.getDefinitionSha256())) {
+            throw new BusinessException(409, "VERSION_CONFLICT: 草稿摘要不匹配");
+        }
+        freezeScripts(definition, userId);
+        requireStrictPreserved(lockedWorkflow, drafts, definition);
+        String frozenJson = writeDefinition(definition);
+        String frozenHash = sha256Hex(frozenJson);
         ValidationIssue.Sink sink = new ValidationIssue.Sink();
         validateDefinition(definition, sink);
         RiskSummary risk = assessEstimatedRisk(definition);
@@ -398,19 +437,21 @@ public class WorkflowDefinitionService {
                     .riskMatches(risk.matches())
                     .build());
         }
-        if (changelog != null && !changelog.isBlank()) {
-            draft.setChangelog(changelog);
-            versionRepository.save(draft);
-        }
+        String changelog = request.getChangelog();
+        String publishedChangelog = changelog != null && !changelog.isBlank() ? changelog : draft.getChangelog();
 
         LocalDateTime publishedAt = LocalDateTime.now();
-        return transactionTemplate.execute(status -> {
-            int published = versionRepository.publishDraftAtomically(draft.getId(), publishedAt,
-                    userId, risk.level().name());
+            int published = versionRepository.publishValidatedDraftAtomically(draft.getId(), publishedAt,
+                    userId, risk.level().name(), publishedChangelog, draft.getBaseVersion(),
+                    draft.getDefinitionSha256(), frozenJson, frozenHash);
             if (published == 0) {
-                throw new BusinessException(409, "VERSION_CONFLICT: 草稿行已被发布");
+                throw new BusinessException(409, "VERSION_CONFLICT: 草稿已更改或发布，请重新校验");
             }
-            workflowRepository.updateCurrentVersionAtomically(workflowId, draft.getId());
+            if (workflowRepository.updateCurrentVersionAtomically(workflowId, draft.getId()) != 1) {
+                throw new BusinessException(404, "WORKFLOW_NOT_FOUND: 工作流不存在");
+            }
+            // The bulk update holds the workflow row lock until commit. The previous CAS
+            // cleared the persistence context, so this read cannot return a stale pointer.
             Workflow workflow = workflowRepository.findById(workflowId).orElseThrow();
             if (!"published".equals(workflow.getStatus())) {
                 workflow.setStatus("published");
@@ -418,17 +459,87 @@ public class WorkflowDefinitionService {
             }
             auditLogService.logSync(userId, AuditUsers.name(auth), "WORKFLOW_PUBLISH", "workflow",
                     String.valueOf(workflowId),
-                    "version=" + draft.getVersion() + ", sha256=" + draft.getDefinitionSha256()
+                    "version=" + draft.getVersion() + ", sha256=" + frozenHash
                             + ", estimatedRisk=" + risk.level().name()
                             + ", matches=" + String.join(",", risk.matches()),
                     ip, "success");
-            // 与 saveDraft 同理：不回读，直接按刚写进去的值回填（避免 L1 缓存旧行）
-            draft.setIsValid(true);
-            draft.setPublishedAt(publishedAt);
-            draft.setPublishedBy(userId);
-            draft.setEstimatedRisk(risk.level().name());
-            return draft;
+            return versionRepository.findById(draft.getId()).orElseThrow();
         });
+    }
+
+    private Workflow lockWorkflow(Long workflowId) {
+        return versionRepository.lockWorkflow(workflowId)
+                .orElseThrow(() -> new BusinessException(404, "WORKFLOW_NOT_FOUND: 工作流不存在"));
+    }
+
+    private void requireStrictPreserved(Workflow workflow, List<WorkflowVersion> drafts,
+                                        WorkflowDefinition candidate) {
+        try {
+            for (WorkflowVersion draft : drafts) {
+                StrictAiDowngradeGuard.requirePreserved(parseDefinitionNode(draft.getDefinitionJson()), candidate);
+            }
+            if (workflow.getCurrentVersionId() != null) {
+                WorkflowVersion published = versionRepository.lockVersion(workflow.getCurrentVersionId(), workflow.getId())
+                        .filter(v -> Boolean.TRUE.equals(v.getIsValid()))
+                        .orElseThrow(() -> new BusinessException(409, "WORKFLOW_VERSION_INVALID: 已发布基准不存在"));
+                StrictAiDowngradeGuard.requirePreserved(parseDefinitionNode(published.getDefinitionJson()), candidate);
+            }
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException(409, "STRICT_AI_CHANGE_FORBIDDEN: 不允许删除严格 AI 节点或修改其 schema；请创建新工作流");
+        }
+    }
+
+    private void freezeScripts(WorkflowDefinition definition, Long userId) {
+        if (definition.getNodes() == null) return;
+        record ScriptReference(WorkflowNode node, long id, int version, Object hash) {}
+        List<ScriptReference> references = new ArrayList<>();
+        Set<Long> ids = new TreeSet<>();
+        for (WorkflowNode node : definition.getNodes()) {
+            if (node.nodeType() != NodeType.SCRIPT_EXEC || node.getConfig() == null
+                    || !node.getConfig().containsKey("scriptSource")) continue;
+            Object raw = node.getConfig().get("scriptSource");
+            if (!(raw instanceof Map<?, ?> source) || !"library-v1".equals(source.get("kind"))) {
+                throw new BusinessException(400, "SCRIPT_SOURCE_INVALID: 不支持的脚本来源");
+            }
+            Object idValue = source.get("scriptId");
+            Object versionValue = source.get("version");
+            Object hashValue = source.get("sha256");
+            long id;
+            int version;
+            try {
+                id = Long.parseLong(String.valueOf(idValue));
+                version = Integer.parseInt(String.valueOf(versionValue));
+                if (id <= 0 || version <= 0 || !(hashValue instanceof String hash)
+                        || !hash.matches("[0-9a-f]{64}")) throw new IllegalArgumentException();
+            } catch (RuntimeException ex) {
+                throw new BusinessException(400, "SCRIPT_SOURCE_INVALID: 脚本来源参数无效");
+            }
+            references.add(new ScriptReference(node, id, version, hashValue));
+            ids.add(id);
+        }
+        Map<Long, Script> scripts = new HashMap<>();
+        for (Long id : ids) {
+            scripts.put(id, scriptAccess.requireReadForSnapshot(userId, id));
+        }
+        for (ScriptReference reference : references) {
+            WorkflowNode node = reference.node();
+            long id = reference.id();
+            int version = reference.version();
+            Object hashValue = reference.hash();
+            Script script = scripts.get(id);
+            String hash = script.getContent() == null ? "" : sha256Hex(script.getContent());
+            if (!"shell".equals(script.getScriptType()) || !java.util.Objects.equals(version, script.getVersion())
+                    || !hash.equals(hashValue)) {
+                throw new BusinessException(409, "SCRIPT_SOURCE_CHANGED: 脚本不可用或已变更");
+            }
+            Object supplied = node.getConfig().get("script");
+            if (supplied != null && !script.getContent().equals(supplied)) {
+                throw new BusinessException(409, "SCRIPT_SOURCE_CHANGED: 脚本内容不匹配");
+            }
+            node.getConfig().put("script", script.getContent());
+            node.getConfig().put("scriptSource", Map.of("kind", "library-v1", "scriptId", id,
+                    "version", version, "sha256", hash));
+        }
     }
 
     // ------------------------------------------------------------------

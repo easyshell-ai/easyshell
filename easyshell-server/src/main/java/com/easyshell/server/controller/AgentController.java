@@ -9,10 +9,14 @@ import com.easyshell.server.model.entity.Agent;
 import com.easyshell.server.model.entity.Job;
 import com.easyshell.server.model.vo.AgentRegisterVO;
 import com.easyshell.server.repository.JobRepository;
+import com.easyshell.server.repository.TaskRepository;
+import com.easyshell.server.repository.TaskTargetSnapshotRepository;
 import com.easyshell.server.security.JwtUtils;
+import com.easyshell.server.security.JwtAuthenticationFilter;
 import com.easyshell.server.service.AgentService;
 import com.easyshell.server.service.SystemConfigService;
 import com.easyshell.server.service.TaskService;
+import com.easyshell.server.service.HostAclService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -20,12 +24,14 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.security.MessageDigest;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.HashSet;
 
 /**
  * Agent-facing API.
@@ -47,6 +53,9 @@ public class AgentController {
     private final JobRepository jobRepository;
     private final SystemConfigService systemConfigService;
     private final JwtUtils jwtUtils;
+    private final TaskRepository taskRepository;
+    private final TaskTargetSnapshotRepository taskTargetSnapshotRepository;
+    private final HostAclService hostAclService;
 
     @Value("${easyshell.agent.register-secret:}")
     private String registerSecret;
@@ -55,9 +64,20 @@ public class AgentController {
     private boolean trustProxyHeaders;
 
     @PostMapping("/register")
+    @Transactional
     public R<AgentRegisterVO> register(@Valid @RequestBody AgentRegisterRequest request,
                                        Authentication auth,
                                        HttpServletRequest httpRequest) {
+        if (Boolean.TRUE.equals(httpRequest.getAttribute(JwtAuthenticationFilter.ATTR_BOUND_AGENT_TOKEN))) {
+            throw new BusinessException(403, "Bound agent credentials cannot register");
+        }
+        // An invalid or expired bearer must not be exchanged via the bootstrap secret either.
+        String authorization = httpRequest.getHeader("Authorization");
+        if (authorization != null && authorization.startsWith("Bearer ")
+                && (auth == null || !auth.isAuthenticated()
+                    || auth instanceof org.springframework.security.authentication.AnonymousAuthenticationToken)) {
+            throw new BusinessException(401, "Invalid bearer credential");
+        }
         String principalAgentId = authenticatedAgentId(auth);
         boolean isAgentCredential = principalAgentId != null;
 
@@ -90,7 +110,42 @@ public class AgentController {
     @GetMapping("/jobs/pending/{agentId}")
     public R<List<Job>> getPendingJobs(@PathVariable String agentId, Authentication auth) {
         requireMatchingAgent(auth, agentId);
-        return R.ok(jobRepository.findByAgentIdAndStatus(agentId, 0));
+        return R.ok(jobRepository.findByAgentIdAndStatus(agentId, 0).stream().filter(job -> {
+            try {
+                var task = taskRepository.findById(job.getTaskId()).orElse(null);
+                if (task == null || task.getCreatedBy() == null || task.getTotalCount() == null
+                        || task.getTotalCount() <= 0) return false;
+                var snapshot = taskTargetSnapshotRepository.findComplete(job.getTaskId()).orElse(null);
+                if (snapshot == null || !job.getTaskId().equals(snapshot.taskId())
+                        || snapshot.targets().size() != task.getTotalCount()) return false;
+                var taskJobs = jobRepository.findByTaskId(job.getTaskId());
+                if (taskJobs == null || taskJobs.size() != task.getTotalCount()) return false;
+                Set<String> targetIds = new HashSet<>();
+                for (var target : snapshot.targets()) {
+                    if (!targetIds.add(target.agentId())) return false;
+                }
+                Set<String> jobIds = new HashSet<>();
+                Set<String> jobAgentIds = new HashSet<>();
+                boolean currentJobFound = false;
+                for (var taskJob : taskJobs) {
+                    if (taskJob == null || taskJob.getId() == null || taskJob.getId().isBlank()
+                            || !job.getTaskId().equals(taskJob.getTaskId())
+                            || !targetIds.contains(taskJob.getAgentId())
+                            || !jobIds.add(taskJob.getId()) || !jobAgentIds.add(taskJob.getAgentId())) return false;
+                    if (taskJob.getId().equals(job.getId()) && agentId.equals(taskJob.getAgentId())) {
+                        currentJobFound = true;
+                    }
+                }
+                if (!currentJobFound || !targetIds.equals(jobAgentIds) || !agentId.equals(job.getAgentId())) return false;
+                var targets = snapshot.targets().stream()
+                        .filter(target -> agentId.equals(target.agentId())).toList();
+                return targets.size() == 1 && hostAclService.allowedForGeneration(
+                        task.getCreatedBy(), agentId, targets.get(0).generation(), HostAclService.Permission.EXECUTE);
+            } catch (Exception e) {
+                log.warn("Pending job validation failed");
+                return false;
+            }
+        }).toList());
     }
 
     @PostMapping("/jobs/result")
@@ -123,7 +178,9 @@ public class AgentController {
     // ---------- helpers ----------
 
     private String authenticatedAgentId(Authentication auth) {
-        if (auth == null || !(auth.getPrincipal() instanceof String principal)) {
+        if (auth == null || !auth.isAuthenticated()
+                || !(auth.getPrincipal() instanceof String principal) || principal.isBlank()
+                || auth.getAuthorities().stream().noneMatch(a -> "ROLE_AGENT".equals(a.getAuthority()))) {
             return null;
         }
         return principal;

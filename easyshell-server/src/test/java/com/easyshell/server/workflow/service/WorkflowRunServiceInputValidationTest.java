@@ -16,6 +16,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.Map;
 import java.util.Optional;
@@ -60,6 +61,7 @@ class WorkflowRunServiceInputValidationTest {
                 mock(WorkflowApprovalRepository.class), mock(WorkflowEngine.class),
                 mock(AuditLogService.class), new WorkflowProperties(), objectMapper,
                 mock(PlatformTransactionManager.class));
+        ReflectionTestUtils.setField(service, "provenanceService", mock(WorkflowRunProvenanceService.class));
     }
 
     @Test

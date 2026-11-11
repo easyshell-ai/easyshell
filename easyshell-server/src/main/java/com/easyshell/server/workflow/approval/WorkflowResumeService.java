@@ -7,6 +7,7 @@ import com.easyshell.server.repository.WorkflowNodeRunRepository;
 import com.easyshell.server.repository.WorkflowRunRepository;
 import com.easyshell.server.service.AuditLogService;
 import com.easyshell.server.workflow.engine.WorkflowEngine;
+import com.easyshell.server.workflow.engine.WorkflowRecoveryClaimService;
 import com.easyshell.server.workflow.properties.WorkflowProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -41,6 +42,17 @@ public class WorkflowResumeService {
     private final WorkflowEngine engine;
     private final AuditLogService auditLogService;
     private final WorkflowProperties properties;
+
+    private WorkflowRecoveryClaimService recoveryClaims;
+
+    private static final int DURABLE_SCAN_LIMIT = 100;
+    // Discovery position only, never execution authority. Failed candidates also advance it.
+    private String durableScanAfterRunId;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setRecoveryClaims(WorkflowRecoveryClaimService recoveryClaims) {
+        this.recoveryClaims = recoveryClaims;
+    }
 
     /** 显式事务边界（REQUIRED）：决策与审计同一个提交单元 */
     private final TransactionTemplate transactionTemplate;
@@ -96,7 +108,7 @@ public class WorkflowResumeService {
                 "approved".equals(decision) ? "WORKFLOW_APPROVE" : "WORKFLOW_REJECT",
                 "workflow_approval", String.valueOf(approvalId),
                 "run=" + decided.getRunId() + ", node=" + decided.getNodeKey()
-                        + ", comment=" + comment, null, "success");
+                        + ", decision=" + decision, null, "success");
 
         // 自审批约束（S1）：默认开启，decided_by == started_by 时允许但记 WARNING
         if (properties.getApproval().isRequireDifferentApprover()) {
@@ -110,17 +122,16 @@ public class WorkflowResumeService {
         }
 
         String runId = decided.getRunId();
-        if (TransactionSynchronizationManager.isSynchronizationActive()) {
-            TransactionSynchronizationManager.registerSynchronization(
-                    new org.springframework.transaction.support.TransactionSynchronization() {
-                        @Override
-                        public void afterCommit() {
-                            submitResume(runId);
-                        }
-                    });
-        } else {
-            submitResume(runId);
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            throw new IllegalStateException("审批决策必须支持事务提交后恢复");
         }
+        TransactionSynchronizationManager.registerSynchronization(
+                new org.springframework.transaction.support.TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        submitResume(runId);
+                    }
+                });
         return decided;
     }
 
@@ -137,7 +148,15 @@ public class WorkflowResumeService {
      */
     @Scheduled(fixedDelayString = "${easyshell.workflow.engine.wakeup-interval-sec:10}000",
             initialDelay = 5000)
-    public void scanWakeups() {
+    public synchronized void scanWakeups() {
+        if (!properties.getEngine().isAutomaticRecoveryEnabled()
+                && !properties.getEngine().isDurableResumeEnabled()) {
+            return;
+        }
+        if (properties.getEngine().isDurableResumeEnabled()) {
+            scanDurableWakeups();
+            return;
+        }
         List<com.easyshell.server.model.entity.WorkflowNodeRun> waiting = nodeRunRepository.findByStatus("waiting");
         Set<String> runIds = new java.util.HashSet<>();
         for (com.easyshell.server.model.entity.WorkflowNodeRun row : waiting) {
@@ -147,7 +166,7 @@ public class WorkflowResumeService {
             try {
                 resumeIfReady(runId);
             } catch (Exception e) {
-                log.warn("兜底恢复失败: run={} err={}", runId, e.getMessage());
+                log.warn("兜底恢复失败: run={}", safeRunId(runId));
             }
         }
         // 被 tryLock 拒绝登记的 run（§3.8 v3 补充：不静默丢弃）
@@ -157,14 +176,41 @@ public class WorkflowResumeService {
                 try {
                     resumeIfReady(runId);
                 } catch (Exception e) {
-                    log.warn("兜底恢复失败: run={} err={}", runId, e.getMessage());
+                    log.warn("兜底恢复失败: run={}", safeRunId(runId));
                 }
             }
         }
     }
 
+    private void scanDurableWakeups() {
+        List<String> candidates;
+        try {
+            candidates = nodeRunRepository.findWaitingRunIdsAfter(durableScanAfterRunId,
+                    org.springframework.data.domain.PageRequest.of(0, DURABLE_SCAN_LIMIT));
+        } catch (RuntimeException failure) {
+            log.warn("持久审批唤醒候选读取失败");
+            return;
+        }
+        Set<String> seen = new java.util.HashSet<>();
+        for (String runId : candidates.stream().limit(DURABLE_SCAN_LIMIT).toList()) {
+            durableScanAfterRunId = runId;
+            if (!seen.add(runId)) continue;
+            try {
+                resumeIfReady(runId);
+            } catch (RuntimeException failure) {
+                // Submission rejection leaves waiting untouched; a later cursor pass retries it.
+                log.warn("持久审批唤醒提交失败: run={}", safeRunId(runId));
+            }
+        }
+        if (candidates.size() < DURABLE_SCAN_LIMIT) durableScanAfterRunId = null;
+    }
+
+    private static String safeRunId(String runId) {
+        return runId != null && runId.matches("[A-Za-z0-9_-]{1,64}") ? runId : "<invalid>";
+    }
+
     /**
-     * 恢复一个 run（同步，测试与扫描器共用）。
+     * 恢复一个 run（durable 仅异步提交候选，legacy 同步执行）。
      *
      * <p>本 run 下全部 waiting 节点都已决策才唤醒；任一审pending 都整体放弃，
      * 等下一轮扫描——避免"唤醒一半"的中间态。</p>
@@ -174,17 +220,33 @@ public class WorkflowResumeService {
         if (run == null || TERMINAL_RUN.contains(run.getStatus())) {
             return;
         }
+        if (properties.getEngine().isDurableResumeEnabled()
+                && (!"waiting".equals(run.getStatus()) || recoveryClaims == null
+                    || recoveryClaims.hasActiveBatch(runId))) {
+            return;
+        }
         List<com.easyshell.server.model.entity.WorkflowNodeRun> waiting =
                 nodeRunRepository.findByRunIdAndStatus(runId, "waiting");
         if (waiting.isEmpty()) {
             return;
         }
         for (com.easyshell.server.model.entity.WorkflowNodeRun row : waiting) {
-            Optional<WorkflowApproval> approval = approvalStore.findByRunAndNode(runId, row.getNodeKey());
-            if (approval.isEmpty() || "pending".equals(approval.get().getStatus())) {
+            if (row.getApprovalId() == null) {
+                return;
+            }
+            Optional<WorkflowApproval> approval = approvalStore.findById(row.getApprovalId());
+            if (approval.isEmpty() || !java.util.Objects.equals(runId, approval.get().getRunId())
+                    || !java.util.Objects.equals(row.getNodeKey(), approval.get().getNodeKey())
+                    || !java.util.Objects.equals(row.getNodeType(), approval.get().getNodeType())
+                    || approval.get().getStatus() == null
+                    || !Set.of("approved", "rejected", "timeout", "cancelled").contains(approval.get().getStatus())) {
                 return;   // 还有未决策的审批
             }
         }
-        engine.resumeRun(runId);
+        if (properties.getEngine().isDurableResumeEnabled()) {
+            engine.submitResume(runId);
+        } else {
+            engine.resumeRun(runId);
+        }
     }
 }
