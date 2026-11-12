@@ -31,9 +31,9 @@ public class HostIntelligenceController {
     public R<List<HostSoftwareInventory>> parseDetection(
             @PathVariable String agentId,
             @PathVariable String taskId, Authentication auth) {
-        requireAccess(principal(auth), agentId, HostAclService.Permission.EXECUTE);
-        // A task ID and output marker do not establish trusted detection provenance.
-        throw new BusinessException(403, "Detection parsing disabled: trusted task provenance cannot be verified");
+        Long actor=principal(auth);
+        requireAccess(actor, agentId, HostAclService.Permission.EXECUTE);
+        return R.ok(hostIntelligenceService.parseAndStoreAuthorized(taskId,agentId,actor));
     }
 
     @GetMapping("/software")

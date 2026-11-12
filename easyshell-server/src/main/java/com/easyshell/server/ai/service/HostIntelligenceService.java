@@ -37,6 +37,8 @@ public class HostIntelligenceService {
     private final TagRepository tagRepository;
     private final AgentTagRepository agentTagRepository;
     private final HostSoftwareInventoryRepository inventoryRepository;
+    @org.springframework.beans.factory.annotation.Autowired
+    private DetectionResultAccess detectionAccess;
 
     // package-private：同包测试（BuiltinDetectionScriptVerifierTest）需要原文做指纹比对的正例
     static final String DETECTION_SCRIPT = """
@@ -78,6 +80,7 @@ public class HostIntelligenceService {
             echo "===DETECTION_END==="
             """;
 
+    @Transactional
     public String triggerDetection(String agentId, Long userId) {
         Agent agent = agentRepository.findById(agentId)
                 .orElseThrow(() -> new BusinessException(404, "主机不存在: " + agentId));
@@ -117,6 +120,13 @@ public class HostIntelligenceService {
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 unavailable", e);
         }
+    }
+
+    @Transactional
+    public List<HostSoftwareInventory> parseAndStoreAuthorized(String taskId,String agentId,Long actor) {
+        if (detectionAccess==null) throw new BusinessException(503,"Detection authorization unavailable");
+        detectionAccess.requireParse(actor,taskId,agentId);
+        return parseAndStore(taskId,agentId);
     }
 
     @Transactional
@@ -281,13 +291,17 @@ public class HostIntelligenceService {
     private void applyAutoTags(String agentId, Set<String> tagNames) {
         if (tagNames.isEmpty()) return;
 
-        for (String tagName : tagNames) {
+        for (String tagName : tagNames.stream().sorted().toList()) {
             Tag tag = tagRepository.findByName(tagName).orElseGet(() -> {
                 Tag newTag = new Tag();
                 newTag.setName(tagName);
                 newTag.setColor(getTagColor(tagName));
                 return tagRepository.save(newTag);
             });
+
+            // Serialize every membership writer with global tag management.
+            tagRepository.lockById(tag.getId())
+                    .orElseThrow(() -> new BusinessException(409,"Tag changed during detection"));
 
             if (!agentTagRepository.existsByAgentIdAndTagId(agentId, tag.getId())) {
                 AgentTag agentTag = new AgentTag();

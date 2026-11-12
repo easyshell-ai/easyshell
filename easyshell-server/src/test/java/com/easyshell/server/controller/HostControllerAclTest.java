@@ -32,6 +32,7 @@ class HostControllerAclTest {
     @Mock MetricSnapshotRepository metrics;
     @Mock TaskRepository tasks;
     @Mock ScriptRepository scripts;
+    @Mock com.easyshell.server.service.DashboardStatisticsService dashboardStatistics;
     @InjectMocks HostController controller;
 
     private final Authentication auth = UsernamePasswordAuthenticationToken.authenticated(7L, null, List.of());
@@ -67,6 +68,22 @@ class HostControllerAclTest {
             assertTrue(json.has(field), field);
             assertTrue(json.get(field).isNull(), field);
         }
+    }
+
+    @Test
+    void dashboardIncludesScopedStatisticsFromTheSharedService() {
+        when(agents.findAll()).thenReturn(List.of());
+        var statistics=dashboardStatistics;
+        doAnswer(call -> {
+            com.easyshell.server.model.vo.DashboardStatsVO stats=call.getArgument(1);
+            stats.setTasksAvailable(true);stats.setTotalTasks(3L);
+            stats.setScriptsAvailable(true);stats.setTotalScripts(2L);
+            return null;
+        }).when(statistics).populate(eq(7L),any());
+        var stats=controller.dashboardStats(auth).getData();
+        assertTrue(stats.isTasksAvailable());assertEquals(3L,stats.getTotalTasks());
+        assertTrue(stats.isScriptsAvailable());assertEquals(2L,stats.getTotalScripts());
+        verifyNoInteractions(tasks,scripts);
     }
 
     @Test

@@ -86,6 +86,28 @@ class TaskAccessQueryRepositoryTest {
     }
 
     @Test
+    void dashboardCountsUseTheSameAclAndRejectUnknownOrRecreatedTargets() throws Exception {
+        task("success", 1, 1, 10); snapshot("success", 1, 1, "a");
+        task("failed", 1, 1, 11); snapshot("failed", 1, 1, "b");
+        task("older", 1, 1, 1); snapshot("older", 1, 1, "a");
+        task("unknown", 1, 1, 12);
+        task("other-owner", 2, 1, 13); snapshot("other-owner", 1, 1, "a");
+        jdbc.update("UPDATE task SET status=2 WHERE id IN ('success','older','other-owner','unknown')");
+        jdbc.update("UPDATE task SET status=4 WHERE id='failed'");
+        Field field=TaskAccessQueryRepository.class.getDeclaredField("DASHBOARD_SELECT");field.setAccessible(true);
+        String query=(String)field.get(null);
+        var parameters=Map.of("actor",1L,"subject","1","day",5);
+        List<Number> counts=named.queryForObject(query,parameters,(rs,row)->List.of(
+                (Number)rs.getObject(1),(Number)rs.getObject(2),(Number)rs.getObject(3),
+                (Number)rs.getObject(4),(Number)rs.getObject(5)));
+        assertEquals(List.of(3L,2L,1L,1L,2L),counts.stream().map(Number::longValue).toList());
+        jdbc.update("UPDATE host_identity SET generation=3 WHERE agent_id='b'");
+        assertEquals(2L,named.<Long>queryForObject(query,parameters,(rs,row)->rs.getLong(1)).longValue());
+        jdbc.update("DELETE FROM host_acl_grant WHERE agent_id='a'");
+        assertEquals(0L,named.<Long>queryForObject(query,parameters,(rs,row)->rs.getLong(1)).longValue());
+    }
+
+    @Test
     void incompleteMigrationAndDatabaseFailureAreNotEmptyResults() {
         var em = org.mockito.Mockito.mock(jakarta.persistence.EntityManager.class);
         var query = org.mockito.Mockito.mock(jakarta.persistence.Query.class);

@@ -37,6 +37,7 @@ class HostProvisionServiceImplTest {
         for (String method : new String[] {"list", "getById", "unifiedList"}) {
             var endpoint = method.equals("getById")
                     ? HostProvisionController.class.getMethod(method, Long.class)
+                    : method.equals("unifiedList") ? HostProvisionController.class.getMethod(method,org.springframework.security.core.Authentication.class)
                     : HostProvisionController.class.getMethod(method);
             assertThat(endpoint.getAnnotation(PreAuthorize.class).value())
                     .isEqualTo("hasAnyRole('ADMIN','SUPER_ADMIN')");

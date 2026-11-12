@@ -22,6 +22,9 @@ public interface ScriptRepository extends JpaRepository<Script, Long> {
 
     boolean existsByName(String name);
 
+    @Query("select count(s) from Script s where s.isPublic = true or s.createdBy = :actor or :admin = true")
+    long countReadable(@Param("actor") Long actor, @Param("admin") boolean admin);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select s from Script s where s.id = :id")
     Optional<Script> findByIdForSnapshot(@Param("id") Long id);
