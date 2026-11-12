@@ -69,13 +69,12 @@ class HostIntelligenceControllerTest {
     }
 
     @Test
-    void parseIsDeniedEvenWithExecuteAndNeverChangesInventoryOrTags() {
+    void parsingRequiresServiceToVerifyExactTaskProvenance() {
         when(acl.allowed(7L, "host", HostAclService.Permission.EXECUTE)).thenReturn(true);
-        BusinessException error = assertThrows(BusinessException.class,
-                () -> controller.parseDetection("host", "forged-task", auth));
-        assertEquals(403, error.getCode());
-        assertTrue(error.getMessage().contains("provenance"));
-        verifyNoInteractions(service);
+        when(service.parseAndStoreAuthorized("forged-task","host",7L)).thenThrow(new BusinessException(403,"provenance"));
+        assertEquals(403,assertThrows(BusinessException.class,
+                ()->controller.parseDetection("host","forged-task",auth)).getCode());
+        verify(service).parseAndStoreAuthorized("forged-task","host",7L);
     }
 
     @Test

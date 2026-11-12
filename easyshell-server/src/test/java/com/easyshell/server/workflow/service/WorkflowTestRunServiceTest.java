@@ -147,7 +147,7 @@ class WorkflowTestRunServiceTest {
         assertThat(result.getNodeType()).isEqualTo("code");
         assertThat(result.getStatus()).isEqualTo("unavailable");
         assertThat(result.getWarnings()).containsExactly(
-                "CODE_RUNTIME_UNAVAILABLE: code 节点运行时不可用，试运行未执行代码");
+                "该入口仅预演，不执行代码；请使用节点编辑器的隔离代码样例运行");
         assertThat(result.getRiskLevel()).isNull();
     }
 }

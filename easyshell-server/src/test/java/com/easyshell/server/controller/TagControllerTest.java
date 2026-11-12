@@ -28,10 +28,12 @@ class TagControllerTest {
     private final HttpServletRequest request = mock(HttpServletRequest.class);
     private final Authentication auth = new UsernamePasswordAuthenticationToken(1L, "", List.of());
     private TagController controller;
+    private final com.easyshell.server.service.TagManagementAccess management=mock(com.easyshell.server.service.TagManagementAccess.class);
 
     @BeforeEach
     void setup() {
         controller = new TagController(tags, audit, acl, users);
+        org.springframework.test.util.ReflectionTestUtils.setField(controller,"tagManagement",management);
     }
 
     private void user(String role, int status) {
@@ -69,6 +71,7 @@ class TagControllerTest {
     @Test
     void adminMustHaveViewOfEachHostAndGlobalChangesFailClosed() {
         user("admin", 1);
+        doThrow(new BusinessException(403,"Host view permission required")).when(management).requireManage(1L,2L);
         when(acl.allowed(1L, "visible", HostAclService.Permission.VIEW)).thenReturn(true);
         controller.addTagToAgent(2L, "visible", auth, request);
         controller.removeTagFromAgent(2L, "visible", auth, request);
@@ -80,5 +83,16 @@ class TagControllerTest {
         verify(tags).removeTagFromAgent(2L, "visible");
         verify(tags, never()).update(anyLong(), any());
         verify(tags, never()).delete(anyLong());
+    }
+
+    @Test
+    void authorizedGlobalTagChangesUseSharedResourceCheckAndSynchronousAudit() {
+        user("admin",1);
+        controller.update(2L,new TagRequest(),auth,request);
+        controller.delete(2L,auth,request);
+        verify(management,times(2)).requireManage(1L,2L);
+        verify(tags).update(eq(2L),any());verify(tags).delete(2L);
+        verify(audit).logSync(eq(1L),any(),eq("UPDATE_TAG"),eq("tag"),eq("2"),any(),any(),eq("success"));
+        verify(audit).logSync(eq(1L),any(),eq("DELETE_TAG"),eq("tag"),eq("2"),any(),any(),eq("success"));
     }
 }

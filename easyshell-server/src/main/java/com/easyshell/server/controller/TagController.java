@@ -26,6 +26,8 @@ public class TagController {
     private final AuditLogService auditLogService;
     private final HostAclService hostAclService;
     private final UserRepository users;
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.easyshell.server.service.TagManagementAccess tagManagement;
 
     @PostMapping
     public R<TagVO> create(@Valid @RequestBody TagRequest request, Authentication auth,
@@ -38,16 +40,28 @@ public class TagController {
     }
 
     @PutMapping("/{id}")
+    @org.springframework.transaction.annotation.Transactional
     public R<TagVO> update(@PathVariable Long id, @Valid @RequestBody TagRequest request,
                            Authentication auth, HttpServletRequest httpRequest) {
-        requireAdmin(auth);
-        throw new BusinessException(403, "Global tag modification is unavailable");
+        Long actor=requireAdmin(auth);
+        if (tagManagement==null) throw new BusinessException(503,"Tag authorization unavailable");
+        tagManagement.requireManage(actor,id);
+        TagVO tag=tagService.update(id,request);
+        auditLogService.logSync(actor,AuditUsers.name(auth),"UPDATE_TAG","tag",String.valueOf(id),
+                request.getName(),httpRequest.getRemoteAddr(),"success");
+        return R.ok(tag);
     }
 
     @DeleteMapping("/{id}")
+    @org.springframework.transaction.annotation.Transactional
     public R<Void> delete(@PathVariable Long id, Authentication auth, HttpServletRequest httpRequest) {
-        requireAdmin(auth);
-        throw new BusinessException(403, "Global tag deletion is unavailable");
+        Long actor=requireAdmin(auth);
+        if (tagManagement==null) throw new BusinessException(503,"Tag authorization unavailable");
+        tagManagement.requireManage(actor,id);
+        tagService.delete(id);
+        auditLogService.logSync(actor,AuditUsers.name(auth),"DELETE_TAG","tag",String.valueOf(id),
+                null,httpRequest.getRemoteAddr(),"success");
+        return R.ok();
     }
 
     @GetMapping("/list")

@@ -45,7 +45,7 @@ public class TagServiceImpl implements TagService {
     @Override
     @Transactional
     public TagVO update(Long id, TagRequest request) {
-        Tag tag = tagRepository.findById(id)
+        Tag tag = tagRepository.lockById(id)
                 .orElseThrow(() -> new BusinessException(404, "Tag not found"));
 
         if (!tag.getName().equals(request.getName()) && tagRepository.existsByName(request.getName())) {
@@ -63,9 +63,7 @@ public class TagServiceImpl implements TagService {
     @Override
     @Transactional
     public void delete(Long id) {
-        if (!tagRepository.existsById(id)) {
-            throw new BusinessException(404, "Tag not found");
-        }
+        tagRepository.lockById(id).orElseThrow(() -> new BusinessException(404,"Tag not found"));
         List<AgentTag> agentTags = agentTagRepository.findByTagId(id);
         agentTagRepository.deleteAll(agentTags);
         tagRepository.deleteById(id);
@@ -81,9 +79,7 @@ public class TagServiceImpl implements TagService {
     @Override
     @Transactional
     public void addTagToAgent(Long tagId, String agentId) {
-        if (!tagRepository.existsById(tagId)) {
-            throw new BusinessException(404, "Tag not found");
-        }
+        tagRepository.lockById(tagId).orElseThrow(() -> new BusinessException(404,"Tag not found"));
         if (!agentRepository.existsById(agentId)) {
             throw new BusinessException(404, "Agent not found");
         }
@@ -99,6 +95,7 @@ public class TagServiceImpl implements TagService {
     @Override
     @Transactional
     public void removeTagFromAgent(Long tagId, String agentId) {
+        tagRepository.lockById(tagId).orElseThrow(() -> new BusinessException(404,"Tag not found"));
         agentTagRepository.deleteByAgentIdAndTagId(agentId, tagId);
     }
 

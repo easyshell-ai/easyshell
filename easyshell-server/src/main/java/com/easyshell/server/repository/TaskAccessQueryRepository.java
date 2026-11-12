@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.time.LocalDateTime;
 
 /** Read-side authorization: unknown task identities are never treated as visible. */
 @Repository
@@ -77,6 +78,39 @@ public class TaskAccessQueryRepository {
         requireMigration();
         return bind(em.createNativeQuery("SELECT t.*" + VISIBLE + "ORDER BY t.created_at DESC, t.id DESC", Task.class), actor)
                 .getResultList();
+    }
+
+    public record Dashboard(long total, long today, long todaySucceeded, long todayFailed,
+                            double successRate, List<Task> recent) { }
+
+    private static final String DASHBOARD_SELECT = "SELECT COUNT(*), "
+            + "COALESCE(SUM(CASE WHEN t.created_at >= :day THEN 1 ELSE 0 END),0), "
+            + "COALESCE(SUM(CASE WHEN t.created_at >= :day AND t.status = 2 THEN 1 ELSE 0 END),0), "
+            + "COALESCE(SUM(CASE WHEN t.created_at >= :day AND t.status = 4 THEN 1 ELSE 0 END),0), "
+            + "COALESCE(SUM(CASE WHEN t.status = 2 THEN 1 ELSE 0 END),0)" + VISIBLE;
+
+    /** Exactly the task-list visibility policy, with database-side bounded aggregation. */
+    @SuppressWarnings("unchecked")
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+    public Dashboard dashboard(long actor, LocalDateTime dayStart) {
+        requireMigration();
+        Object[] row = (Object[]) bind(em.createNativeQuery(DASHBOARD_SELECT), actor)
+                .setParameter("day", dayStart).getSingleResult();
+        long total = ((Number) row[0]).longValue();
+        List<Task> tasks = bind(em.createNativeQuery("SELECT t.*" + VISIBLE
+                + "ORDER BY t.created_at DESC, t.id DESC", Task.class), actor).setMaxResults(10).getResultList();
+        // Dashboard only needs a summary; do not serialize scripts or dispatch evidence.
+        List<Task> summaries = tasks.stream().map(task -> {
+            Task summary = new Task();
+            summary.setId(task.getId()); summary.setName(task.getName());
+            summary.setStatus(task.getStatus()); summary.setTotalCount(task.getTotalCount());
+            summary.setSuccessCount(task.getSuccessCount()); summary.setFailedCount(task.getFailedCount());
+            summary.setCreatedAt(task.getCreatedAt());
+            return summary;
+        }).toList();
+        return new Dashboard(total, ((Number) row[1]).longValue(), ((Number) row[2]).longValue(),
+                ((Number) row[3]).longValue(), total == 0 ? 0 : ((Number) row[4]).doubleValue() * 100 / total,
+                summaries);
     }
 
     @SuppressWarnings("unchecked")

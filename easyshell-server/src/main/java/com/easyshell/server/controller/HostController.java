@@ -22,6 +22,7 @@ import com.easyshell.server.repository.ScriptRepository;
 import com.easyshell.server.repository.TaskRepository;
 import com.easyshell.server.service.AgentService;
 import com.easyshell.server.service.TagService;
+import com.easyshell.server.service.DashboardStatisticsService;
 import com.easyshell.server.model.vo.TagVO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
@@ -48,6 +49,7 @@ public class HostController {
     private final HostIdentityService hostIdentityService;
     private final HostAclService hostAclService;
     private final UserRepository users;
+    private final DashboardStatisticsService dashboardStatistics;
 
 
     @GetMapping("/list")
@@ -119,6 +121,7 @@ public class HostController {
     }
 
     @GetMapping("/dashboard/stats")
+    @Transactional(readOnly = true, isolation = org.springframework.transaction.annotation.Isolation.REPEATABLE_READ)
     public R<DashboardStatsVO> dashboardStats(Authentication authentication) {
         List<Agent> visible = visibleAgents(principal(authentication));
         long total = visible.size();
@@ -166,8 +169,6 @@ public class HostController {
                         .build())
                 .collect(Collectors.toList());
 
-        // Neither task data nor global script counts are safely scoped to this principal.
-
         DashboardStatsVO stats = DashboardStatsVO.builder()
                 .totalAgents(total)
                 .onlineAgents(online)
@@ -190,6 +191,7 @@ public class HostController {
                 .recentTasks(null)
                 .onlineAgentDetails(onlineAgentDetails)
                 .build();
+        dashboardStatistics.populate(principal(authentication), stats);
         return R.ok(stats);
     }
 

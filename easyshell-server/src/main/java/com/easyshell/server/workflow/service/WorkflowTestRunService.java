@@ -131,7 +131,7 @@ public class WorkflowTestRunService {
                     .nodeType(NodeType.CODE.code())
                     .status("unavailable")
                     .riskMatches(List.of())
-                    .warnings(List.of("CODE_RUNTIME_UNAVAILABLE: code 节点运行时不可用，试运行未执行代码"))
+                    .warnings(List.of("该入口仅预演，不执行代码；请使用节点编辑器的隔离代码样例运行"))
                     .build();
             case NOTIFY -> previewNotify(node);
             case APPROVAL, WAIT -> WorkflowTestRunVO.builder()
