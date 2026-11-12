@@ -27,6 +27,8 @@ public class ChannelMessageRouter {
     private final CryptoUtils cryptoUtils;
 
     private final Map<String, BotChannelService> serviceMap = new ConcurrentHashMap<>();
+    @org.springframework.beans.factory.annotation.Autowired
+    private BoundChannelChatService boundChat;
 
     public ChannelMessageRouter(@Lazy List<BotChannelService> channelServices,
                                  SystemConfigRepository systemConfigRepository,
@@ -93,10 +95,18 @@ public class ChannelMessageRouter {
     }
 
     /**
-     * Inbound identities are not yet authenticated and bound to local users. Never route
-     * them to AI using a shared account, including for session management commands.
+     * Explicit deployment bindings only. Never use a shared account or let external
+     * session commands select local session IDs; unbound identities remain denied.
      */
     public String routeMessage(String channelKey, String userMessage, String externalUserId) {
+        if (boundChat!=null) {
+            try { return boundChat.reply(channelKey,externalUserId,userMessage); }
+            catch (com.easyshell.server.common.exception.BusinessException denied) {
+                // No untrusted identity, message or exception text in logs/replies.
+            } catch (Exception failed) {
+                return "渠道 AI 暂不可用，请稍后重试。 / Channel AI is temporarily unavailable.";
+            }
+        }
         // Do not log caller-controlled identifiers, message contents, or credentials.
         log.warn("Inbound channel AI request denied: trusted user binding is unavailable");
         return "外部身份尚未授权，暂无法使用 AI；请联系管理员。 / "

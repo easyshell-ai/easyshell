@@ -18,6 +18,17 @@ import static org.mockito.Mockito.*;
 
 class ChannelMessageRouterTest {
     @Test
+    void explicitlyBoundInboundDelegatesWithoutReturningInternalErrors() {
+        var bound=mock(BoundChannelChatService.class);
+        var router=new ChannelMessageRouter(List.of(),mock(SystemConfigRepository.class),mock(CryptoUtils.class));
+        org.springframework.test.util.ReflectionTestUtils.setField(router,"boundChat",bound);
+        when(bound.reply("telegram","12345","hello")).thenReturn("reply");
+        assertEquals("reply",router.routeMessage("telegram","hello","12345"));
+        when(bound.reply("telegram","12345","hello")).thenThrow(new IllegalStateException("secret-provider-error"));
+        assertFalse(router.routeMessage("telegram","hello","12345").contains("secret-provider-error"));
+    }
+
+    @Test
     void inboundAlwaysFailsClosedWithoutReadingConfigurationOrLoggingUntrustedData() {
         SystemConfigRepository configs = mock(SystemConfigRepository.class);
         ChannelMessageRouter router = new ChannelMessageRouter(List.of(), configs, mock(CryptoUtils.class));
