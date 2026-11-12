@@ -14,8 +14,6 @@ import com.easyshell.server.repository.AgentTagRepository;
 import com.easyshell.server.repository.ClusterAgentRepository;
 import com.easyshell.server.repository.JobRepository;
 import com.easyshell.server.service.AuditLogService;
-import com.easyshell.server.service.TaskService;
-import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -37,7 +35,6 @@ public class AiSchedulerService {
 
     private final AiScheduledTaskRepository scheduledTaskRepository;
     private final AiInspectReportRepository reportRepository;
-    private final TaskService taskService;
     private final ChatModelFactory chatModelFactory;
     private final AgentRepository agentRepository;
     private final ClusterAgentRepository clusterAgentRepository;
@@ -47,10 +44,10 @@ public class AiSchedulerService {
     private final TaskScheduler taskScheduler;
     private final SensitiveDataFilter sensitiveDataFilter;
     private final ScheduledTaskNotifier scheduledTaskNotifier;
+    private final InspectExecutionService inspectExecutionService;
 
     private final Map<Long, ScheduledFuture<?>> scheduledFutures = new ConcurrentHashMap<>();
 
-    @PostConstruct
     public void init() {
         List<AiScheduledTask> enabledTasks = scheduledTaskRepository.findByEnabledTrueOrderByCreatedAtDesc();
         for (AiScheduledTask task : enabledTasks) {
@@ -110,6 +107,10 @@ public class AiSchedulerService {
             log.warn("Scheduled task {} disabled, skipping", scheduledTaskId);
             return;
         }
+        if (scheduledTask.getCreatedBy() == null || scheduledTask.getCreatedBy() <= 0) {
+            log.warn("Scheduled task {} has no valid owner, skipping", scheduledTaskId);
+            return;
+        }
 
         log.info("Executing scheduled task [{}] id={}", scheduledTask.getName(), scheduledTask.getId());
 
@@ -134,13 +135,11 @@ public class AiSchedulerService {
             request.setScriptContent(script);
             request.setAgentIds(agentIds);
             request.setTimeoutSeconds(120);
-            // riskCleared: 定时任务是用户显式创建/启用并自己提供的脚本（含内置巡检
-            // 模板），属于上游已授权路径；门禁在咽喉要道默认拒绝未授权调用方。
-            request.setRiskCleared(true);
-
-            runningReport = saveReport(scheduledTask, null, null, "running");
-
-            Task task = taskService.createAndDispatch(request, scheduledTask.getCreatedBy());
+            // 任务 ID 尚未绑定最终脚本和目标，不能作为风险门禁的豁免证据。
+            // 在精确绑定完成之前，非 LOW 风险巡检由唯一派发门禁拒绝。
+            var execution = inspectExecutionService.create(scheduledTask, request);
+            runningReport = execution.report();
+            Task task = execution.task();
 
             String scriptOutput = collectExecutionOutput(task.getId());
             String aiAnalysis = null;

@@ -19,6 +19,8 @@ import com.easyshell.server.ai.service.CopilotAuthService;
 import com.easyshell.server.ai.tool.*;
 import com.easyshell.server.model.entity.Agent;
 import com.easyshell.server.repository.AgentRepository;
+import com.easyshell.server.service.HostAclService;
+import com.easyshell.server.common.exception.BusinessException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -52,6 +54,7 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -62,6 +65,7 @@ public class OrchestratorEngine {
 
     private final ChatModelFactory chatModelFactory;
     private final AgentRepository agentRepository;
+    private final HostAclService hostAclService;
     private final AgentDefinitionRepository agentDefinitionRepository;
     private final AgenticConfigService agenticConfigService;
     private final MessageSource messageSource;
@@ -100,6 +104,7 @@ public class OrchestratorEngine {
     public OrchestratorEngine(
             ChatModelFactory chatModelFactory,
             AgentRepository agentRepository,
+            HostAclService hostAclService,
             AgentDefinitionRepository agentDefinitionRepository,
             AgenticConfigService agenticConfigService,
             MessageSource messageSource,
@@ -136,6 +141,7 @@ public class OrchestratorEngine {
             CopilotAuthService copilotAuthService) {
         this.chatModelFactory = chatModelFactory;
         this.agentRepository = agentRepository;
+        this.hostAclService = hostAclService;
         this.agentDefinitionRepository = agentDefinitionRepository;
         this.agenticConfigService = agenticConfigService;
         this.messageSource = messageSource;
@@ -190,6 +196,9 @@ public class OrchestratorEngine {
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
     public Flux<AgentEvent> process(OrchestratorRequest request) {
+        if (request.getUserId() == null || request.getUserId() <= 0) {
+            return Flux.error(new IllegalArgumentException("Missing user identity"));
+        }
         return Flux.<AgentEvent>create(sink -> {
             sink.onDispose(() -> log.debug("SSE client disconnected for session {}", request.getSessionId()));
             Schedulers.boundedElastic().schedule(() -> executeOrchestration(request, sink));
@@ -199,23 +208,24 @@ public class OrchestratorEngine {
 
     private void executeOrchestration(OrchestratorRequest request, FluxSink<AgentEvent> sink) {
         AtomicBoolean cancelled = new AtomicBoolean(false);
-        sink.onCancel(() -> cancelled.set(true));
+        AtomicReference<CompletableFuture<Boolean>> pendingConfirmation = new AtomicReference<>();
+        sink.onCancel(() -> {
+            cancelled.set(true);
+            CompletableFuture<Boolean> future = pendingConfirmation.get();
+            if (future != null) future.cancel(false);
+        });
 
         ScheduledFuture<?> heartbeat = null;
 
         try {
             sink.next(AgentEvent.session(request.getSessionId()));
 
-            scriptExecuteTool.setContext(request.getUserId(), request.getSourceIp());
-            softwareDetectTool.setContext(request.getUserId(), request.getSourceIp());
-            taskManageTool.setContext(request.getUserId(), request.getSourceIp());
-            scriptManageTool.setContext(request.getUserId(), request.getSourceIp());
-
             ChatModel chatModel = chatModelFactory.getChatModel(request.getProvider(), request.getModel());
 
             List<Message> messages = new ArrayList<>(request.getHistory());
 
             if (request.getTargetAgentIds() != null && !request.getTargetAgentIds().isEmpty()) {
+                requireTargetAccess(request.getTargetAgentIds(), request.getUserId());
                 List<Agent> targetAgents = agentRepository.findAllById(request.getTargetAgentIds());
                 if (!targetAgents.isEmpty()) {
                     StringBuilder ctx = new StringBuilder("Target hosts specified by user:\n");
@@ -258,7 +268,7 @@ public class OrchestratorEngine {
 
             boolean toolsEnabled = request.isEnableTools();
 
-            ToolCallback[] rawCallbacks = toolsEnabled ? ToolCallbacks.from(getAllTools()) : new ToolCallback[0];
+            ToolCallback[] rawCallbacks = toolsEnabled ? ToolCallbacks.from(getAllTools(request.getUserId(), request.getSourceIp())) : new ToolCallback[0];
             ToolCallback[] filteredCallbacks = toolSetSelector.selectTools(taskType, rawCallbacks);
             Map<String, ToolCallback> toolMap = buildToolMap(filteredCallbacks);
 
@@ -296,37 +306,7 @@ public class OrchestratorEngine {
                 sink.next(AgentEvent.thinking(i18n("ai.planning.start"), "planner"));
                 try {
                     plan = generatePlan(chatModel, rawCallbacks, messages, request, sink, cancelled);
-                    if (plan != null && plan.getSteps() != null && !plan.getSteps().isEmpty()) {
-                        request.setExecutionPlan(plan);
-                        sink.next(AgentEvent.plan(plan));
-                        if (plan.isRequiresConfirmation()) {
-                            sink.next(AgentEvent.planAwaitConfirmation(plan));
-                            int timeout = agenticConfigService.getInt("ai.plan.confirmation-timeout", 300);
-                            try {
-                                CompletableFuture<Boolean> confirmation =
-                                        planConfirmationManager.waitForConfirmation(request.getSessionId(), timeout);
-                                Boolean confirmed = confirmation.get();
-                                if (!Boolean.TRUE.equals(confirmed)) {
-                                    sink.next(AgentEvent.planRejected(request.getSessionId()));
-                                    sink.next(AgentEvent.done(request.getSessionId()));
-                                    sink.complete();
-                                    return;
-                                }
-                                sink.next(AgentEvent.planConfirmed(request.getSessionId()));
-                            } catch (Exception e) {
-                                Throwable cause = e.getCause();
-                                if (cause instanceof TimeoutException) {
-                                    sink.next(AgentEvent.thinking(i18n("ai.planning.timeout"), "system"));
-                                } else {
-                                    log.warn("Plan confirmation failed: {}", e.getMessage());
-                                    sink.next(AgentEvent.planRejected(request.getSessionId()));
-                                }
-                                sink.next(AgentEvent.done(request.getSessionId()));
-                                sink.complete();
-                                return;
-                            }
-                        }
-                    } else {
+                    if (plan == null || plan.getSteps() == null || plan.getSteps().isEmpty()) {
                         plan = null;
                     }
                 } catch (Exception e) {
@@ -342,6 +322,52 @@ public class OrchestratorEngine {
             if (cancelled.get()) return;
 
             if (plan != null && plan.getSteps() != null && !plan.getSteps().isEmpty()) {
+                request.setExecutionPlan(plan);
+                if (plan.isRequiresConfirmation()) {
+                    CompletableFuture<Boolean> confirmation = null;
+                    try {
+                        int timeout = agenticConfigService.getInt("ai.plan.confirmation-timeout", 300);
+                        var pendingPlan = planConfirmationManager.waitForConfirmation(request.getSessionId(), timeout);
+                        confirmation = pendingPlan.future();
+                        pendingConfirmation.set(confirmation);
+                        if (cancelled.get() || sink.isCancelled()) {
+                            confirmation.cancel(false);
+                            return;
+                        }
+                        sink.next(AgentEvent.plan(plan));
+                        sink.next(AgentEvent.planAwaitConfirmation(plan, pendingPlan.planId()));
+                        if (!Boolean.TRUE.equals(confirmation.get()) || cancelled.get() || sink.isCancelled()) {
+                            if (!sink.isCancelled()) {
+                                sink.next(AgentEvent.planRejected(request.getSessionId()));
+                                sink.next(AgentEvent.done(request.getSessionId()));
+                                sink.complete();
+                            }
+                            return;
+                        }
+                        sink.next(AgentEvent.planConfirmed(request.getSessionId()));
+                    } catch (Exception e) {
+                        if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+                        if (!sink.isCancelled()) {
+                            if (e.getCause() instanceof TimeoutException) {
+                                sink.next(AgentEvent.thinking(i18n("ai.planning.timeout"), "system"));
+                            } else {
+                                log.warn("Plan confirmation failed: {}", e.getMessage());
+                                sink.next(AgentEvent.planRejected(request.getSessionId()));
+                            }
+                            sink.next(AgentEvent.done(request.getSessionId()));
+                            sink.complete();
+                        }
+                        return;
+                    } finally {
+                        if (confirmation != null) {
+                            pendingConfirmation.compareAndSet(confirmation, null);
+                            confirmation.cancel(false);
+                        }
+                    }
+                } else {
+                    sink.next(AgentEvent.plan(plan));
+                }
+                if (cancelled.get() || sink.isCancelled()) return;
                 planExecutor.executePlan(plan, request, sink, cancelled);
                 emitApprovalIfNeeded(request.getResponseContent(), sink);
 
@@ -641,18 +667,26 @@ public class OrchestratorEngine {
         }
     }
 
-    private Object[] getAllTools() {
+    private Object[] getAllTools(Long userId, String sourceIp) {
         List<Object> tools = new java.util.ArrayList<>(List.of(
-                hostListTool, hostTagTool, scriptExecuteTool, softwareDetectTool,
-                taskManageTool, scriptManageTool, clusterManageTool,
-                monitoringTool, auditQueryTool, scheduledTaskTool,
-                subAgentTool, delegateTaskTool, getTaskResultTool,
+                hostListTool.forUser(userId, sourceIp), hostTagTool.forUser(userId, sourceIp), scriptExecuteTool.forUser(userId, sourceIp), softwareDetectTool.forUser(userId, sourceIp),
+                taskManageTool.forUser(userId, sourceIp), scriptManageTool.forUser(userId, sourceIp), clusterManageTool.forUser(userId, sourceIp),
+                monitoringTool.forUser(userId, sourceIp), auditQueryTool.forUser(userId, sourceIp), scheduledTaskTool.forUser(userId, sourceIp),
+                subAgentTool, delegateTaskTool.forUser(userId, sourceIp), getTaskResultTool.forUser(userId, sourceIp),
                 dateTimeTool, webFetchTool, webSearchTool,
                 calculatorTool, textProcessTool, notificationTool,
                 dataFormatTool, encodingTool
         ));
         tools.add(knowledgeBaseTool);
         return tools.toArray();
+    }
+
+    private void requireTargetAccess(List<String> ids, Long userId) {
+        if (ids == null) return;
+        for (String id : ids) {
+            if (!hostAclService.allowed(userId, id, HostAclService.Permission.VIEW))
+                throw new BusinessException(403, "无权访问目标主机");
+        }
     }
 
     private String i18n(String key, Object... args) {
@@ -663,7 +697,8 @@ public class OrchestratorEngine {
         }
     }
 
-    public String executeAsSubAgent(AgentDefinition agent, String prompt, ChatModelFactory modelFactory) {
+    public String executeAsSubAgent(AgentDefinition agent, String prompt, ChatModelFactory modelFactory, Long userId, String sourceIp) {
+        if (userId == null || userId <= 0) throw new IllegalArgumentException("Missing user identity");
         ChatModel chatModel;
         if (agent.getModelProvider() != null && !agent.getModelProvider().isBlank()) {
             chatModel = modelFactory.getChatModel(agent.getModelProvider(), agent.getModelName());
@@ -671,7 +706,7 @@ public class OrchestratorEngine {
             chatModel = modelFactory.getChatModel(null);
         }
 
-        ToolCallback[] allCallbacks = ToolCallbacks.from(getAllTools());
+        ToolCallback[] allCallbacks = ToolCallbacks.from(getAllTools(userId, sourceIp));
         ToolCallback[] filteredCallbacks = filterToolsByPermissions(allCallbacks, agent.getPermissions());
         Map<String, ToolCallback> toolMap = buildToolMap(filteredCallbacks);
 

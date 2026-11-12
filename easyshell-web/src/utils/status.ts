@@ -117,9 +117,9 @@ export const reportStatusMap: Record<string, StatusEntryWithLabel> = {
  * > 80% → red, > 60% → yellow, else → green
  */
 export const getResourceColor = (value: number): string => {
-  if (value > 80) return '#ff4d4f';
-  if (value > 60) return '#faad14';
-  return '#52c41a';
+  if (value > 80) return 'var(--es-color-error, #ff6161)';
+  if (value > 60) return 'var(--es-color-warning, #ffc533)';
+  return 'var(--es-color-success, #59d499)';
 };
 
 export const provisionStepIndex: Record<string, number> = {

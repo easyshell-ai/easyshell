@@ -5,7 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useResponsive } from '../../hooks/useResponsive';
 import { login } from '../../api/auth';
-import { setToken } from '../../api/request';
+import { getSessionEpoch, setToken } from '../../api/request';
 import type { LoginRequest } from '../../types';
 
 const Login: React.FC = () => {
@@ -16,9 +16,11 @@ const Login: React.FC = () => {
   const { isMobile } = useResponsive();
 
   const onFinish = async (values: LoginRequest) => {
+    const epoch = getSessionEpoch();
     setLoading(true);
     try {
       const res = await login(values);
+      if (epoch !== getSessionEpoch()) return;
       if (res.code === 200 && res.data) {
         // Access token only: kept in sessionStorage so it dies with the tab, and the
         // refresh token is never persisted in the browser (see api/request.ts).
@@ -29,6 +31,7 @@ const Login: React.FC = () => {
         message.error(res.message || t('login.failed'));
       }
     } catch (error) {
+      if (epoch !== getSessionEpoch()) return;
       // The API now answers with a real 401/403/429, so surface the reason instead of a
       // generic "check your input" message.
       const status = (error as { response?: { status?: number; data?: { message?: string } } })?.response;
@@ -57,30 +60,28 @@ const Login: React.FC = () => {
       <div style={{
         width: '100%',
         maxWidth: 400,
-        padding: isMobile ? '32px 24px' : '48px 40px',
+        padding: isMobile ? '28px 22px' : '36px 32px',
         borderRadius: 12,
         background: token.colorBgContainer,
         border: `1px solid ${token.colorBorderSecondary}`,
-        boxShadow: '0 1px 3px rgba(0, 0, 0, 0.08)',
       }}>
-        {/* Logo */}
-        <div style={{ textAlign: 'center', marginBottom: isMobile ? 32 : 40 }}>
+        <div style={{ textAlign: 'center', marginBottom: isMobile ? 24 : 28 }}>
           <div style={{
             display: 'inline-flex',
             alignItems: 'center',
             justifyContent: 'center',
-            width: isMobile ? 48 : 56,
-            height: isMobile ? 48 : 56,
-            borderRadius: 12,
+            width: 40,
+            height: 40,
+            borderRadius: 8,
             background: token.colorPrimary,
-            marginBottom: 16,
+            marginBottom: 14,
           }}>
-            <ThunderboltOutlined style={{ fontSize: isMobile ? 24 : 28, color: '#fff' }} />
+            <ThunderboltOutlined style={{ fontSize: 20, color: token.colorTextLightSolid }} />
           </div>
-          <Typography.Title level={isMobile ? 3 : 2} style={{
+          <Typography.Title level={3} style={{
             margin: 0,
-            fontWeight: 700,
-            letterSpacing: 2,
+            fontWeight: 600,
+            letterSpacing: '-0.02em',
             color: token.colorText,
           }}>
             EasyShell
@@ -113,10 +114,10 @@ const Login: React.FC = () => {
               block
               loading={loading}
               style={{
-                height: 48,
+                height: 40,
                 borderRadius: 8,
-                fontSize: 16,
-                fontWeight: 600,
+                fontSize: 14,
+                fontWeight: 500,
               }}
             >
               {t('login.submit')}

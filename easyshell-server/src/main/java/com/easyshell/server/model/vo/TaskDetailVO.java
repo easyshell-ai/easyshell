@@ -17,4 +17,7 @@ public class TaskDetailVO {
 
     private Task task;
     private List<Job> jobs;
+    private WorkflowSource workflowSource;
+
+    public record WorkflowSource(String runId, String nodeKey, Integer attempt) {}
 }

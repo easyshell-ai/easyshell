@@ -13,12 +13,16 @@ import com.easyshell.server.repository.AgentRepository;
 import com.easyshell.server.repository.AgentTagRepository;
 import com.easyshell.server.repository.JobRepository;
 import com.easyshell.server.repository.TagRepository;
+import com.easyshell.server.service.DispatchAuthority;
 import com.easyshell.server.service.TaskService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
 import java.util.*;
 
@@ -33,8 +37,11 @@ public class HostIntelligenceService {
     private final TagRepository tagRepository;
     private final AgentTagRepository agentTagRepository;
     private final HostSoftwareInventoryRepository inventoryRepository;
+    @org.springframework.beans.factory.annotation.Autowired
+    private DetectionResultAccess detectionAccess;
 
-    private static final String DETECTION_SCRIPT = """
+    // package-private：同包测试（BuiltinDetectionScriptVerifierTest）需要原文做指纹比对的正例
+    static final String DETECTION_SCRIPT = """
             #!/bin/bash
             echo "===DETECTION_START==="
             echo "--- SOFTWARE ---"
@@ -73,6 +80,7 @@ public class HostIntelligenceService {
             echo "===DETECTION_END==="
             """;
 
+    @Transactional
     public String triggerDetection(String agentId, Long userId) {
         Agent agent = agentRepository.findById(agentId)
                 .orElseThrow(() -> new BusinessException(404, "主机不存在: " + agentId));
@@ -86,14 +94,39 @@ public class HostIntelligenceService {
         request.setScriptContent(DETECTION_SCRIPT);
         request.setAgentIds(List.of(agentId));
         request.setTimeoutSeconds(30);
-        // riskCleared: 内置的只读探测脚本（写死在代码里、用户不可改），
-        // 属于上游已授权路径，避免被咽喉要道的门禁误拦。
-        request.setRiskCleared(true);
+        // 内置只读探测脚本：证据 = 脚本正文与代码里的 DETECTION_SCRIPT 常量逐字节一致
+        // （BuiltinDetectionScriptVerifier 做 sha256 比对，换脚本蹭授权会被拦下）。
 
-        Task task = taskService.createAndDispatch(request, userId);
+        Task task = taskService.createAndDispatch(request, userId,
+                DispatchAuthority.BUILTIN_READONLY_SCRIPT, "builtin:detection");
         task.setSource("ai_detect");
         log.info("Triggered software detection for agent {} ({}), taskId={}", agentId, agent.getHostname(), task.getId());
         return task.getId();
+    }
+
+    /**
+     * 内置探测脚本的指纹比对：{@code BUILTIN_READONLY_SCRIPT} 授权的证据。
+     * 只有与本常量逐字节一致的脚本才配获得内置豁免，防止调用方换脚本蹭授权。
+     */
+    public static boolean isBuiltinDetectionScript(String scriptContent) {
+        return scriptContent != null && sha256Hex(scriptContent).equals(sha256Hex(DETECTION_SCRIPT));
+    }
+
+    private static String sha256Hex(String text) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(text.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 unavailable", e);
+        }
+    }
+
+    @Transactional
+    public List<HostSoftwareInventory> parseAndStoreAuthorized(String taskId,String agentId,Long actor) {
+        if (detectionAccess==null) throw new BusinessException(503,"Detection authorization unavailable");
+        detectionAccess.requireParse(actor,taskId,agentId);
+        return parseAndStore(taskId,agentId);
     }
 
     @Transactional
@@ -258,13 +291,17 @@ public class HostIntelligenceService {
     private void applyAutoTags(String agentId, Set<String> tagNames) {
         if (tagNames.isEmpty()) return;
 
-        for (String tagName : tagNames) {
+        for (String tagName : tagNames.stream().sorted().toList()) {
             Tag tag = tagRepository.findByName(tagName).orElseGet(() -> {
                 Tag newTag = new Tag();
                 newTag.setName(tagName);
                 newTag.setColor(getTagColor(tagName));
                 return tagRepository.save(newTag);
             });
+
+            // Serialize every membership writer with global tag management.
+            tagRepository.lockById(tag.getId())
+                    .orElseThrow(() -> new BusinessException(409,"Tag changed during detection"));
 
             if (!agentTagRepository.existsByAgentIdAndTagId(agentId, tag.getId())) {
                 AgentTag agentTag = new AgentTag();

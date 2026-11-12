@@ -202,14 +202,14 @@ export default function ScriptWorkbench() {
     <div style={{ 
       display: 'flex', 
       flexDirection: 'column', 
-      height: 'var(--content-inner-height, calc(100vh - 112px))',
+      height: 'var(--es-content-inner-height, calc(100vh - 112px))',
       backgroundColor: token.colorBgContainer,
       borderRadius: token.borderRadiusLG,
       overflow: 'hidden'
     }}>
       {/* Header */}
       <div style={{ 
-        padding: '12px 24px', 
+        padding: '12px 16px', 
         borderBottom: `1px solid ${token.colorBorderSecondary}`,
         display: 'flex',
         alignItems: 'center',
@@ -393,7 +393,7 @@ export default function ScriptWorkbench() {
                   width: 3,
                   height: 3,
                   borderRadius: '50%',
-                  backgroundColor: token.colorTextQuaternary,
+                  backgroundColor: token.colorTextTertiary,
                 }} />
               ))}
             </div>

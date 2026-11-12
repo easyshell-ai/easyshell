@@ -9,28 +9,33 @@ import com.easyshell.server.model.entity.User;
 import com.easyshell.server.repository.ScriptRepository;
 import com.easyshell.server.repository.SystemConfigRepository;
 import com.easyshell.server.repository.UserRepository;
+import com.easyshell.server.repository.HostAclRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.CommandLineRunner;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.security.SecureRandom;
-import java.util.Optional;
 
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class DataInitializer implements CommandLineRunner {
+public class DataInitializer {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final ScriptRepository scriptRepository;
     private final SystemConfigRepository systemConfigRepository;
     private final AgentDefinitionRepository agentDefinitionRepository;
+    private final HostAclRepository hostAclRepository;
 
-    @Override
-    public void run(String... args) {
+    /** Serialize startup writes across instances, after the legacy ACL snapshot commits. */
+    @Transactional
+    public void initialize() {
+        if (!hostAclRepository.lockCompleted()) {
+            throw new IllegalStateException("Host ACL migration incomplete");
+        }
         initAdmin();
         initScriptTemplates();
         initSystemConfigs();
@@ -145,14 +150,6 @@ public class DataInitializer implements CommandLineRunner {
             config.setConfigGroup(group);
             systemConfigRepository.save(config);
             log.info("Created system config: {} = {}", key, value);
-        } else {
-            // Always sync description to latest i18n key
-            SystemConfig config = existing.get();
-            if (!description.equals(config.getDescription())) {
-                config.setDescription(description);
-                systemConfigRepository.save(config);
-                log.debug("Updated description for config: {}", key);
-            }
         }
     }
 
@@ -398,18 +395,7 @@ public class DataInitializer implements CommandLineRunner {
     private void createAgentIfAbsent(String name, String displayName, String mode,
                                       String permissions, String modelProvider, String modelName,
                                       String systemPrompt, int maxIterations, String description) {
-        if (agentDefinitionRepository.findByNameAndEnabledTrue(name).isEmpty()) {
-            // Check if agent exists but is disabled — if so, enable it
-            Optional<AgentDefinition> existing = agentDefinitionRepository.findByName(name);
-            if (existing.isPresent()) {
-                AgentDefinition agent = existing.get();
-                if (!Boolean.TRUE.equals(agent.getEnabled())) {
-                    agent.setEnabled(true);
-                    agentDefinitionRepository.save(agent);
-                    log.info("Enabled existing agent definition: {}", name);
-                }
-                return;
-            }
+        if (agentDefinitionRepository.findByName(name).isEmpty()) {
             AgentDefinition agent = new AgentDefinition();
             agent.setName(name);
             agent.setDisplayName(displayName);

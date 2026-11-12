@@ -46,6 +46,12 @@ dependencies {
     // Database
     runtimeOnly("com.mysql:mysql-connector-j")
 
+    // Flyway（1.2.0 数据层地基）：只纳管 workflow* 五张新表，
+    // 存量表仍由 ddl-auto 管理，"双主管"对冲见 WorkflowSchemaFilterProvider
+    implementation("org.flywaydb:flyway-core")
+    // Flyway 10+ 起数据库支持模块化，MySQL 方言支持需要显式引入
+    runtimeOnly("org.flywaydb:flyway-mysql")
+
     // QueryDSL
     implementation("com.querydsl:querydsl-jpa:$queryDslVersion:jakarta")
     annotationProcessor("com.querydsl:querydsl-apt:$queryDslVersion:jakarta")
@@ -81,6 +87,12 @@ dependencies {
     implementation("io.github.java-diff-utils:java-diff-utils:4.12")
     implementation("com.jayway.jsonpath:json-path:2.9.0")
 
+    // Workflow 2.1 code 节点：GraalVM Polyglot 沙箱（JS / Python 社区运行时）
+    // 23.1.2 是最后一个支持 JDK 17 的 23.1.x 版本；只引入语言运行时，不引入编译器。
+    implementation("org.graalvm.polyglot:polyglot:23.1.2")
+    implementation("org.graalvm.polyglot:js-community:23.1.2")
+    implementation("org.graalvm.polyglot:python-community:23.1.2")
+
     // Dev Tools
     developmentOnly("org.springframework.boot:spring-boot-devtools")
     annotationProcessor("org.springframework.boot:spring-boot-configuration-processor")
@@ -93,4 +105,14 @@ dependencies {
 
 tasks.withType<Test> {
     useJUnitPlatform()
+    // 集成测试（@SpringBootTest + H2 + 打桩 Redis）在共享核 CI/开发机上并行跑时，
+    // 上下文启动与 awaitility 轮询会互相挤。曾经出现过连续两次全量跑里
+    // WorkflowApiContractTest 的两条审批用例随机超时（单独跑必过、clean 单跑也过），
+    // 是负载抖动而非代码缺陷。限制并行度并保留失败详情，把这层噪声压掉。
+    maxParallelForks = (Runtime.getRuntime().availableProcessors() / 2).coerceAtLeast(1)
+    testLogging {
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        showExceptions = true
+        showStandardStreams = true
+    }
 }

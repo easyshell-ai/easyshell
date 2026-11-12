@@ -17,13 +17,13 @@ const SopSuggestionCard: React.FC<SopSuggestionCardProps> = ({ title, descriptio
     <div style={{
       marginBottom: 10,
       padding: '8px 12px',
-      background: 'rgba(82,196,26,0.04)',
+      background: token.colorSuccessBg,
       borderRadius: 8,
-      border: '1px solid rgba(82,196,26,0.15)',
+      border: `1px solid ${token.colorSuccessBorder}`,
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-        <FileProtectOutlined style={{ color: '#52c41a', fontSize: 14 }} />
-        <span style={{ fontSize: 12, fontWeight: 600, color: '#52c41a' }}>
+        <FileProtectOutlined style={{ color: token.colorSuccess, fontSize: 14 }} />
+        <span style={{ fontSize: 12, fontWeight: 600, color: token.colorSuccess }}>
           {t('ai.chat.sop_matched')}
         </span>
         {confidence != null && (

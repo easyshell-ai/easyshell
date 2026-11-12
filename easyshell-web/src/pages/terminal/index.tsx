@@ -150,7 +150,7 @@ const TerminalPage: React.FC = () => {
       style={{
         display: 'flex',
         flexDirection: 'column',
-        height: 'var(--content-inner-height)',
+        height: 'var(--es-content-inner-height)',
         minHeight: 0,
         background: isFullscreen ? terminalTheme.background : undefined,
       }}

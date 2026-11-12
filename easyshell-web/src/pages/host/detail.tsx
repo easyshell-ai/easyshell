@@ -17,6 +17,7 @@ import {
   triggerDetection, parseDetection, getHostSoftware, getDockerContainers,
 } from '../../api/host';
 import type { Agent, TagVO, Job, MetricSnapshot, HostSoftwareInventory } from '../../types';
+import { queryMyHostPermissions } from '../../api/myHostPermissions';
 
 const statusMap: Record<number, { color: string; text: string }> = {
   0: { color: 'red', text: 'offline' },
@@ -56,7 +57,7 @@ const ResourceGauge: React.FC<{ title: string; value: number; color: string }> =
         type="dashboard"
         percent={Number((value ?? 0).toFixed(1))}
         size={120}
-        strokeColor={value > 80 ? '#ff4d4f' : value > 60 ? '#faad14' : color}
+        strokeColor={value > 80 ? token.colorError : value > 60 ? token.colorWarning : color}
         format={(p) => <span style={{ fontSize: 20, fontWeight: 700, color: token.colorText }}>{p}%</span>}
       />
       <div style={{ marginTop: 8, fontSize: 14, color: token.colorTextSecondary, fontWeight: 500 }}>{title}</div>
@@ -85,6 +86,7 @@ const HostDetail: React.FC = () => {
   const [metricsRange, setMetricsRange] = useState('1h');
   const [metrics, setMetrics] = useState<MetricSnapshot[]>([]);
   const [metricsLoading, setMetricsLoading] = useState(false);
+  const [terminalPermission, setTerminalPermission] = useState<{ agentId: string; state: 'unknown' | 'denied' | 'allowed' | 'error' } | null>(null);
 
   // Software inventory state
   const [software, setSoftware] = useState<HostSoftwareInventory[]>([]);
@@ -187,6 +189,30 @@ const HostDetail: React.FC = () => {
   }, [fetchData]);
 
   useEffect(() => {
+    if (!agentId) return;
+    let active = true;
+    let sequence = 0;
+    const refresh = () => {
+      const current = ++sequence;
+      setTerminalPermission({ agentId, state: 'unknown' });
+      queryMyHostPermissions([agentId]).then((res) => {
+        if (!active || current !== sequence) return;
+        if (res.code !== 200 || !Array.isArray(res.data)) {
+          setTerminalPermission({ agentId, state: 'error' });
+          return;
+        }
+        const permission = res.data.find((item) => item.agentId === agentId);
+        setTerminalPermission({ agentId, state: permission?.view === true && permission.terminal === true ? 'allowed' : 'denied' });
+      }).catch(() => {
+        if (active && current === sequence) setTerminalPermission({ agentId, state: 'error' });
+      });
+    };
+    refresh();
+    const timer = setInterval(refresh, 10000);
+    return () => { active = false; clearInterval(timer); };
+  }, [agentId]);
+
+  useEffect(() => {
     fetchMetrics(metricsRange);
   }, [fetchMetrics, metricsRange]);
 
@@ -205,10 +231,16 @@ const HostDetail: React.FC = () => {
   }
 
   if (!agent) {
-    return <div style={{ textAlign: 'center', padding: 60, color: token.colorTextTertiary }}>{t('hostDetail.notFound')}</div>;
+    return <div style={{ textAlign: 'center', padding: 16, color: token.colorTextTertiary }}>{t('hostDetail.notFound')}</div>;
   }
 
   const s = statusMap[agent.status] || statusMap[0];
+  const permissionState = terminalPermission && terminalPermission.agentId === agentId ? terminalPermission.state : 'unknown';
+  const terminalEnabled = agent.id === agentId && agent.status === 1 && permissionState === 'allowed';
+  const terminalHint = permissionState === 'unknown' ? t('hostDetail.terminalPermissionUnknown')
+    : permissionState === 'error' ? t('hostDetail.terminalPermissionError')
+      : permissionState === 'denied' ? t('hostDetail.terminalPermissionDenied')
+        : agent.status !== 1 ? t('hostDetail.terminalOffline') : undefined;
 
   const jobColumns: ColumnsType<Job> = [
     { title: t('hostDetail.taskId'), dataIndex: 'taskId', key: 'taskId', width: 200, ellipsis: true },
@@ -304,9 +336,10 @@ const HostDetail: React.FC = () => {
     <div>
       <Space style={{ marginBottom: 16 }}>
         <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/host')}>{t('common.back')}</Button>
-        <Button type="primary" icon={<CodeOutlined />} onClick={() => navigate(`/terminal/${agentId}`)} disabled={agent.status !== 1}>
+        <Button type="primary" icon={<CodeOutlined />} onClick={() => navigate(`/terminal/${agentId}`)} disabled={!terminalEnabled} title={terminalHint}>
           {t('hostDetail.webTerminal')}
         </Button>
+        {terminalHint && <Typography.Text type="secondary">{terminalHint}</Typography.Text>}
         <Typography.Title level={4} style={{ margin: 0 }}>
           <DesktopOutlined style={{ marginRight: 8 }} />
           {agent.hostname}
@@ -319,12 +352,12 @@ const HostDetail: React.FC = () => {
         size="small"
         title={<span style={{ color: token.colorText }}><HddOutlined style={{ marginRight: 8, color: token.colorPrimary }} />{t('hostDetail.resourceUsage')}</span>}
         extra={<ReloadOutlined spin={refreshing} onClick={() => fetchData(true)} style={{ cursor: 'pointer', color: token.colorTextTertiary }} />}
-        style={{ marginBottom: 16, borderRadius: 12 }}
+        style={{ marginBottom: 16 }}
       >
         <Row gutter={24} justify="center">
-          <Col><ResourceGauge title={t('hostDetail.cpuUsage')} value={agent.cpuUsage} color="#1890ff" /></Col>
-          <Col><ResourceGauge title={t('hostDetail.memoryUsage')} value={agent.memUsage} color="#52c41a" /></Col>
-          <Col><ResourceGauge title={t('hostDetail.diskUsage')} value={agent.diskUsage} color="#fa8c16" /></Col>
+          <Col><ResourceGauge title={t('hostDetail.cpuUsage')} value={agent.cpuUsage} color={token.colorPrimary} /></Col>
+          <Col><ResourceGauge title={t('hostDetail.memoryUsage')} value={agent.memUsage} color={token.colorSuccess} /></Col>
+          <Col><ResourceGauge title={t('hostDetail.diskUsage')} value={agent.diskUsage} color={token.colorWarning} /></Col>
         </Row>
       </Card>
 
@@ -342,11 +375,11 @@ const HostDetail: React.FC = () => {
             options={timeRangeOptions}
           />
         }
-        style={{ marginBottom: 16, borderRadius: 12 }}
+        style={{ marginBottom: 16 }}
       >
         <Spin spinning={metricsLoading}>
           {metrics.length === 0 ? (
-            <Empty description={t('hostDetail.noHistoryData')} style={{ padding: '40px 0' }} />
+            <Empty description={t('hostDetail.noHistoryData')} style={{ padding: '16px 0' }} />
           ) : (
             <Line
               data={metrics.flatMap((m) => [
@@ -361,7 +394,7 @@ const HostDetail: React.FC = () => {
               height={320}
               scale={{
                 y: { nice: true, min: 0, max: 100 },
-                color: { range: ['#1890ff', '#52c41a', '#fa8c16'] },
+                color: { range: [token.colorPrimary, token.colorSuccess, token.colorWarning] },
               }}
               axis={{
                 x: { title: false },
@@ -381,7 +414,7 @@ const HostDetail: React.FC = () => {
       <Card
         size="small"
         title={<span style={{ color: token.colorText }}><InfoCircleOutlined style={{ marginRight: 8, color: token.colorPrimary }} />{t('hostDetail.systemInfo')}</span>}
-        style={{ marginBottom: 16, borderRadius: 12 }}
+        style={{ marginBottom: 16 }}
       >
         <Descriptions bordered size="small" column={{ xxl: 3, xl: 3, lg: 2, md: 2, sm: 1, xs: 1 }}>
           <Descriptions.Item label={t('host.hostname')}>{agent.hostname}</Descriptions.Item>
@@ -429,7 +462,7 @@ const HostDetail: React.FC = () => {
             />
           </Space>
         }
-        style={{ marginBottom: 16, borderRadius: 12 }}
+        style={{ marginBottom: 16 }}
       >
         <Spin spinning={softwareLoading}>
           <Tabs
@@ -439,7 +472,7 @@ const HostDetail: React.FC = () => {
                 key: 'software',
                 label: `${t('hostDetail.runningSoftware')} (${software.length})`,
                 children: software.length === 0 ? (
-                  <Empty description={t('hostDetail.noSoftwareData')} style={{ padding: '40px 0' }} />
+                  <Empty description={t('hostDetail.noSoftwareData')} style={{ padding: '16px 0' }} />
                 ) : (
                   <Table<HostSoftwareInventory>
                     columns={softwareColumns}
@@ -455,7 +488,7 @@ const HostDetail: React.FC = () => {
                 key: 'docker',
                 label: `${t('hostDetail.dockerContainers')} (${containers.length})`,
                 children: containers.length === 0 ? (
-                  <Empty description={t('hostDetail.noContainers')} style={{ padding: '40px 0' }} />
+                  <Empty description={t('hostDetail.noContainers')} style={{ padding: '16px 0' }} />
                 ) : (
                   <Table<HostSoftwareInventory>
                     columns={containerColumns}
@@ -476,7 +509,6 @@ const HostDetail: React.FC = () => {
       <Card
         size="small"
         title={<span style={{ color: token.colorText }}><HistoryOutlined style={{ marginRight: 8, color: token.colorPrimary }} />{t('hostDetail.executionHistory')}</span>}
-        style={{ borderRadius: 12 }}
       >
         <Table<Job>
           columns={jobColumns}

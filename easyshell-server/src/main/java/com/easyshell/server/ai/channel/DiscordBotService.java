@@ -191,8 +191,6 @@ public class DiscordBotService implements BotChannelService {
                 if (isBot || (botUserId != null && botUserId.equals(authorId))) continue;
 
                 String content = msg.path("content").asText("");
-                String username = msg.path("author").path("username").asText("unknown");
-
                 if (content.isBlank()) continue;
 
                 if (lastMessageId == null || msgId.compareTo(lastMessageId) > 0) {
@@ -202,7 +200,7 @@ public class DiscordBotService implements BotChannelService {
                 // Dispatch to message handler thread pool — never block polling
                 final String cId = channelId;
                 final String c = content;
-                final String u = username;
+                final String u = channelId + ":" + authorId;
                 messageExecutor.submit(() -> handleDiscordMessage(cId, c, u));
             }
         } catch (Exception e) {
@@ -210,13 +208,21 @@ public class DiscordBotService implements BotChannelService {
         }
     }
 
-    private void handleDiscordMessage(String channelId, String content, String username) {
+    private void handleDiscordMessage(String channelId, String content, String subject) {
+        boolean privateAudience = false;
         try {
-            String reply = router.routeMessage("discord", content, username);
+            String metadata=webClient.get().uri("/channels/{channelId}",channelId).retrieve()
+                    .bodyToMono(String.class).block(java.time.Duration.ofSeconds(5));
+            // type=1 is a one-to-one DM. Guild/group replies need separate audience authorization.
+            if (metadata==null) return;
+            JsonNode channel = objectMapper.readTree(metadata);
+            if (channel.path("type").asInt(-1)!=1 || !channelId.equals(channel.path("id").asText())) return;
+            privateAudience = true;
+            String reply = router.routeMessage("discord", content, subject);
             sendMessage(channelId, reply);
         } catch (Exception e) {
             log.error("Error handling Discord message: {}", e.getMessage(), e);
-            sendMessage(channelId, "处理消息时发生错误，请稍后重试。");
+            if (privateAudience) sendMessage(channelId, "处理消息时发生错误，请稍后重试。");
         }
     }
 

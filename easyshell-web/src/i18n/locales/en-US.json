@@ -1,4 +1,45 @@
 {
+  "channelIdentity": {
+    "temporarilyUnavailable": "Channel AI is temporarily unavailable."
+  },
+  "hostPermissions": {
+    "title": "Host permissions",
+    "independentPermissionsNotice": "The three permissions are independent; granting one does not automatically grant the other two.",
+    "inheritanceNotice": "A user's effective permissions are the union of direct grants and grants from their roles. Removing a direct grant does not remove permissions granted by a role.",
+    "terminalWarning": "Terminal access is high risk: it permits interactive commands on the host. Grant it only to trusted users and roles.",
+    "viewerTerminalForbidden": "The viewer role cannot use the terminal, even if terminal permission is granted.",
+    "invalidGrant": "Invalid grant. Check the principal, host, and permission and try again.",
+    "explicitHostsNotice": "Grants apply only to the selected hosts; they do not automatically include hosts added in the future.",
+    "catalogError": "Unable to load users, roles, or hosts.",
+    "retry": "Retry",
+    "principalType": "Principal type",
+    "user": "User",
+    "role": "Role",
+    "principal": "User or role",
+    "permission": "Permission",
+    "selectPrincipal": "Select a user or role",
+    "searchHosts": "Search hosts",
+    "host": "Host",
+    "selectHost": "Select a host",
+    "grant": "Grant",
+    "revoke": "Revoke",
+    "stale": "The host catalog or identity generation has changed. Refresh and select the host again before managing permissions.",
+    "view": "View",
+    "execute": "Execute",
+    "terminal": "Terminal",
+    "permissionForHost": "{{permission}} permission for {{host}}",
+    "forbidden": "You do not have permission to manage these host grants.",
+    "conflict": "Permissions changed since they were loaded. Reload before saving again.",
+    "loadError": "Unable to load host permissions.",
+    "saveError": "Unable to save host permissions.",
+    "reload": "Reload",
+    "saveSuccess": "Host permissions saved.",
+    "save": "Save permissions"
+  },
+  "resourceIdentity": {
+    "unavailable": "Permissions or resource identity cannot currently be verified. Please contact an administrator.",
+    "fetchFailed": "Unable to load data. Check your connection and retry; contact an administrator if the problem persists."
+  },
   "common": {
     "confirm": "Confirm",
     "cancel": "Cancel",
@@ -40,6 +81,7 @@
     "updateTime": "Update Time",
     "minutes": "minutes",
     "close": "Close",
+    "copy": "Copy",
     "copied": "Copied!",
     "copyFailed": "Copy failed"
   },
@@ -73,13 +115,19 @@
     "system_memory": "Memory Store",
     "system_sop": "SOP Manager",
     "terminal": "Terminal",
-    "host_detail": "Host Detail"
+    "host_detail": "Host Detail",
+    "workflow": "Workflows",
+    "workflow_editor": "Workflow editor",
+    "workflow_run": "Runs",
+    "workflow_approvals": "Workflow approvals"
   },
   "header": {
     "switch_to_en": "Switch to English",
     "switch_to_zh": "切换到中文",
     "theme_light": "Switch to light mode",
     "theme_dark": "Switch to dark mode",
+    "reset_theme_default": "Reset theme to default",
+    "skip_to_content": "Skip to content",
     "logout": "Sign Out",
     "collapse_sidebar": "Collapse sidebar",
     "expand_sidebar": "Expand sidebar",
@@ -652,6 +700,8 @@
     }
   },
   "reports": {
+    "historyUnavailable": "Some historical reports are unavailable because their source identities cannot be verified. Historical data has not been deleted.",
+    "detailUnavailable": "Report details are unavailable. Please retry.",
     "title": "Inspection Reports",
     "fetchError": "Failed to fetch inspection reports",
     "detailError": "Failed to fetch report details",
@@ -716,6 +766,8 @@
     }
   },
   "chat": {
+    "stopStreamBeforeDelete": "Stop the active response before deleting this conversation.",
+    "waitForSessionDelete": "Wait for the conversation deletion to finish before sending a message.",
     "prompt1": "Check system status on all servers",
     "prompt2": "List recently failed tasks",
     "prompt3": "Analyze server resource usage",
@@ -962,6 +1014,7 @@
   },
   "dashboard": {
     "title": "Dashboard",
+    "statisticsUnavailable": "Statistics unavailable",
     "totalHosts": "Total Hosts",
     "onlineHosts": "Online Hosts",
     "offlineHosts": "Offline Hosts",
@@ -1000,6 +1053,10 @@
   },
   "host": {
     "title": "Host Management",
+    "credentialListUnavailable": "Only agents you can view are shown; historical credentials are not associated because their ownership and host identity cannot be verified.",
+    "credentialOwnershipUnknown": "Ownership of historical credentials cannot be verified; credentials will not be associated by IP address.",
+    "remoteUninstallUnavailable": "Remote uninstall is temporarily unavailable. Deleting a record does not uninstall the remote agent.",
+    "deleteDoesNotUninstall": "Deleting this record does not uninstall the remote agent.",
     "detail": "Host Details",
     "online": "Online",
     "offline": "Offline",
@@ -1024,6 +1081,7 @@
     "lastHeartbeat": "Last Heartbeat",
     "addServer": "Add Server",
     "deployHistory": "Deploy History",
+    "loadingHistory": "Loading deployment history...",
     "exportCSV": "Export CSV",
     "startDeploy": "Start Deploy",
     "sshPort": "SSH Port",
@@ -1142,6 +1200,8 @@
     "confirmDelete": "Confirm delete this script?",
     "ai": {
       "title": "AI Script Assistant",
+      "externalDataWarningTitle": "External data warning",
+      "externalDataWarningDescription": "Your prompt and current script will be sent to the configured model. Sensitive data filtering cannot identify every secret. Do not enter or include passwords, keys, or other sensitive data.",
       "targetOs": "Target OS",
       "promptLabel": "Describe what you need",
       "promptPlaceholder": "e.g. Monitor disk usage and alert when above 80%",
@@ -1374,6 +1434,11 @@
     }
   },
   "hostDetail": {
+    "terminalPermissionUnknown": "Checking terminal permission.",
+    "terminalPermissionError": "Unable to verify terminal permission. Retry or contact an administrator.",
+    "terminalPermissionDenied": "You do not have terminal permission for this host.",
+    "terminalPermissionOffline": "The host is offline; terminal access is unavailable.",
+    "terminalOffline": "The host is offline; terminal access is unavailable.",
     "detectFailed": "Detection failed",
     "detectTaskSubmitted": "Detection task submitted",
     "detectTimeout": "Detection timeout",
@@ -1433,8 +1498,17 @@
     "executionHistory": "Execution History"
   },
   "task": {
+    "historyVisibilityNotice": "Historical tasks whose identity cannot be verified and workflow tasks are temporarily not shown here. The data has not been deleted.",
     "title": "Task Execution",
+    "hostExecuteDenied": "No execute permission",
+    "hostExecuteUnknown": "Execute permission unknown",
+    "hostPermissionsLoading": "Checking host execute permissions…",
+    "hostPermissionsFailed": "Host permissions could not be checked. Retry before submitting.",
+    "hostPermissionsIncomplete": "Some host permissions are unknown. Retry before selecting those hosts.",
+    "dynamicTargetsPermissionHint": "Dynamic target membership can change. The server performs the final permission check for all resolved hosts.",
     "create": "New Task",
+    "runWorkflow": "Run workflow",
+    "detailLoadFailed": "Failed to load task details",
     "execute": "Execute",
     "stop": "Stop",
     "fetchError": "Failed to fetch task list",
@@ -1518,6 +1592,900 @@
       "cancel": "Cancel",
       "approvalSubmitted": "Submitted for approval. Please wait for admin review.",
       "approvalFailed": "Failed to submit for approval"
+    }
+  },
+  "workflow": {
+    "scriptSource": {
+      "label": "Script source",
+      "manual": "Manual",
+      "library": "Script library",
+      "select": "Library script",
+      "snapshotHint": "The preview is read-only. On publication, the server verifies and freezes the selected version; later changes to the script library do not alter the published snapshot.",
+      "listError": "Unable to load scripts. Check your access and try again.",
+      "selectionError": "Unable to select the script. It may have changed or access was denied; try again.",
+      "retry": "Retry"
+    },
+    "structured": {
+      "mode": "Strict structured output",
+      "savedProtection": "Once saved, strict output nodes cannot be deleted or have their ID, type, output mode, or schema changed; other settings remain editable.",
+      "serverValidation": "The schema and model output are validated by the server.",
+      "rawOnly": "This schema cannot be edited losslessly in the visual table. Edit the raw schema instead.",
+      "fieldType": "Field type",
+      "required": "Required",
+      "removeField": "Remove field",
+      "fieldName": "Field name",
+      "addField": "Add field",
+      "additionalProperties": "Allow additional properties (not currently supported by the server)",
+      "rawSchema": "Raw schema"
+    },
+    "list": {
+      "title": "Workflows",
+      "create": "New workflow",
+      "created": "Workflow created",
+      "createFailed": "Failed to create workflow",
+      "edit": "Edit",
+      "fetchFailed": "Failed to load workflows",
+      "searchPlaceholder": "Search name / category",
+      "empty": "No workflows yet",
+      "emptyHint": "Start with “New workflow”, or import a DAG plan from AI Ops.",
+      "nameRequired": "Please enter a workflow name",
+      "description": "Description",
+      "archiveConfirm": "Archive this workflow? (soft delete, recoverable)",
+      "archived": "Archived",
+      "archiveFailed": "Archive failed",
+      "col": {
+        "name": "Name",
+        "visibility": "Visibility",
+        "category": "Category",
+        "version": "Version",
+        "runs": "Runs / succeeded",
+        "lastRunAt": "Last run"
+      },
+      "template": "Starter template",
+      "templateNone": "Blank (Start/End only)",
+      "templateHint": "A starter draft is saved after creation, so the editor opens with the Start/End contract.",
+      "seedFailed": "Failed to save the starter draft; save manually after opening the editor.",
+      "statusFilter": {
+        "label": "Workflow status",
+        "active": "Active"
+      }
+    },
+    "status": {
+      "draft": "Draft",
+      "published": "Published",
+      "archived": "Archived"
+    },
+    "visibility": {
+      "private": "Private",
+      "public": "Public"
+    },
+    "palette": {
+      "title": "Node palette",
+      "add": "Add",
+      "handles": "{{in}} in / {{out}} out",
+      "hint": "Drag onto the canvas, or focus and press Enter",
+      "search": "Search nodes",
+      "noResult": "No matching nodes"
+    },
+    "node": {
+      "type": {
+        "script-exec": "Script exec",
+        "condition": "Condition",
+        "notify": "Notify",
+        "approval": "Approval",
+        "wait": "Wait",
+        "start": "Start",
+        "transform": "Transform",
+        "ai-analyze": "AI analyze",
+        "end": "End",
+        "llm": "LLM",
+        "classifier": "Classifier",
+        "code": "Code"
+      },
+      "desc": {
+        "script-exec": "Run a script on target hosts via a real Task",
+        "condition": "Evaluate an expression with true / false branches",
+        "notify": "Push a message via webhook / email / bot",
+        "approval": "Suspend the run until an admin approves",
+        "wait": "Continue after a delay in seconds",
+        "start": "Declare workflow inputs; a run starts here",
+        "transform": "Reshape upstream output into named fields",
+        "ai-analyze": "Read upstream output and produce a text conclusion; never executes",
+        "end": "Aggregate final outputs; the run result comes from here",
+        "llm": "Generate text or structured JSON with a model; never executes commands",
+        "classifier": "Route to a class branch based on the model classification",
+        "code": "Transform data with JavaScript or Python (currently unavailable to run or publish)"
+      },
+      "category": {
+        "entry": "Entry",
+        "execute": "Execute",
+        "flow": "Flow",
+        "human": "Human"
+      },
+      "fixed": "Fixed",
+      "docs": {
+        "start": {
+          "purpose": "Workflow entry; declares run inputs.",
+          "when": "Every workflow has exactly one start node.",
+          "input": "None (start has no incoming edges).",
+          "output": "Each definition.variables entry: run.input.<name> or nodes.start.output.<name>.",
+          "example": "variables:\n  targets: { type: json, required: true }\n  mount:   { type: string, default: \"/\" }"
+        },
+        "end": {
+          "purpose": "Aggregate the final workflow output.",
+          "when": "Use when downstream needs a stable result; at most one, with no outgoing edges.",
+          "input": "Output of any upstream node.",
+          "output": "The config.outputs {name, value} map, i.e. workflow_run.output.",
+          "example": "outputs:\n  - { name: summary, value: \"${nodes.report.output.text}\" }"
+        },
+        "script-exec": {
+          "purpose": "Run a script on target hosts as a real Task.",
+          "when": "Host inspection, operations or changes are needed.",
+          "input": "Upstream output can be injected into script slots through parameters.",
+          "output": "Script stdout (text or JSON, no fixed schema).",
+          "example": "script: df -h {{MOUNT}}\nparameters:\n  MOUNT: ${run.input.mount}"
+        },
+        "transform": {
+          "purpose": "Map upstream output into named fields.",
+          "when": "Downstream needs stable names or a composed summary.",
+          "input": "Upstream node output.",
+          "output": "The config.mappings {name, value} object.",
+          "example": "mappings:\n  - { name: usage, value: \"${nodes.check.output.usage}\" }"
+        },
+        "condition": {
+          "purpose": "Branch on an expression result.",
+          "when": "Two IF / ELSE paths are needed.",
+          "input": "Upstream node output.",
+          "output": "{ result: boolean }; true takes the IF edge, false takes ELSE.",
+          "example": "expression: nodes.check.output.count > 0"
+        },
+        "ai-analyze": {
+          "purpose": "Read upstream output and produce a conclusion, or structured JSON when requested; never executes commands.",
+          "when": "For summaries, judgments or risk verdicts; text suits humans, json suits downstream machine reads.",
+          "input": "input template truncated to maxInputChars; in json mode jsonSchema is prompt guidance describing fields and types.",
+          "output": "{ text, model, truncated }; in json mode the parsed result is returned in text; the schema is guidance only, not local validation.",
+          "example": "instructions: Find mounts above the threshold\ninput: ${nodes.check.output}\noutputMode: json\njsonSchema: {\"type\":\"object\",\"properties\":{\"verdict\":{\"type\":\"string\"}}}\n# invalid JSON triggers one repair retry"
+        },
+        "approval": {
+          "purpose": "Suspend the run until an admin decides.",
+          "when": "High-risk operations or explicit human confirmation.",
+          "input": "Upstream output can be embedded in title/detail templates.",
+          "output": "{ decision, comment, decidedBy }.",
+          "example": "title: Approve restart of {{SERVICE}}\ntimeoutSec: 3600\nonTimeout: reject"
+        },
+        "notify": {
+          "purpose": "Push the result to configured channels.",
+          "when": "People need to be told or an audit trail is desired.",
+          "input": "Upstream output can be embedded in the message template.",
+          "output": "{ delivered, failed, skipped }.",
+          "example": "channels: [telegram]\nmessageTemplate: \"Disk alert: ${nodes.check.output.usage}%\""
+        },
+        "wait": {
+          "purpose": "Wait for a number of seconds, then continue.",
+          "when": "Cool-down, delay or spreading load.",
+          "input": "Upstream output (passed through).",
+          "output": "{ waitedMs }.",
+          "example": "durationSec: 60"
+        },
+        "llm": {
+          "purpose": "Call a general LLM to produce text or structured JSON.",
+          "when": "When you need summaries, field extraction or machine-readable output, but no command execution; text returns prose, json returns a parsed object.",
+          "input": "userPrompt / systemPrompt templates, with upstream input truncated to maxInputChars.",
+          "output": "{ text, json, structured, model }; json mode strips ```json fences and parses, retries once with a repair prompt, then fails the node if still invalid.",
+          "example": "provider: openai\nmodel: gpt-4o-mini\nuserPrompt: |\n  Analyze ${nodes.check.output} and return a risk verdict\noutputMode: json\njsonSchema: {\"type\":\"object\",\"properties\":{\"verdict\":{\"type\":\"string\"}}}"
+        },
+        "classifier": {
+          "purpose": "Ask a model to put the input into exactly one class and route by class.",
+          "when": "When different problem types (disk / network / permission) need different branches.",
+          "input": "input template (required) plus 1..10 classes (name + description).",
+          "output": "{ class, reason, raw }; one source handle per class plus a default fallback.",
+          "example": "input: ${nodes.check.output}\nclasses:\n  - { name: disk, description: Disk / capacity / mount issues }\n  - { name: network, description: Network / port / connectivity }\ninstructions: Classify the input into exactly one class."
+        },
+        "code": {
+          "purpose": "Run data-transformation code in an isolated sandbox and return a JSON-serializable result.",
+          "when": "When upstream JSON needs merging, trimming or reshaping, but no host access is needed.",
+          "input": "inputs mapping (name → ${path} template) becomes the object passed to main(input).",
+          "output": "The return value of main, stored as nodes.<key>.output.",
+          "example": "function main(input) {\n  return { total: input.a + input.b };\n}\n// inputs: { a: ${nodes.a.output.count}, b: 2 }",
+          "examplePython": "def main(input):\n    return {\"total\": input[\"a\"] + input[\"b\"]}\n\n# inputs: { a: ${nodes.a.output.count}, b: 2 }",
+          "pythonLabel": "Python example"
+        }
+      }
+    },
+    "nodeStatus": {
+      "pending": "Pending",
+      "running": "Running",
+      "succeeded": "Succeeded",
+      "failed": "Failed",
+      "skipped": "Skipped",
+      "suspended": "Suspended",
+      "cancelled": "Cancelled",
+      "timeout": "Timeout",
+      "interrupted": "Interrupted"
+    },
+    "canvas": {
+      "ariaLabel": "Workflow canvas: Tab to move between nodes, Enter opens config, arrows move, Delete removes",
+      "hint": "Drag empty space to box-select · Space+drag pans · Ctrl+Z undo",
+      "reject": {
+        "SELF_CONNECTION": "A node cannot connect to itself",
+        "DUPLICATE_EDGE": "This connection already exists",
+        "CYCLE": "Cycles are not allowed (workflows must be a DAG)",
+        "ENDPOINT_MISSING": "Connection endpoint does not exist",
+        "START_HAS_INPUT": "Start nodes cannot have incoming edges",
+        "END_HAS_OUTPUT": "End nodes cannot have outgoing edges",
+        "UNKNOWN_HANDLE": "That source handle no longer exists (node config may have changed)",
+        "CLASSIFIER_HANDLE_TAKEN": "This classifier branch already has an outgoing edge; each class / default connects to at most one downstream"
+      },
+      "deleteTitle": "Confirm delete",
+      "deleteConfirm": "This removes {{nodes}} node(s) and {{edges}} edge(s). Ctrl+Z undoes it.",
+      "deleteNodes": "Nodes affected",
+      "deleted": "Deleted",
+      "copied": "Copied {{count}} node(s)",
+      "autoLayoutDone": "Re-laid out by depth",
+      "fixedNodeOnly": "Start/End nodes are system-managed and cannot be dropped in",
+      "empty": {
+        "title": "Build your first workflow in 4 steps",
+        "step1": "Declare inputs on the Start node (e.g. targets / threshold)",
+        "step2": "Drag execution nodes from the left and connect them",
+        "step3": "Use “Insert variable” next to a field to pick upstream output",
+        "step4": "Declare final outputs on the End node",
+        "useTemplate": "Start from a template",
+        "dragHint": "You can also drag nodes from the left palette"
+      }
+    },
+    "form": {
+      "title": "Node config",
+      "empty": "Select a node on the canvas",
+      "name": "Node name",
+      "nameRequired": "Please enter a node name",
+      "script": "Script",
+      "scriptRequired": "Please enter the script",
+      "scriptHint": "Script body; declare parameter slots as {{NAME}}, resolved from parameters and single-quoted at render time",
+      "scriptId": "Script ID (optional, reuse from library)",
+      "scriptIdHint": "Leave empty to write the script inline. Stored with the definition only; execution uses script",
+      "scriptIdPlaceholder": "Leave empty to write the script inline",
+      "targets": "Target hosts",
+      "hostsLoading": "Checking available host permissions…",
+      "retryHosts": "Retry",
+      "hostsFailed": "Host permissions could not be fully checked. Existing targets are preserved.",
+      "hostsEmpty": "No executable hosts are available.",
+      "hostsUnavailable": "Some saved targets are unavailable or no longer executable. They are preserved until you remove them.",
+      "dynamicTargetsPermissionHint": "Targets are resolved and permissions checked for each host at runtime; selection does not grant access.",
+      "targetsHint": "Where the script runs: explicit agents / a cluster / a tag / a host list produced upstream",
+      "targetsEmpty": "No targets in this mode yet — the node fails at runtime with an empty agent set",
+      "targetsMode": {
+        "explicit": "Explicit agents",
+        "cluster": "By cluster",
+        "tag": "By tag",
+        "variable": "From upstream variable"
+      },
+      "agentIds": "Agent IDs",
+      "clusterIds": "Cluster IDs",
+      "tagIds": "Tag IDs",
+      "variableRef": "Variable reference",
+      "parameters": "Parameters (slot values)",
+      "parametersHint": "Key = {{NAME}} in the script; value = a literal or a ${path} expression (e.g. ${nodes.n1.output.x})",
+      "parametersEmpty": "No parameters yet. Every {{NAME}} in the script needs a value here, or publishing fails with PARAM_MISSING",
+      "parameterKey": "Parameter name",
+      "parameterValue": "Value",
+      "addParameter": "Add parameter",
+      "rawParams": "Raw parameter declaration",
+      "rawParamsHint": "Select the parameters used as {{NAME:raw}} (unquoted, so globs work). Requires riskPolicy of allow_medium or strict",
+      "rawParamsPlaceholder": "Pick from the parameters above",
+      "rawNeedsMedium": "A node declaring raw parameters must set riskPolicy to at least allow_medium, or publishing fails with RAW_REQUIRES_ALLOW_MEDIUM",
+      "riskHint": "Non-LOW scripts are gated; an approval ancestor lets an admin clear them",
+      "expression": "Condition expression",
+      "expressionRequired": "Please enter a condition expression",
+      "expressionHint": "Example: nodes.n1.output.count > 0",
+      "expressionSyntax": "Only paths / numbers / single-quoted strings / == != > < >= <= contains / && ||, up to 512 chars",
+      "channels": "Channels",
+      "channelsHint": "Which configured bot channels to push to (max 6). Disabled or targetless channels are reported as skipped, never as delivered",
+      "channelsRequired": "Pick at least one channel, or publishing fails with NODE_CONFIG_INVALID",
+      "channelOption": {
+        "telegram": "Telegram",
+        "discord": "Discord",
+        "dingtalk": "DingTalk",
+        "slack": "Slack",
+        "feishu": "Feishu",
+        "wechat-work": "WeCom"
+      },
+      "messageTemplate": "Message template",
+      "messageTemplateRequired": "Please enter a message template",
+      "messageTemplateHint": "Supports ${path} expressions and {{NAME}} slots (NAME from the parameters above); masked before it leaves the system",
+      "level": "Level",
+      "levelHint": "Anything other than info prefixes the message with [warning] / [error]",
+      "approvalMode": "Approval mode",
+      "approvalModeHint": "approval = full approval; human-confirm = a lighter confirm gate (prefixed title, same approval row)",
+      "approvalModeApproval": "Full approval",
+      "approvalModeHumanConfirm": "Human confirm (light)",
+      "approvalTitle": "Approval title",
+      "approvalTitleRequired": "Please enter an approval title",
+      "approvalTitleHint": "Supports template rendering; human-confirm adds a confirm prefix automatically",
+      "detailTemplate": "Detail template",
+      "detailTemplateHint": "Leave empty for the built-in snapshot (runId / nodeKey / triggeredBy / triggeredAt)",
+      "approverRole": "Approver role",
+      "approverRoleHint": "ADMIN or SUPER_ADMIN can decide this node",
+      "approvalTimeout": "Approval timeout (s)",
+      "approvalTimeoutHint": "60..604800 seconds; on expiry the onTimeout policy applies",
+      "approvalTimeoutRequired": "Please enter an approval timeout",
+      "onTimeout": "On timeout",
+      "onTimeoutHint": "approve = treat as approved / reject = treat as rejected / fail = fail the node",
+      "durationSec": "Duration",
+      "durationSecRequired": "Please enter a duration",
+      "durationSecHint": "1..3600 seconds; cancellation is checked every 500ms so it is never stuck behind a sleep",
+      "advanced": "Advanced",
+      "outputVar": "Output variable",
+      "outputVarHint": "Referenced downstream as nodes.<key>.output; must differ from the node key",
+      "retryMax": "Retries",
+      "retryInterval": "Retry interval",
+      "timeout": "Node timeout (s)",
+      "timeoutHint": "Empty uses engine.default-node-timeout-sec; the script-exec task timeout is a separate config.timeoutSeconds",
+      "onFailure": "On failure",
+      "onUnsafeValue": "Unsafe value",
+      "onUnsafeValueHint": "reject = refuse / raw = only for parameters declared raw / truncate = cut at the whitelist boundary",
+      "riskPolicy": "Risk policy",
+      "riskPolicyHint": "block = MEDIUM always goes to approval / allow_medium = MEDIUM allowed / strict = stricter",
+      "nodeShape": "Size {{width}}×{{height}}",
+      "handles": "{{in}} in / {{out}} out",
+      "agentIdsPlaceholder": "Select hosts",
+      "clusterIdsPlaceholder": "Select clusters",
+      "tagIdsPlaceholder": "Select tags",
+      "conditionBranchHint": "IF / ELSE is controlled by the outgoing handles",
+      "conditionBranchDesc": "Condition edges are gated by the source handle: true runs IF, false runs ELSE. No need to duplicate the expression on the edge."
+    },
+    "edge": {
+      "title": "Edge: {{from}} → {{to}}",
+      "condition": "Condition (empty = always true)",
+      "conditionHint": "Only the true branch of a condition node may carry a condition",
+      "dualHandleHint": "Condition node: the true branch may carry a condition, the false branch must stay empty",
+      "falseBranchLocked": "Edges from the false handle cannot carry a condition",
+      "onUpstreamFailure": "When upstream fails",
+      "conditionGatedTitle": "IF / ELSE is gated by the outgoing handle",
+      "conditionGatedDesc": "The branch is determined by sourceHandle: true runs IF, false runs ELSE. The expression is no longer edited here.",
+      "sourceBranch": "Branch",
+      "classifierGatedTitle": "Routing is determined by the outgoing handle",
+      "classifierGatedDesc": "Each outgoing edge of a classifier maps to one class; the run follows the branch for the matched class, and default only when nothing matched. The expression is not edited here."
+    },
+    "json": {
+      "title": "Definition JSON (read-only)",
+      "meta": "{{nodes}} nodes / {{edges}} edges / schema v{{version}}"
+    },
+    "editor": {
+      "dirty": "Unsaved",
+      "memoryOnlyWarning": "Local persistence and recovery are currently unavailable. Unsaved changes exist only in the current editing session’s memory and may be lost if you refresh or close the page.",
+      "saved": "Saved",
+      "lastSaved": "Saved at {{time}}",
+      "selectedCount": "{{count}} node(s) selected",
+      "selectedEdges": "{{count}} edge(s) selected",
+      "undo": "Undo (Ctrl+Z)",
+      "redo": "Redo (Ctrl+Shift+Z)",
+      "autoLayout": "Auto layout",
+      "nothingToUndo": "Nothing to undo",
+      "nothingToRedo": "Nothing to redo",
+      "saveFailed": "Failed to save the draft",
+      "saveFailedOffline": "Save failed; changes kept in the local draft",
+      "localDraftFound": "A local draft was found (left by a failed save)",
+      "localDraftRestore": "Restore local draft",
+      "localDraftDiscard": "Discard",
+      "localDraftRestored": "Local draft restored",
+      "unsavedNavigationTitle": "Unsaved workflow changes",
+      "unsavedNavigationDesc": "Save or resolve all unsaved drafts before leaving the editor. Switching workflows keeps complete drafts in memory only; closing or refreshing may lose them.",
+      "returnToMemoryDraft": "Return to workflow #{{id}}"
+    },
+    "publish": {
+      "action": "Publish",
+      "title": "Publish workflow",
+      "confirm": "Publish",
+      "blocked": "ERRORs present — cannot publish",
+      "revalidate": "Re-validate",
+      "noIssues": "Validation passed — ready to publish",
+      "errorCount": "{{count}} ERROR(s)",
+      "errorHint": "Fix the structural issues on the canvas and retry; ERRORs block publishing.",
+      "success": "Published",
+      "failed": "Publish failed",
+      "riskBlocked": "Risk gate blocked: approval required or adjust the script"
+    },
+    "trigger": {
+      "action": "Trigger",
+      "title": "Trigger run: {{name}}",
+      "submit": "Trigger",
+      "success": "Run triggered",
+      "failed": "Trigger failed",
+      "notPublished": "The workflow is not published yet — publish first",
+      "concurrency": "Global concurrency is full; the run is queued",
+      "noVariables": "This workflow declares no input variables",
+      "required": "required",
+      "validationFailed": "Please fix the form errors and try again",
+      "idempotencyKey": "Idempotency-Key",
+      "idempotencyHint": "Same user + same key returns the first run; different inputs → 409",
+      "invalidJson": "Enter valid JSON (for example [\"agent-1\"])",
+      "selectPlaceholder": "Select a value"
+    },
+    "conflict": {
+      "draftId": "Target draft ID",
+      "baseVersion": "Base version",
+      "title": "Version conflict (409)",
+      "message": "The server draft was changed by another session (base_version mismatch). Nothing is merged automatically — choose how to proceed:",
+      "overwrite": "Overwrite (audited as WORKFLOW_OVERWRITE)",
+      "overwriteDone": "Overwritten",
+      "saveCopy": "Save as a copy (keeps my changes)",
+      "copyCreated": "Copy created",
+      "copyFailed": "Failed to create the copy",
+      "discard": "Discard my changes and reload the server draft",
+      "discarded": "Server draft reloaded"
+    },
+    "run": {
+      "title": "Runs",
+      "monitor": "Monitor",
+      "empty": "No runs yet",
+      "fetchFailed": "Failed to load runs",
+      "detailUnavailable": "Run details are unavailable, so the run cannot be verified. Try again later or contact an administrator.",
+      "dataUnavailable": "Data is unavailable; its contents cannot be verified.",
+      "filtered": "Workflow #{{id}} only",
+      "canvasTitle": "Run graph (read-only)",
+      "nodes": "Node runs",
+      "info": "Run info",
+      "input": "Trigger input",
+      "variables": "Variables snapshot",
+      "variablesTruncated": "Variables snapshot truncated",
+      "output": "Run output",
+      "logs": "Live logs",
+      "noLogs": "No logs yet",
+      "logLabel": "Workflow run log",
+      "ws": {
+        "idle": "Connecting",
+        "connected": "Connected",
+        "disconnected": "Disconnected"
+      },
+      "cancel": "Cancel run",
+      "cancelConfirm": "Cancel this run?",
+      "cancelHint": "Cancellation propagates at the next checkpoint; started scripts still finish.",
+      "cancelRequested": "Cancellation requested",
+      "cancelFailed": "Cancel failed",
+      "ariaRunning": "Running: {{nodes}}",
+      "ariaStatus": "Run status: {{status}}",
+      "col": {
+        "id": "Run ID",
+        "workflow": "Workflow",
+        "version": "Version",
+        "trigger": "Trigger",
+        "currentNodes": "Current nodes",
+        "nodeKey": "Node",
+        "nodeType": "Type",
+        "attempt": "Attempt",
+        "task": "Task",
+        "error": "Error"
+      },
+      "trigger": {
+        "manual": "Manual",
+        "scheduled": "Scheduled",
+        "replay": "Replay"
+      },
+      "testRunFailed": "Single-node test run failed",
+      "filter": {
+        "label": "Node filter",
+        "all": "All nodes",
+        "failed": "Failed only",
+        "empty": "No nodes match the filter"
+      },
+      "inspector": {
+        "title": "Node run details",
+        "input": "Input",
+        "output": "Output",
+        "warning": "Warning",
+        "testRun": "Test this node",
+        "testRunHint": "Replays this node with the current version and input; downstream is not run.",
+        "testResult": "Test run result",
+        "testStatus": "Status",
+        "riskLevel": "Risk level",
+        "riskPolicy": "Risk policy",
+        "conditionResult": "Condition result",
+        "targetCount": "Target hosts",
+        "renderedScript": "Rendered script",
+        "warnings": "Warnings"
+      }
+    },
+    "approval": {
+      "title": "Workflow approvals",
+      "fetchError": "Failed to load pending approvals",
+      "dataUnavailable": "Approval data is unavailable, so its contents cannot be verified. Try again later or contact an administrator.",
+      "restrictedReason": "Approval details are unavailable to you. You may reject this request but cannot approve it.",
+      "empty": "Nothing to approve",
+      "approve": "Approve",
+      "reject": "Reject",
+      "approveSuccess": "Approved",
+      "rejectSuccess": "Rejected",
+      "decideFailed": "Decision failed",
+      "decided": "This approval was already decided",
+      "confirmApprove": "Approve this request?",
+      "confirmApproveDesc": "The suspended run resumes after approval",
+      "confirmReject": "Reject this request?",
+      "confirmRejectDesc": "The run follows its onRejection policy",
+      "detailTitle": "Approval detail",
+      "detail": "Detail snapshot",
+      "auditHint": "Every decision is audited (who and when)",
+      "status": {
+        "pending": "Pending",
+        "approved": "Approved",
+        "rejected": "Rejected",
+        "timeout": "Timed out",
+        "cancelled": "Cancelled"
+      },
+      "col": {
+        "title": "Title",
+        "nodeType": "Node type",
+        "risk": "Risk level",
+        "expiresAt": "Expires at"
+      }
+    },
+    "error": {
+      "403": "You cannot access this workflow",
+      "404": "Workflow not found",
+      "403Desc": "Only the owner or an admin can access it.",
+      "404Desc": "It may have been deleted or archived.",
+      "run404": "Run not found",
+      "backToList": "Back to workflows",
+      "generic": "Failed to load"
+    },
+    "inspector": {
+      "title": "Node inspector",
+      "tabs": {
+        "config": "Config",
+        "data": "Data",
+        "docs": "Docs"
+      },
+      "saved": "Node saved",
+      "deleteDisabled": "Start/End nodes cannot be deleted",
+      "emptyTitle": "Canvas overview",
+      "emptyDesc": "Select a node to see its config, upstream variables and docs. Click a node or press Enter.",
+      "docs": {
+        "when": "When to use",
+        "highRiskApprovalUnavailable": "High-risk approval binding is not implemented. An approval node does not authorize a high-risk command, which may still be blocked by the risk gate.",
+        "llmExecutionWarning": "LLM output cannot be used as raw script parameters. Host execution uses script-exec and remains subject to the risk gate.",
+        "input": "Input",
+        "output": "Output",
+        "example": "Minimal example",
+        "security": {
+          "ai-analyze": "AI only analyzes text and never executes commands or dispatches tasks; its output cannot be raw script parameters.",
+          "approval": "Approval is the only human authorization path; expiry follows the node config.",
+          "script-exec": "Scripts still pass the shared risk gate; non-LOW scripts need an approval ancestor.",
+          "llm": "LLM output cannot be raw script parameters; execution still goes through script-exec and approval.",
+          "classifier": "Classification only selects a route and never grants execution; downstream execution still passes the risk gate.",
+          "code": "Code runs in an isolated data sandbox with no host IO / commands / network. Use script-exec or an agent for host operations."
+        }
+      },
+      "data": {
+        "upstream": "Available upstream variables",
+        "copy": "Copy",
+        "copied": "Variable reference copied",
+        "outputPath": "This node's output path",
+        "opaqueOutput": "This node has no fixed field schema; reference the whole JSON output.",
+        "contract": "Input contract"
+      }
+    },
+    "variable": {
+      "insert": "Insert variable",
+      "search": "Search variables",
+      "empty": "No upstream variables available",
+      "emptyHint": "Declare inputs on the Start node, or connect nodes upstream of this one.",
+      "noMatch": "No matching variables",
+      "opaque": "Whole output",
+      "required": "required",
+      "group": {
+        "input": "Workflow inputs",
+        "start": "Start node",
+        "node": "Upstream nodes",
+        "alias": "Output aliases"
+      },
+      "type": {
+        "string": "Text",
+        "number": "Number",
+        "boolean": "Boolean",
+        "json": "JSON"
+      },
+      "output": {
+        "condition": {
+          "result": "Condition expression result"
+        },
+        "notify": {
+          "delivered": "Channels delivered successfully",
+          "failed": "Channels that failed",
+          "skipped": "Disabled or targetless channels"
+        },
+        "approval": {
+          "decision": "approved / rejected",
+          "comment": "Approval comment",
+          "decidedBy": "Approver"
+        },
+        "wait": {
+          "waitedMs": "Actual wait in milliseconds"
+        },
+        "ai-analyze": {
+          "text": "Analysis text",
+          "model": "Model used",
+          "truncated": "Whether the input was truncated",
+          "json": "Parsed JSON in json mode (object / array / null)",
+          "structured": "Whether the output is structured JSON"
+        },
+        "llm": {
+          "text": "Raw model text",
+          "json": "Parsed JSON in json mode (null when unstructured)",
+          "structured": "Whether the output is structured JSON",
+          "model": "Actual provider/model"
+        },
+        "classifier": {
+          "class": "Matched class name",
+          "reason": "Classification reason",
+          "raw": "Raw model output"
+        }
+      }
+    },
+    "start": {
+      "addVariable": "Add input",
+      "empty": "No inputs yet. The trigger form is rendered from these declarations.",
+      "name": "Name",
+      "namePlaceholder": "e.g. targets",
+      "type": "Type",
+      "required": "Required",
+      "default": "Default",
+      "defaultPlaceholder": "optional",
+      "description": "Description",
+      "descriptionPlaceholder": "What does this input control?",
+      "invalidName": "Names must match ^[a-z][a-z0-9_]*$ and be unique:",
+      "label": "Label",
+      "labelPlaceholder": "e.g. Target hosts",
+      "options": "Options (string only)",
+      "optionValue": "Option value",
+      "optionPlaceholder": "e.g. prod",
+      "addOption": "Add option",
+      "optionsHint": "When options exist the trigger modal renders a Select and only these values can be submitted."
+    },
+    "end": {
+      "hint": "End outputs become workflow_run.output; a pure ${path} keeps its original type.",
+      "empty": "No output mappings yet.",
+      "addOutput": "Add output",
+      "name": "Output name",
+      "namePlaceholder": "e.g. summary",
+      "value": "Value"
+    },
+    "transform": {
+      "hint": "Mappings produce { name: value }; values may be literals or ${path}.",
+      "empty": "No mappings yet.",
+      "addMapping": "Add mapping",
+      "name": "Field name",
+      "namePlaceholder": "e.g. usage",
+      "value": "Value"
+    },
+    "ai": {
+      "warning": "AI analyze reads upstream output and produces text only. It cannot execute commands or dispatch tasks.",
+      "externalInputWarning": "Input is sent to the configured model; do not include sensitive data",
+      "instructions": "Instructions",
+      "instructionsHint": "Tell the model what to analyze and what conclusion to produce.",
+      "instructionsRequired": "Please enter instructions",
+      "input": "Input template",
+      "inputHint": "Reference upstream output with ${path}; long input is truncated to the max characters.",
+      "maxInputChars": "Max input chars",
+      "maxInputCharsHint": "1000..32000; default 8000.",
+      "provider": "Provider",
+      "providerHint": "Empty uses the system default AI provider; options come from the AI config.",
+      "defaultProvider": "Default provider",
+      "model": "Model",
+      "modelHint": "Empty uses the provider default; any model name can be typed.",
+      "defaultModel": "Default model",
+      "outputMode": "Output mode",
+      "outputModeHint": "text = plain text; json = ask the model for parseable JSON.",
+      "outputModeText": "Text (text)",
+      "outputModeJson": "Structured JSON (json)",
+      "jsonSchema": "JSON Schema guidance",
+      "jsonSchemaHint": "Prompt guidance only, not local schema validation; describe fields and types."
+    },
+    "entryExit": {
+      "bannerTitle": "This workflow is missing Start/End nodes",
+      "bannerDesc": "Complete old workflows in one click: Start/End nodes are inserted and current entries/sinks are wired to them.",
+      "action": "Complete Start/End",
+      "done": "Start/End nodes completed"
+    },
+    "validate": {
+      "action": "Validate",
+      "title": "Validation result",
+      "ok": "Validation passed — ready to publish"
+    },
+    "help": {
+      "action": "Help",
+      "title": "Workflow help",
+      "intro": "Four steps to get started, then variable syntax, 12 node types and security boundaries.",
+      "steps": {
+        "title": "Four-step tour",
+        "declare": {
+          "title": "Declare inputs",
+          "desc": "On the Start node, say what the run needs: name, type, required, default."
+        },
+        "connect": {
+          "title": "Drag and connect nodes",
+          "desc": "Drag execution nodes from the palette and connect them in business order; conditions use IF/ELSE outputs."
+        },
+        "variables": {
+          "title": "Insert variables",
+          "desc": "Click “Insert variable” next to a field and pick upstream output; templates insert ${path}, expressions insert a bare path."
+        },
+        "outputs": {
+          "title": "Declare outputs on End",
+          "desc": "Write {name, value} on the End node; that becomes workflow_run.output."
+        }
+      },
+      "syntax": {
+        "title": "Variable syntax",
+        "form": "Form",
+        "example": "Example",
+        "where": "Where used",
+        "template": "Template",
+        "expression": "Expression",
+        "script": "Script slot",
+        "templateWhere": "Script parameters, notify/approval templates, transform, AI/LLM input, end outputs",
+        "expressionWhere": "Condition nodes and legacy edge conditions",
+        "scriptWhere": "{{NAME}} slots inside a script; values come from parameters"
+      },
+      "nodes": {
+        "title": "12 node types"
+      },
+      "example": {
+        "title": "Full example",
+        "desc": "start → script → transform → condition → notify → end"
+      },
+      "security": {
+        "title": "Security boundaries",
+        "ai": "AI / LLM only produce text or JSON and never execute commands; LLM output cannot be raw script parameters.",
+        "approval": "Approval is the only human authorization path; high-risk scripts need an approval ancestor.",
+        "script": "Scripts still pass the shared risk gate; wrapping them in a workflow does not bypass it.",
+        "code": "The code node runs in an isolated data sandbox with no host IO / commands / network; host operations still use script-exec / agents.",
+        "host": "Host operations only go through script-exec / agent tasks and the shared risk gate plus approval."
+      },
+      "aiNodes": {
+        "title": "How LLM / classifier / code nodes work",
+        "intro": "These three nodes handle understanding and transformation; execution still happens only in script-exec / agents.",
+        "llm": {
+          "desc": "Pick a provider/model and write userPrompt (variables can be inserted). text returns plain text; json asks for JSON only, strips ```json fences, parses it and retries once with a repair prompt on failure.",
+          "example": "userPrompt: Analyze ${nodes.check.output}\noutputMode: json\njsonSchema: {\"type\":\"object\",\"properties\":{\"verdict\":{\"type\":\"string\"}}}"
+        },
+        "classifier": {
+          "desc": "Define 1..10 classes. Each class creates a visible source handle and is wired by class name; default only catches no-match, and each class / default allows at most one outgoing edge.",
+          "example": "classes: disk / network / permission\nedges: disk → cleanup, network → network triage"
+        },
+        "code": {
+          "desc": "Write main(input) for data transformation (JavaScript or Python). inputs feed upstream values into input; code runs in an isolated sandbox without host IO, commands or network.",
+          "example": "function main(input) {\n  return { total: input.a + input.b };\n}\ninputs: { a: ${nodes.a.output.count}, b: 2 }"
+        }
+      }
+    },
+    "template": {
+      "action": "Templates",
+      "title": "Template gallery",
+      "intro": "Applying a template replaces the canvas (with confirmation); adjust and save afterwards.",
+      "badge": "Example",
+      "simulated": "Simulated data",
+      "realSideEffects": "Real side effects",
+      "apply": "Apply template",
+      "applied": "Template applied: {{name}}",
+      "replaceTitle": "Replace the current canvas?",
+      "replaceBody": "The canvas already has nodes. Applying a template replaces the whole graph (undo is available).",
+      "replaceConfirm": "Replace and apply",
+      "disk": {
+        "safeName": "Simulated disk threshold demo",
+        "safeDesc": "Demonstrates a disk threshold using a fixed value; it does not collect disk data or send notifications.",
+        "name": "Disk check and alert",
+        "desc": "Start → collect disk usage → normalize → alert over threshold → End."
+      },
+      "restart": {
+        "safeName": "Real restart after approval",
+        "executionWarning": "This template can restart a real service and has side effects. Service health is not verified. High-risk approval binding is not implemented, so the command may still be blocked by the risk gate after approval.",
+        "safeDesc": "Restarts a service after approval, with real side effects. It may send a notification but does not verify service health.",
+        "name": "Service restart approval",
+        "desc": "Approve, restart the service, then notify the result."
+      },
+      "aiReview": {
+        "safeName": "Manual AI review",
+        "safeDesc": "Review a manually supplied observation with AI. The result is advisory and requires human review; no host commands or notifications are issued.",
+        "realAiCall": "Real external AI call",
+        "externalInputWarning": "Configure the default AI provider and model before running. Input is sent to the configured external AI model; enter only non-sensitive information."
+      },
+      "health": {
+        "safeName": "Simulated count condition",
+        "safeDesc": "Demonstrates a count condition using a fixed value; it is not a real health check and sends no notifications.",
+        "name": "Batch health check",
+        "desc": "Probe target hosts, notify on any output, otherwise wait briefly."
+      }
+    },
+    "llm": {
+      "warning": "The LLM node only produces text or JSON and never executes commands; its output cannot be used as raw script parameters.",
+      "userPrompt": "User prompt",
+      "userPromptHint": "Required template; reference upstream output with ${path}. Long input is truncated to maxInputChars.",
+      "userPromptRequired": "Please enter a user prompt",
+      "systemPrompt": "System prompt",
+      "systemPromptHint": "Optional; constrains role, tone and output format.",
+      "systemPromptPlaceholder": "You are an SRE assistant…",
+      "outputMode": "Output mode",
+      "outputModeHint": "json mode asks for JSON only, strips ```json fences and parses it; one repair retry is attempted on failure.",
+      "outputModeText": "Text (text)",
+      "outputModeJson": "Structured JSON (json)",
+      "jsonSchema": "JSON Schema",
+      "jsonSchemaHint": "Prompt guidance only; invalid JSON here is a publish warning, not local schema validation.",
+      "temperature": "Temperature",
+      "temperatureHint": "0..2; lower is more stable. Structured output works best around 0.1–0.3.",
+      "maxInputChars": "Max input chars",
+      "maxInputCharsHint": "1000..32000; the excess is truncated before the model call."
+    },
+    "classifier": {
+      "warning": "Classification is only used for routing and never executes commands; each class gets one source handle.",
+      "input": "Input template",
+      "inputHint": "Reference upstream output with ${path}; this is the classifier input.",
+      "inputRequired": "Please enter a classifier input template",
+      "classes": "Classes",
+      "classesHint": "1..10, names matching ^[a-z][a-z0-9_]{0,63}$ and unique; each class creates a source handle (one outgoing edge per branch).",
+      "emptyClasses": "No classes yet; add at least one class.",
+      "addClass": "Add class",
+      "classCount": "{{count}} / {{max}} classes",
+      "className": "Class name",
+      "classNamePlaceholder": "e.g. disk",
+      "classDescription": "Class description",
+      "classDescriptionPlaceholder": "What belongs in this class?",
+      "invalidClassName": "Class names must match ^[a-z][a-z0-9_]{0,63}$ and be unique:",
+      "invalidClassList": "A classifier needs at least one valid, unique class",
+      "tooManyClasses": "A classifier supports at most 10 classes",
+      "instructions": "Instructions",
+      "instructionsHint": "Optional extra guidance; the executor already asks for exactly one class.",
+      "instructionsPlaceholder": "Classify the operations input into exactly one class.",
+      "outputHint": "Outputs { class, reason, raw }; the canvas shows {{count}} class handles plus default."
+    },
+    "code": {
+      "unavailableNotice": "Running code requires a configured isolated execution service. If the service is not ready, execution is refused; code never runs locally on the server.",
+      "warning": "The code node only transforms data inside a server-side isolated data sandbox; it has no host file, network or command access.",
+      "previewNoExecution": "A single-node test run is only a preview; it does not execute this code.",
+      "sampleIsolationUnavailable": "The isolated execution service is not ready. The sample cannot run.",
+      "workflowMemoryRisk": "Running code requires a configured isolated execution service. If the service is not ready, execution is refused; code never runs locally on the server.",
+      "sampleTitle": "Sample run",
+      "sampleWarning": "The sample runs in a real data sandbox. It does not dispatch host tasks or advance the workflow. Do not enter sensitive values.",
+      "sampleInput": "Sample input (JSON object)",
+      "sampleRun": "Run sample",
+      "sampleInvalid": "Enter a valid JSON object for the sample input (not an array, scalar or null).",
+      "sampleTimeoutInvalid": "Choose a timeout from 1 to 5 whole seconds.",
+      "sampleServiceUnavailable": "The isolated execution service is not ready. Try again when the service is available.",
+      "sampleFailed": "Sample run failed.",
+      "sampleError": "An error occurred during the sample run.",
+      "sampleOutput": "Sample output",
+      "sampleElapsed": "Elapsed: {{ms}} ms",
+      "previewOnly": "A single-node test run is only a preview and does not execute this code. Run the workflow to execute it in the data sandbox.",
+      "language": "Language",
+      "languageHint": "javascript needs main(input); python needs def main(input).",
+      "languageJavascript": "JavaScript",
+      "languagePython": "Python",
+      "code": "Code",
+      "codeHint": "Up to 20,000 chars; the return value must be JSON-serializable.",
+      "codeRequired": "Please enter the code",
+      "insertSkeleton": "Insert main skeleton",
+      "inputs": "Inputs",
+      "inputsHint": "Name → upstream variable template; becomes the object passed to main(input).",
+      "inputContract": "Input names become properties of the object passed to main(input). Use upstream variable templates; names must start with a letter or underscore and contain only letters, digits or underscores, up to 64 characters.",
+      "addInput": "Add input",
+      "inputsEmpty": "No inputs yet; main(input) receives an empty object.",
+      "inputNamePlaceholder": "e.g. a",
+      "timeoutSec": "Timeout (s)",
+      "timeoutSecHint": "1..5 seconds; execution is cancelled on expiry.",
+      "outputHint": "Output is the JSON return value of main, up to 8 KiB. Arrays and scalars are exposed under result.",
+      "outputTitle": "Output",
+      "outputContract": "Return a JSON-compatible object, array or scalar. Return an object to expose named fields. Output fields depend on the return value; output schema validation is not yet supported.",
+      "inputName": "Input name",
+      "inputValue": "Input value"
+    },
+    "condition": {
+      "builderHint": "Compose the expression with structured fields; the advanced input always stores the final text.",
+      "left": "Left value",
+      "operator": "Operator",
+      "right": "Right value (literal or variable)",
+      "rightPlaceholder": "90 or nodes.n1.output.threshold",
+      "advanced": "Advanced: write the expression directly",
+      "advancedHint": "Supports paths / numbers / single-quoted strings / == != > < >= <= contains / && ||, up to 512 chars.",
+      "advancedOnly": "This expression contains compound conditions",
+      "advancedOnlyDesc": "The structured builder only expresses a single condition; keep editing in the advanced input — the stored value is still that raw text."
     }
   }
 }

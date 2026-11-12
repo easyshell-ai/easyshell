@@ -1,0 +1,11 @@
+{
+  "code": 200,
+  "message": "ok",
+  "data": [
+    { "name": "etc", "isDir": true, "size": 4096, "mode": "drwxr-xr-x", "modTime": 1762920000 },
+    { "name": "var", "isDir": true, "size": 4096, "mode": "drwxr-xr-x", "modTime": 1762923600 },
+    { "name": "opt", "isDir": true, "size": 4096, "mode": "drwxr-xr-x", "modTime": 1761062400 },
+    { "name": "app.log", "isDir": false, "size": 2048576, "mode": "-rw-r--r--", "modTime": 1767696000 },
+    { "name": "nginx.conf", "isDir": false, "size": 1024, "mode": "-rw-r--r--", "modTime": 1765000000 }
+  ]
+}

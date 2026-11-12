@@ -1,0 +1,9 @@
+# Reviewed host-specific config required; dedicated instance only.
+version = 2
+root = "/var/lib/easyshell-code/containerd"
+state = "/run/easyshell-code/runtime/containerd-state"
+disabled_plugins = ["io.containerd.grpc.v1.cri"]
+[grpc]
+  address = "/run/easyshell-code/runtime/containerd.sock"
+  uid = 0
+  gid = 0

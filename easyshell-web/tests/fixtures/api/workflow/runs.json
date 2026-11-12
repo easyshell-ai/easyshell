@@ -1,0 +1,50 @@
+{
+  "code": 200,
+  "message": "ok",
+  "data": {
+    "content": [
+      {
+        "id": "run-demo-001",
+        "workflowId": 2,
+        "versionId": 11,
+        "versionNo": 3,
+        "triggerType": "manual",
+        "status": "succeeded",
+        "input": { "env": "prod" },
+        "output": { "checked": 12 },
+        "errorMessage": null,
+        "variables": { "env": "prod", "checked": 12 },
+        "variablesTruncated": false,
+        "currentNodes": null,
+        "cancelRequested": false,
+        "startedBy": 1,
+        "createdAt": "2026-02-10T09:30:00",
+        "updatedAt": "2026-02-10T09:31:12",
+        "finishedAt": "2026-02-10T09:31:12"
+      },
+      {
+        "id": "run-demo-002",
+        "workflowId": 2,
+        "versionId": 10,
+        "versionNo": 2,
+        "triggerType": "manual",
+        "status": "failed",
+        "input": { "env": "staging" },
+        "output": null,
+        "errorMessage": "node n3 返回失败",
+        "variables": null,
+        "variablesTruncated": false,
+        "currentNodes": ["n3"],
+        "cancelRequested": false,
+        "startedBy": 1,
+        "createdAt": "2026-02-09T21:05:00",
+        "updatedAt": "2026-02-09T21:06:40",
+        "finishedAt": "2026-02-09T21:06:40"
+      }
+    ],
+    "totalElements": 2,
+    "totalPages": 1,
+    "size": 20,
+    "number": 0
+  }
+}

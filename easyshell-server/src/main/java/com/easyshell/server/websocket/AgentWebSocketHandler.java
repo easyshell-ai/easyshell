@@ -10,6 +10,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
@@ -17,8 +18,7 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 import com.easyshell.server.service.FileProxyService;
 
 import java.time.LocalDateTime;
-
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -30,6 +30,7 @@ public class AgentWebSocketHandler extends TextWebSocketHandler {
 
     private final TaskService taskService;
     private final JobRepository jobRepository;
+    private final JdbcTemplate jdbc;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
 private final Map<String, WebSocketSession> agentSessions = new ConcurrentHashMap<>();
@@ -48,8 +49,9 @@ private final Map<String, WebSocketSession> agentSessions = new ConcurrentHashMa
             return;
         }
 
-        WebSocketSession existing = agentSessions.putIfAbsent(agentId, session);
-        if (existing != null && existing.isOpen()) {
+        WebSocketSession owner = agentSessions.compute(agentId,
+                (id, existing) -> existing == null || !existing.isOpen() ? session : existing);
+        if (owner != session) {
             // Another live connection already owns this agentId. Reject the newcomer instead of
             // silently hijacking the mapping (which used to evict the real agent permanently).
             log.warn("Rejecting duplicate agent connection for {} (session {})", agentId, session.getId());
@@ -59,10 +61,6 @@ private final Map<String, WebSocketSession> agentSessions = new ConcurrentHashMa
                 // best effort
             }
             return;
-        }
-        if (existing != null) {
-            // stale entry, replace it
-            agentSessions.put(agentId, session);
         }
         log.info("Agent WebSocket connected: {}", agentId);
     }
@@ -75,22 +73,24 @@ private final Map<String, WebSocketSession> agentSessions = new ConcurrentHashMa
         }
         // Only drop the mapping if this session is still the registered one, otherwise a
         // reconnecting agent would be evicted by the closing of its predecessor.
-        boolean wasOwner = agentSessions.remove(agentId, session);
-        log.info("Agent WebSocket disconnected: {} (status={}, wasOwner={})", agentId, status, wasOwner);
-        if (wasOwner) {
-            // Auto-fail any running/pending jobs for this agent
+        agentSessions.computeIfPresent(agentId, (id, owner) -> {
+            if (owner != session) return owner;
+            // Keep registration serialized with cleanup so a replacement cannot acquire jobs first.
             try {
                 taskService.failRunningJobsForAgent(agentId,
                         "Agent disconnected (WebSocket closed: " + status + ")");
             } catch (Exception e) {
                 log.error("Error failing jobs for disconnected agent {}", agentId, e);
             }
-        }
+            return null;
+        });
+        log.info("Agent WebSocket disconnected: {} (status={})", agentId, status);
     }
 
     @Override
     protected void handleTextMessage(WebSocketSession session, TextMessage message) {
         String agentId = extractAgentId(session);
+        if (!validSession(session, agentId)) return;
         try {
             JsonNode node = objectMapper.readTree(message.getPayload());
             String type = node.has("type") ? node.get("type").asText() : "";
@@ -143,8 +143,10 @@ private final Map<String, WebSocketSession> agentSessions = new ConcurrentHashMa
                 }
                 case "file_list_result", "file_download_chunk", "file_result" -> {
                     String requestId = node.has("requestId") ? node.get("requestId").asText() : "";
-                    if (fileProxyService != null && !requestId.isEmpty()) {
-                        fileProxyService.handleFileResponse(requestId, message.getPayload());
+                    Object authenticatedAgent = session.getAttributes().get(WebSocketAuthInterceptor.ATTR_AGENT_ID);
+                    if (fileProxyService != null && !requestId.isEmpty()
+                            && authenticatedAgent instanceof String fileAgentId && !fileAgentId.isBlank()) {
+                        fileProxyService.handleFileResponse(fileAgentId, requestId, message.getPayload());
                     }
                 }
                 default -> log.warn("Unknown message type from agent {}: {}", agentId, type);
@@ -156,7 +158,7 @@ private final Map<String, WebSocketSession> agentSessions = new ConcurrentHashMa
 
     public boolean dispatchJob(String agentId, Job job, String scriptContent, int timeoutSeconds) {
         WebSocketSession session = agentSessions.get(agentId);
-        if (session == null || !session.isOpen()) {
+        if (session == null || !validSession(session, agentId)) {
             return false;
         }
 
@@ -175,6 +177,7 @@ private final Map<String, WebSocketSession> agentSessions = new ConcurrentHashMa
                     "script", scriptContent,
                     "timeout", timeoutSeconds
             );
+            if (!validSession(session, agentId)) return false;
             session.sendMessage(new TextMessage(objectMapper.writeValueAsString(payload)));
             return true;
         } catch (Exception e) {
@@ -197,7 +200,7 @@ private final Map<String, WebSocketSession> agentSessions = new ConcurrentHashMa
 
     public boolean sendToAgent(String agentId, String jsonMessage) {
         WebSocketSession session = agentSessions.get(agentId);
-        if (session == null || !session.isOpen()) {
+        if (session == null || !validSession(session, agentId)) {
             return false;
         }
         try {
@@ -211,6 +214,45 @@ private final Map<String, WebSocketSession> agentSessions = new ConcurrentHashMa
 
     public void setTerminalHandler(TerminalWebSocketHandler handler) {
         this.terminalHandler = handler;
+    }
+
+    private boolean validSession(WebSocketSession session, String agentId) {
+        boolean valid = false;
+        try {
+            Object authenticatedId = session.getAttributes().get(WebSocketAuthInterceptor.ATTR_AGENT_ID);
+            Object kind = session.getAttributes().get(WebSocketAuthInterceptor.ATTR_AGENT_AUTH_KIND);
+            Object attribute = session.getAttributes().get(WebSocketAuthInterceptor.ATTR_BOUND_AGENT);
+            if (agentId == null || !agentId.equals(authenticatedId) || !session.isOpen()
+                    || agentSessions.get(agentId) != session) {
+                valid = false;
+            } else if (kind == WebSocketAuthInterceptor.AgentAuthKind.LEGACY && attribute == null
+                    && agentId.length() <= 64) {
+                valid = jdbc.query("SELECT agent_id FROM agent_bound_key WHERE agent_id = ? LIMIT 1",
+                        (rs, row) -> rs.getString(1), agentId).isEmpty();
+            } else if (kind == WebSocketAuthInterceptor.AgentAuthKind.BOUND
+                    && attribute instanceof WebSocketAuthInterceptor.BoundAgent bound
+                    && bound.agentId().equals(agentId) && bound.generation() > 0
+                    && bound.expiresAt() != null && bound.expiresAt().isAfter(Instant.now())) {
+                var matches = jdbc.query("SELECT agent_id, generation FROM host_identity "
+                                + "WHERE agent_id = ? AND generation = ? AND active = 1",
+                        (rs, row) -> new WebSocketAuthInterceptor.BoundAgent(rs.getString(1), rs.getLong(2), bound.expiresAt()),
+                        bound.agentId(), bound.generation());
+                valid = matches.size() == 1 && bound.equals(matches.get(0))
+                        && bound.expiresAt().isAfter(Instant.now());
+            }
+            valid = valid && session.isOpen() && agentSessions.get(agentId) == session;
+        } catch (Exception ignored) {
+            // Identity lookup failure must not allow traffic.
+        }
+        if (!valid) {
+            try {
+                session.close(CloseStatus.POLICY_VIOLATION);
+            } catch (Exception ignored) {
+                // best effort
+            }
+            afterConnectionClosed(session, CloseStatus.POLICY_VIOLATION);
+        }
+        return valid;
     }
 
     public void setFileProxyService(FileProxyService service) {

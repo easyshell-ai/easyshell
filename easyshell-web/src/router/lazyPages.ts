@@ -11,6 +11,7 @@ const Cluster = lazy(() => import('../pages/cluster'));
 const Audit = lazy(() => import('../pages/audit'));
 const TerminalPage = lazy(() => import('../pages/terminal'));
 const Users = lazy(() => import('../pages/system/users'));
+const HostPermissions = lazy(() => import('../pages/system/HostPermissions'));
 const SystemConfig = lazy(() => import('../pages/system/config'));
 const AiConfig = lazy(() => import('../pages/system/ai'));
 const BotConfig = lazy(() => import('../pages/system/bot'));
@@ -22,6 +23,11 @@ const AiChat = lazy(() => import('../pages/ai/chat'));
 const AiScheduled = lazy(() => import('../pages/ai/scheduled'));
 const AiReports = lazy(() => import('../pages/ai/reports'));
 const AiApproval = lazy(() => import('../pages/ai/approval'));
+const WorkflowList = lazy(() => import('../pages/workflow'));
+const WorkflowEditor = lazy(() => import('../pages/workflow/editor'));
+const WorkflowRunList = lazy(() => import('../pages/workflow/run'));
+const WorkflowRunMonitor = lazy(() => import('../pages/workflow/run/monitor'));
+const WorkflowApprovals = lazy(() => import('../pages/workflow/approvals'));
 
 export {
   Login,
@@ -35,6 +41,7 @@ export {
   Audit,
   TerminalPage,
   Users,
+  HostPermissions,
   SystemConfig,
   AiConfig,
   BotConfig,
@@ -46,4 +53,9 @@ export {
   AiScheduled,
   AiReports,
   AiApproval,
+  WorkflowList,
+  WorkflowEditor,
+  WorkflowRunList,
+  WorkflowRunMonitor,
+  WorkflowApprovals,
 };

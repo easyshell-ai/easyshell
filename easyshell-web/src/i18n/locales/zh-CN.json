@@ -1,4 +1,45 @@
 {
+  "channelIdentity": {
+    "temporarilyUnavailable": "渠道 AI 暂不可用，请稍后重试。"
+  },
+  "hostPermissions": {
+    "title": "主机权限",
+    "independentPermissionsNotice": "三种权限相互独立，授予一项不自动授予其他两项。",
+    "inheritanceNotice": "用户的有效权限是直接授权与其角色授权的并集。移除直接授权不会移除角色授予的权限。",
+    "terminalWarning": "终端权限风险较高，允许在主机上交互式执行命令。请仅授予可信的用户和角色。",
+    "viewerTerminalForbidden": "viewer 角色无法使用终端，即使已获得终端授权。",
+    "invalidGrant": "授权无效，请检查授权对象、主机和权限后重试。",
+    "explicitHostsNotice": "授权仅适用于选定的主机，不会自动覆盖将来新增的主机。",
+    "catalogError": "无法加载用户、角色或主机列表。",
+    "retry": "重试",
+    "principalType": "授权对象类型",
+    "user": "用户",
+    "role": "角色",
+    "principal": "用户或角色",
+    "permission": "权限",
+    "selectPrincipal": "请选择用户或角色",
+    "searchHosts": "搜索主机",
+    "host": "主机",
+    "selectHost": "请选择主机",
+    "grant": "授权",
+    "revoke": "撤销授权",
+    "stale": "主机目录或主机身份代次已变化，请刷新并重新选择主机后再管理权限。",
+    "view": "查看",
+    "execute": "执行",
+    "terminal": "终端",
+    "permissionForHost": "{{host}}的{{permission}}权限",
+    "forbidden": "您无权管理这些主机授权。",
+    "conflict": "权限在加载后已发生变更，请重新加载后再保存。",
+    "loadError": "无法加载主机权限。",
+    "saveError": "无法保存主机权限。",
+    "reload": "重新加载",
+    "saveSuccess": "主机权限已保存。",
+    "save": "保存权限"
+  },
+  "resourceIdentity": {
+    "unavailable": "当前无法验证权限或资源身份，请联系管理员。",
+    "fetchFailed": "无法加载数据，请检查网络连接并重试；如果问题仍然存在，请联系管理员。"
+  },
   "common": {
     "confirm": "确定",
     "cancel": "取消",
@@ -40,6 +81,7 @@
     "updateTime": "更新时间",
     "minutes": "分钟",
     "close": "关闭",
+    "copy": "复制",
     "copied": "已复制",
     "copyFailed": "复制失败"
   },
@@ -73,13 +115,19 @@
     "system_memory": "记忆管理",
     "system_sop": "SOP 管理",
     "terminal": "终端",
-    "host_detail": "主机详情"
+    "host_detail": "主机详情",
+    "workflow": "工作流",
+    "workflow_editor": "工作流编辑",
+    "workflow_run": "运行记录",
+    "workflow_approvals": "工作流审批"
   },
   "header": {
     "switch_to_en": "Switch to English",
     "switch_to_zh": "切换到中文",
     "theme_light": "切换浅色模式",
     "theme_dark": "切换深色模式",
+    "reset_theme_default": "重置默认主题",
+    "skip_to_content": "跳至主要内容",
     "logout": "退出登录",
     "collapse_sidebar": "收起侧边栏",
     "expand_sidebar": "展开侧边栏",
@@ -652,6 +700,8 @@
     }
   },
   "reports": {
+    "historyUnavailable": "部分历史报告的来源身份无法验证，暂不可用；历史数据未删除。",
+    "detailUnavailable": "报告详情暂不可用，请重试。",
     "title": "巡检报告",
     "fetchError": "获取巡检报告失败",
     "detailError": "获取报告详情失败",
@@ -716,6 +766,8 @@
     }
   },
   "chat": {
+    "stopStreamBeforeDelete": "请先停止正在生成的回复，再删除此对话。",
+    "waitForSessionDelete": "请等待对话删除完成后再发送消息。",
     "prompt1": "检查所有服务器的系统状态",
     "prompt2": "列出最近执行失败的任务",
     "prompt3": "分析服务器资源使用情况",
@@ -962,6 +1014,7 @@
   },
   "dashboard": {
     "title": "仪表盘",
+    "statisticsUnavailable": "统计数据暂不可用",
     "totalHosts": "主机总数",
     "onlineHosts": "在线主机",
     "offlineHosts": "离线主机",
@@ -1000,6 +1053,10 @@
   },
   "host": {
     "title": "主机管理",
+    "credentialListUnavailable": "这里只显示具有查看权限的 Agent；历史凭据归属和主机身份无法验证，因此不会关联到主机。",
+    "credentialOwnershipUnknown": "无法验证历史凭据的归属，不会按 IP 地址关联凭据。",
+    "remoteUninstallUnavailable": "远程卸载暂不可用。删除记录不会卸载远程 Agent。",
+    "deleteDoesNotUninstall": "删除此记录不会卸载远程 Agent。",
     "detail": "主机详情",
     "online": "在线",
     "offline": "离线",
@@ -1024,6 +1081,7 @@
     "lastHeartbeat": "最后心跳",
     "addServer": "添加服务器",
     "deployHistory": "部署历史",
+    "loadingHistory": "正在加载部署历史…",
     "exportCSV": "导出 CSV",
     "startDeploy": "开始部署",
     "sshPort": "SSH 端口",
@@ -1142,6 +1200,8 @@
     "confirmDelete": "确认删除此脚本？",
     "ai": {
       "title": "AI 脚本助手",
+      "externalDataWarningTitle": "外发数据提醒",
+      "externalDataWarningDescription": "提示词和当前脚本将发送给配置的模型。敏感数据过滤无法保证识别所有秘密，请勿输入或包含密码、密钥等敏感数据。",
       "targetOs": "目标操作系统",
       "promptLabel": "描述你需要的脚本功能",
       "promptPlaceholder": "例如：监控磁盘使用率，超过80%时告警",
@@ -1374,6 +1434,11 @@
     }
   },
   "hostDetail": {
+    "terminalPermissionUnknown": "正在确认终端权限。",
+    "terminalPermissionError": "无法确认终端权限，请重试或联系管理员。",
+    "terminalPermissionDenied": "您没有此主机的终端权限。",
+    "terminalPermissionOffline": "主机离线，无法使用终端。",
+    "terminalOffline": "主机离线，无法使用终端。",
     "detectFailed": "检测失败",
     "detectTaskSubmitted": "检测任务已提交",
     "detectTimeout": "检测超时",
@@ -1433,8 +1498,17 @@
     "executionHistory": "执行历史"
   },
   "task": {
+    "historyVisibilityNotice": "身份未核实的历史任务和工作流任务暂不在此列表显示，数据未删除。",
     "title": "任务执行",
+    "hostExecuteDenied": "无执行权限",
+    "hostExecuteUnknown": "执行权限未知",
+    "hostPermissionsLoading": "正在检查主机执行权限…",
+    "hostPermissionsFailed": "无法检查主机权限，请重试后再提交。",
+    "hostPermissionsIncomplete": "部分主机的权限未知，请重试后再选择这些主机。",
+    "dynamicTargetsPermissionHint": "动态目标的成员可能变化，最终以服务端对解析出的所有主机进行的权限校验为准。",
     "create": "新建任务",
+    "runWorkflow": "运行工作流",
+    "detailLoadFailed": "无法加载任务详情",
     "execute": "执行",
     "stop": "停止",
     "fetchError": "获取任务列表失败",
@@ -1518,6 +1592,900 @@
       "cancel": "取消",
       "approvalSubmitted": "已提交审批，请等待管理员处理",
       "approvalFailed": "提交审批失败"
+    }
+  },
+  "workflow": {
+    "scriptSource": {
+      "label": "脚本来源",
+      "manual": "手写",
+      "library": "脚本库",
+      "select": "选择脚本",
+      "snapshotHint": "预览只读。发布时服务端会校验并冻结所选版本；之后脚本库的变化不会改变已发布的快照。",
+      "listError": "脚本列表加载失败，请检查权限后重试。",
+      "selectionError": "无法选择脚本，脚本可能已变更或无权限，请重试。",
+      "retry": "重试"
+    },
+    "structured": {
+      "mode": "严格结构化输出",
+      "savedProtection": "严格结构化输出节点保存后，不能删除节点或修改节点标识、类型、输出模式及 Schema；其他配置仍可修改",
+      "serverValidation": "Schema 和模型输出由服务端校验。",
+      "rawOnly": "此 Schema 无法在可视化表格中无损编辑，请使用原文编辑。",
+      "fieldType": "字段类型",
+      "required": "必填",
+      "removeField": "删除字段",
+      "fieldName": "字段名",
+      "addField": "添加字段",
+      "additionalProperties": "允许额外字段（服务端目前不支持）",
+      "rawSchema": "Schema 原文"
+    },
+    "list": {
+      "title": "工作流",
+      "create": "新建工作流",
+      "created": "工作流已创建",
+      "createFailed": "创建工作流失败",
+      "edit": "编辑",
+      "fetchFailed": "获取工作流列表失败",
+      "searchPlaceholder": "搜索名称 / 分类",
+      "empty": "暂无工作流",
+      "emptyHint": "点击右上角「新建工作流」开始，或从 AI 运维的 DAG 计划导入。",
+      "nameRequired": "请输入工作流名称",
+      "description": "描述",
+      "archiveConfirm": "确认归档此工作流？（软删除，可恢复）",
+      "archived": "已归档",
+      "archiveFailed": "归档失败",
+      "col": {
+        "name": "名称",
+        "visibility": "可见性",
+        "category": "分类",
+        "version": "当前版本",
+        "runs": "运行 / 成功",
+        "lastRunAt": "最近运行"
+      },
+      "template": "初始模板",
+      "templateNone": "空白（仅开始/结束）",
+      "templateHint": "新建后会保存一份初始草稿，编辑器打开即有开始/结束契约。",
+      "seedFailed": "初始草稿保存失败，可进入编辑器后手动保存。",
+      "statusFilter": {
+        "label": "工作流状态",
+        "active": "使用中"
+      }
+    },
+    "status": {
+      "draft": "草稿",
+      "published": "已发布",
+      "archived": "已归档"
+    },
+    "visibility": {
+      "private": "仅自己",
+      "public": "全员可见"
+    },
+    "palette": {
+      "title": "节点调色板",
+      "add": "添加",
+      "handles": "{{in}} 入 {{out}} 出",
+      "hint": "拖到画布，或聚焦后按 Enter 添加",
+      "search": "搜索节点",
+      "noResult": "没有匹配的节点"
+    },
+    "node": {
+      "type": {
+        "script-exec": "脚本执行",
+        "condition": "条件分支",
+        "notify": "通知",
+        "approval": "人工审批",
+        "wait": "等待",
+        "start": "开始",
+        "transform": "数据映射",
+        "ai-analyze": "AI 分析",
+        "end": "结束",
+        "llm": "LLM 生成",
+        "classifier": "问题分类",
+        "code": "代码转换"
+      },
+      "desc": {
+        "script-exec": "在目标主机上执行脚本，落到真实 Task",
+        "condition": "表达式求值，true / false 双分支",
+        "notify": "通过 Webhook / 邮件 / 机器人推送消息",
+        "approval": "挂起运行，等待管理员审批",
+        "wait": "按秒等待后继续",
+        "start": "声明工作流入参，运行从这里开始",
+        "transform": "把上游输出整理成命名字段，供下游引用",
+        "ai-analyze": "读取上游输出并给出结论文本，只分析不执行",
+        "end": "汇总最终输出，运行结果取这里的映射",
+        "llm": "调用大模型生成文本或结构化 JSON，不执行命令",
+        "classifier": "按模型分类结果路由到对应 class 分支",
+        "code": "使用 JavaScript / Python 进行数据转换（目前不可运行或发布）"
+      },
+      "category": {
+        "entry": "入口",
+        "execute": "执行",
+        "flow": "流程",
+        "human": "人工"
+      },
+      "fixed": "固定",
+      "docs": {
+        "start": {
+          "purpose": "工作流入口，声明运行入参。",
+          "when": "每条工作流都必须有且只有一个开始节点。",
+          "input": "无（开始节点没有入边）。",
+          "output": "definition.variables 的每个入参：run.input.<name> 或 nodes.start.output.<name>。",
+          "example": "variables:\n  targets: { type: json, required: true }\n  mount:   { type: string, default: \"/\" }"
+        },
+        "end": {
+          "purpose": "汇总工作流的最终输出。",
+          "when": "需要稳定的运行结果时添加；最多一个，且不能有出边。",
+          "input": "任意上游节点的输出。",
+          "output": "config.outputs 的 {name, value} 映射，即 workflow_run.output。",
+          "example": "outputs:\n  - { name: summary, value: \"${nodes.report.output.text}\" }"
+        },
+        "script-exec": {
+          "purpose": "在目标主机上执行脚本，落到真实 Task。",
+          "when": "需要主机操作、巡检或变更时。",
+          "input": "上游输出可通过 parameters 的 ${path} 注入脚本槽位。",
+          "output": "脚本 stdout（文本或 JSON，无固定 schema）。",
+          "example": "script: df -h {{MOUNT}}\nparameters:\n  MOUNT: ${run.input.mount}"
+        },
+        "transform": {
+          "purpose": "把上游输出映射成命名字段。",
+          "when": "下游需要稳定字段名，或需要拼接摘要时。",
+          "input": "上游节点的输出。",
+          "output": "config.mappings 的 {name, value} 对象。",
+          "example": "mappings:\n  - { name: usage, value: \"${nodes.check.output.usage}\" }"
+        },
+        "condition": {
+          "purpose": "按表达式结果分流。",
+          "when": "需要 IF / ELSE 两条处理路径时。",
+          "input": "上游节点的输出。",
+          "output": "{ result: boolean }；true 走 IF 出边，false 走 ELSE 出边。",
+          "example": "expression: nodes.check.output.count > 0"
+        },
+        "ai-analyze": {
+          "purpose": "读取上游输出并产出结论文本，或按提示返回结构化 JSON，不执行命令。",
+          "when": "需要总结、判断或风险结论；text 模式适合自然语言，json 模式适合下游机器读取。",
+          "input": "input 模板按 maxInputChars 截断；outputMode=json 时 jsonSchema 作为提示词指导，解释字段与类型。",
+          "output": "{ text, model, truncated }；json 模式的解析结果在 text 中返回，schema 只做提示，不参与本地校验。",
+          "example": "instructions: 找出超过阈值的挂载点\ninput: ${nodes.check.output}\noutputMode: json\njsonSchema: {\"type\":\"object\",\"properties\":{\"verdict\":{\"type\":\"string\"}}}\n# JSON 解析失败会自动修复重试一次"
+        },
+        "approval": {
+          "purpose": "挂起运行，等待管理员审批。",
+          "when": "高风险操作或需要人工确认时。",
+          "input": "上游输出可放进标题/详情模板。",
+          "output": "{ decision, comment, decidedBy }。",
+          "example": "title: 确认重启 {{SERVICE}}\ntimeoutSec: 3600\nonTimeout: reject"
+        },
+        "notify": {
+          "purpose": "把运行结果推送到已配置渠道。",
+          "when": "需要通知或留痕时。",
+          "input": "上游输出可放进消息模板。",
+          "output": "{ delivered, failed, skipped }。",
+          "example": "channels: [telegram]\nmessageTemplate: \"磁盘告警：${nodes.check.output.usage}%\""
+        },
+        "wait": {
+          "purpose": "按秒等待后继续。",
+          "when": "需要冷却、延迟或错峰时。",
+          "input": "上游输出（透传）。",
+          "output": "{ waitedMs }。",
+          "example": "durationSec: 60"
+        },
+        "llm": {
+          "purpose": "调用通用大模型，生成文本或结构化 JSON。",
+          "when": "需要总结、抽取字段或生成机器可读结论，但不执行任何命令时；text 返回自然语言，json 返回解析后的对象。",
+          "input": "userPrompt / systemPrompt 模板，按 maxInputChars 截断上游输入。",
+          "output": "{ text, json, structured, model }；json 模式会剥离 ```json 围栏并解析，失败自动修复重试一次，仍失败则节点失败。",
+          "example": "provider: openai\nmodel: gpt-4o-mini\nuserPrompt: |\n  分析 ${nodes.check.output}，输出风险结论\noutputMode: json\njsonSchema: {\"type\":\"object\",\"properties\":{\"verdict\":{\"type\":\"string\"}}}"
+        },
+        "classifier": {
+          "purpose": "用模型把输入分到恰好一个 class，并按 class 走不同出边。",
+          "when": "需要按问题类型分流（如磁盘 / 网络 / 权限）时。",
+          "input": "input 模板（必填）+ 1..10 个 class（名称 + 说明）。",
+          "output": "{ class, reason, raw }；每个 class 一个出边把手，另有 default 兜底。",
+          "example": "input: ${nodes.check.output}\nclasses:\n  - { name: disk, description: 磁盘/容量/挂载点 }\n  - { name: network, description: 网络/端口/连接 }\ninstructions: Classify the input into exactly one class."
+        },
+        "code": {
+          "purpose": "在隔离沙箱内运行数据转换代码，返回可 JSON 序列化的结果。",
+          "when": "需要合并、裁剪或重排上游 JSON，但不需要操作主机时。",
+          "input": "inputs 映射（名称 → ${path} 模板）会作为 main(input) 的输入对象。",
+          "output": "main 的返回值，按 JSON 存为 nodes.<key>.output。",
+          "example": "function main(input) {\n  return { total: input.a + input.b };\n}\n// inputs: { a: ${nodes.a.output.count}, b: 2 }",
+          "examplePython": "def main(input):\n    return {\"total\": input[\"a\"] + input[\"b\"]}\n\n# inputs: { a: ${nodes.a.output.count}, b: 2 }",
+          "pythonLabel": "Python 示例"
+        }
+      }
+    },
+    "nodeStatus": {
+      "pending": "等待中",
+      "running": "执行中",
+      "succeeded": "成功",
+      "failed": "失败",
+      "skipped": "已跳过",
+      "suspended": "挂起中",
+      "cancelled": "已取消",
+      "timeout": "超时",
+      "interrupted": "已中断"
+    },
+    "canvas": {
+      "ariaLabel": "工作流画布：Tab 遍历节点，Enter 打开配置，方向键移动，Delete 删除",
+      "hint": "拖空白框选 · 空格+拖动平移 · Ctrl+Z 撤销",
+      "reject": {
+        "SELF_CONNECTION": "不能连接到节点自身",
+        "DUPLICATE_EDGE": "这条连线已存在",
+        "CYCLE": "不允许成环（工作流必须是有向无环图）",
+        "ENDPOINT_MISSING": "连线端点不存在",
+        "START_HAS_INPUT": "开始节点不能有入边",
+        "END_HAS_OUTPUT": "结束节点不能有出边",
+        "UNKNOWN_HANDLE": "该出边把手不存在（节点配置可能已变更）",
+        "CLASSIFIER_HANDLE_TAKEN": "这个分类分支已经有一条出边了，每个 class / default 最多连接一个下游"
+      },
+      "deleteTitle": "确认删除",
+      "deleteConfirm": "将删除 {{nodes}} 个节点与 {{edges}} 条连线，此操作可用 Ctrl+Z 撤销。",
+      "deleteNodes": "涉及节点",
+      "deleted": "已删除",
+      "copied": "已复制 {{count}} 个节点",
+      "autoLayoutDone": "已按分层重新布局",
+      "fixedNodeOnly": "开始/结束节点由系统固定维护，不能拖入",
+      "empty": {
+        "title": "4 步搭出第一条工作流",
+        "step1": "在「开始」节点声明入参（例如 targets / threshold）",
+        "step2": "从左侧拖入执行节点并用连线串起来",
+        "step3": "在字段旁的「插入变量」选择上游输出",
+        "step4": "在「结束」节点声明最终输出",
+        "useTemplate": "从模板开始",
+        "dragHint": "也可以直接拖拽左侧节点到画布"
+      }
+    },
+    "form": {
+      "title": "节点配置",
+      "empty": "在画布中选择一个节点",
+      "name": "节点名称",
+      "nameRequired": "请输入节点名称",
+      "script": "脚本内容",
+      "scriptRequired": "请输入脚本内容",
+      "scriptHint": "脚本文本，用 {{NAME}} 声明参数槽位；执行时按 parameters 取值后单引号包裹渲染",
+      "scriptId": "脚本 ID（可选，复用脚本库）",
+      "scriptIdHint": "留空 = 内联脚本。当前版本仅随定义保存，执行时以 script 为准",
+      "scriptIdPlaceholder": "留空则直接写脚本内容",
+      "targets": "目标主机寻址",
+      "hostsLoading": "正在检查可用主机权限…",
+      "retryHosts": "重试",
+      "hostsFailed": "无法完整检查主机权限。已保留现有目标。",
+      "hostsEmpty": "没有可执行的主机。",
+      "hostsUnavailable": "部分已保存目标不可用或已无执行权限；在您移除之前会予以保留。",
+      "dynamicTargetsPermissionHint": "目标将在运行时解析并逐台校验权限；选择目标不代表已获授权。",
+      "targetsHint": "脚本派发到哪些主机：explicit 指定 agent / cluster 集群 / tag 标签 / variable 上游产出的主机列表",
+      "targetsEmpty": "当前 mode 下还没有任何目标，运行时节点会失败（目标 agent 集合为空）",
+      "targetsMode": {
+        "explicit": "指定 agent",
+        "cluster": "按集群",
+        "tag": "按标签",
+        "variable": "按上游变量"
+      },
+      "agentIds": "agent ID 列表",
+      "clusterIds": "集群 ID 列表",
+      "tagIds": "标签 ID 列表",
+      "variableRef": "变量引用",
+      "parameters": "参数（槽位取值）",
+      "parametersHint": "键 = 脚本里的 {{NAME}}，值 = 字面量或 ${path} 表达式（如 ${nodes.n1.output.x}）",
+      "parametersEmpty": "还没有参数。脚本里写了 {{NAME}} 就必须在这里给取值，否则发布报 PARAM_MISSING",
+      "parameterKey": "参数名",
+      "parameterValue": "取值",
+      "addParameter": "添加参数",
+      "rawParams": "raw 参数声明",
+      "rawParamsHint": "选中以 {{NAME:raw}} 形式使用的参数（不加引号，可传 glob）。必须同时把 riskPolicy 设为 allow_medium 或 strict",
+      "rawParamsPlaceholder": "从上面的参数里选择",
+      "rawNeedsMedium": "声明了 raw 参数的节点必须把 riskPolicy 至少设为 allow_medium，否则发布报 RAW_REQUIRES_ALLOW_MEDIUM",
+      "riskHint": "非 LOW 风险脚本会被风险门禁拦截；有 approval 祖先时可人工审批放行",
+      "expression": "条件表达式",
+      "expressionRequired": "请输入条件表达式",
+      "expressionHint": "示例：nodes.n1.output.count > 0",
+      "expressionSyntax": "只支持路径 / 数字 / 单引号字符串 / == != > < >= <= contains / && ||，≤512 字符",
+      "channels": "通知渠道",
+      "channelsHint": "推送到哪些已配置的机器人渠道（最多 6 个）。未启用或无推送目标的渠道会被记为 skipped，不会谎报已送达",
+      "channelsRequired": "至少选择一个渠道，否则发布报 NODE_CONFIG_INVALID",
+      "channelOption": {
+        "telegram": "Telegram",
+        "discord": "Discord",
+        "dingtalk": "钉钉",
+        "slack": "Slack",
+        "feishu": "飞书",
+        "wechat-work": "企业微信"
+      },
+      "messageTemplate": "消息模板",
+      "messageTemplateRequired": "请输入消息模板",
+      "messageTemplateHint": "支持 ${path} 表达式与 {{NAME}} 槽位（NAME 取自上面的参数）；推送前会经过出站脱敏",
+      "level": "消息级别",
+      "levelHint": "非 info 时会在消息前面加上 [warning] / [error] 前缀",
+      "approvalMode": "审批模式",
+      "approvalModeHint": "approval = 完整审批；human-confirm = 轻量人工确认（标题加前缀，复用同一审批行）",
+      "approvalModeApproval": "完整审批",
+      "approvalModeHumanConfirm": "人工确认（轻量）",
+      "approvalTitle": "审批标题",
+      "approvalTitleRequired": "请输入审批标题",
+      "approvalTitleHint": "支持模板渲染；human-confirm 模式下会自动加「人工确认」前缀",
+      "detailTemplate": "详情模板",
+      "detailTemplateHint": "留空则用内置快照（runId / nodeKey / 触发人 / 触发时间）",
+      "approverRole": "审批角色",
+      "approverRoleHint": "ADMIN 或 SUPER_ADMIN 可以审批此节点",
+      "approvalTimeout": "审批超时（秒）",
+      "approvalTimeoutHint": "60..604800 秒；超时后按 onTimeout 处置",
+      "approvalTimeoutRequired": "请输入审批超时时间",
+      "onTimeout": "超时后",
+      "onTimeoutHint": "approve = 视作通过 / reject = 视作拒绝 / fail = 节点失败",
+      "durationSec": "等待时长",
+      "durationSecRequired": "请输入等待时长",
+      "durationSecHint": "1..3600 秒；每 500ms 检查一次取消，取消不会被 sleep 卡住",
+      "advanced": "高级",
+      "outputVar": "输出变量名",
+      "outputVarHint": "以 nodes.<key>.output 形式被下游引用，不得与节点 key 相同",
+      "retryMax": "重试次数",
+      "retryInterval": "重试间隔",
+      "timeout": "节点超时（秒）",
+      "timeoutHint": "留空用 engine.default-node-timeout-sec；script-exec 的 task 派发超时另见 config.timeoutSeconds",
+      "onFailure": "失败策略",
+      "onUnsafeValue": "值越界处置",
+      "onUnsafeValueHint": "reject = 拒绝 / raw = 仅已声明 raw 的参数放行 / truncate = 截到白名单边界",
+      "riskPolicy": "风险策略",
+      "riskPolicyHint": "block = MEDIUM 一律转审批 / allow_medium = 允许 MEDIUM / strict = 更严",
+      "nodeShape": "尺寸 {{width}}×{{height}}",
+      "handles": "{{in}} 入 {{out}} 出",
+      "agentIdsPlaceholder": "选择主机",
+      "clusterIdsPlaceholder": "选择集群",
+      "tagIdsPlaceholder": "选择标签",
+      "conditionBranchHint": "IF / ELSE 由出边把手决定",
+      "conditionBranchDesc": "条件节点的两条出边已经按结果门控：true 走 IF，false 走 ELSE，不需要在边上重复写表达式。"
+    },
+    "edge": {
+      "title": "连线：{{from}} → {{to}}",
+      "condition": "条件表达式（留空 = 恒真）",
+      "conditionHint": "仅 condition 节点的 true 分支可带条件",
+      "dualHandleHint": "condition 节点：true 分支可带条件，false 分支必须留空",
+      "falseBranchLocked": "false 分支的连线不允许带条件（门控由把手承担）",
+      "onUpstreamFailure": "上游失败时",
+      "conditionGatedTitle": "IF / ELSE 由出边把手门控",
+      "conditionGatedDesc": "条件节点的分支结果由 sourceHandle 决定：true 走 IF，false 走 ELSE。这里不再编辑表达式。",
+      "sourceBranch": "当前分支",
+      "classifierGatedTitle": "分类路由由出边把手决定",
+      "classifierGatedDesc": "问题分类节点的每条出边对应一个 class；运行时命中哪个 class 就走哪条边，default 只在没有命中时使用。这里不再编辑表达式。"
+    },
+    "json": {
+      "title": "定义 JSON（只读）",
+      "meta": "{{nodes}} 个节点 / {{edges}} 条连线 / schema v{{version}}"
+    },
+    "editor": {
+      "dirty": "未保存",
+      "memoryOnlyWarning": "本地持久化和恢复暂不可用。未保存的更改仅存在于当前编辑会话的内存中，刷新或关闭页面可能导致更改丢失。",
+      "saved": "已保存",
+      "lastSaved": "上次保存 {{time}}",
+      "selectedCount": "已选 {{count}} 个节点",
+      "selectedEdges": "已选 {{count}} 条连线",
+      "undo": "撤销 (Ctrl+Z)",
+      "redo": "重做 (Ctrl+Shift+Z)",
+      "autoLayout": "自动布局",
+      "nothingToUndo": "没有可撤销的操作",
+      "nothingToRedo": "没有可重做的操作",
+      "saveFailed": "保存草稿失败",
+      "saveFailedOffline": "保存失败，改动已存到本地草稿",
+      "localDraftFound": "发现本地草稿（上次保存失败时留下）",
+      "localDraftRestore": "恢复本地草稿",
+      "localDraftDiscard": "丢弃",
+      "localDraftRestored": "已恢复本地草稿",
+      "unsavedNavigationTitle": "工作流有未保存的更改",
+      "unsavedNavigationDesc": "离开编辑器前请保存或处理所有未保存草稿。切换工作流时完整草稿仅保存在内存中，关闭或刷新页面可能丢失。",
+      "returnToMemoryDraft": "返回工作流 #{{id}}"
+    },
+    "publish": {
+      "action": "发布",
+      "title": "发布工作流",
+      "confirm": "确认发布",
+      "blocked": "存在 ERROR，无法发布",
+      "revalidate": "重新校验",
+      "noIssues": "校验通过，可以发布",
+      "errorCount": "{{count}} 个 ERROR",
+      "errorHint": "修复画布上的结构问题后重试；ERROR 会阻塞发布。",
+      "success": "已发布",
+      "failed": "发布失败",
+      "riskBlocked": "风险门禁拦截：需要审批或调整脚本"
+    },
+    "trigger": {
+      "action": "触发",
+      "title": "触发运行：{{name}}",
+      "submit": "触发",
+      "success": "已触发运行",
+      "failed": "触发失败",
+      "notPublished": "工作流尚未发布，请先发布",
+      "concurrency": "全局并发已满，运行进入排队",
+      "noVariables": "该工作流没有声明入参变量",
+      "required": "必填",
+      "validationFailed": "表单填写有误，请检查后重试",
+      "idempotencyKey": "幂等键 (Idempotency-Key)",
+      "idempotencyHint": "同一用户同一 key 重复触发会返回首个 run；参数不同则 409",
+      "invalidJson": "请输入合法的 JSON（例如 [\"agent-1\"]）",
+      "selectPlaceholder": "请选择"
+    },
+    "conflict": {
+      "draftId": "目标草稿 ID",
+      "baseVersion": "基础版本",
+      "title": "版本冲突（409）",
+      "message": "服务端草稿已被其他会话修改（base_version 不匹配）。系统不会自动合并，请选择处理方式：",
+      "overwrite": "覆盖保存（记录审计 WORKFLOW_OVERWRITE）",
+      "overwriteDone": "已覆盖保存",
+      "saveCopy": "另存为副本（保留我的改动）",
+      "copyCreated": "副本已创建",
+      "copyFailed": "创建副本失败",
+      "discard": "放弃我的改动，重载服务端草稿",
+      "discarded": "已重载服务端草稿"
+    },
+    "run": {
+      "title": "运行记录",
+      "monitor": "监控",
+      "empty": "暂无运行记录",
+      "fetchFailed": "获取运行列表失败",
+      "detailUnavailable": "运行详情暂不可用，无法确认运行情况。请稍后重试或联系管理员。",
+      "dataUnavailable": "数据不可用，无法确认其内容。",
+      "filtered": "仅看工作流 #{{id}}",
+      "canvasTitle": "运行图（只读）",
+      "nodes": "节点执行",
+      "info": "运行信息",
+      "input": "触发入参",
+      "variables": "变量快照",
+      "variablesTruncated": "变量快照已截断",
+      "output": "运行输出",
+      "logs": "实时日志",
+      "noLogs": "暂无日志",
+      "logLabel": "工作流运行日志",
+      "ws": {
+        "idle": "连接中",
+        "connected": "已连接",
+        "disconnected": "已断开"
+      },
+      "cancel": "取消运行",
+      "cancelConfirm": "确认取消此运行？",
+      "cancelHint": "取消在下一检查点传播，已启动的脚本会继续跑完。",
+      "cancelRequested": "取消请求已记录",
+      "cancelFailed": "取消失败",
+      "ariaRunning": "正在执行：{{nodes}}",
+      "ariaStatus": "运行状态：{{status}}",
+      "col": {
+        "id": "运行 ID",
+        "workflow": "工作流",
+        "version": "版本",
+        "trigger": "触发方式",
+        "currentNodes": "当前节点",
+        "nodeKey": "节点",
+        "nodeType": "类型",
+        "attempt": "尝试",
+        "task": "关联任务",
+        "error": "错误"
+      },
+      "trigger": {
+        "manual": "手动",
+        "scheduled": "定时",
+        "replay": "重放"
+      },
+      "testRunFailed": "单节点试运行失败",
+      "filter": {
+        "label": "节点过滤",
+        "all": "全部节点",
+        "failed": "仅失败",
+        "empty": "没有符合条件的节点"
+      },
+      "inspector": {
+        "title": "节点运行详情",
+        "input": "输入",
+        "output": "输出",
+        "warning": "警告",
+        "testRun": "单节点试运行",
+        "testRunHint": "按当前版本与入参重放该节点，不会继续下游。",
+        "testResult": "试运行结果",
+        "testStatus": "状态",
+        "riskLevel": "风险等级",
+        "riskPolicy": "风险策略",
+        "conditionResult": "条件结果",
+        "targetCount": "目标主机数",
+        "renderedScript": "渲染后脚本",
+        "warnings": "警告"
+      }
+    },
+    "approval": {
+      "title": "工作流审批",
+      "fetchError": "获取待审批列表失败",
+      "dataUnavailable": "审批数据不可用，无法确认审批内容。请稍后重试或联系管理员。",
+      "restrictedReason": "无权查看审批详情，可以拒绝但不能批准。",
+      "empty": "暂无待审批项",
+      "approve": "通过",
+      "reject": "拒绝",
+      "approveSuccess": "已通过审批",
+      "rejectSuccess": "已拒绝",
+      "decideFailed": "审批操作失败",
+      "decided": "该审批已被处理",
+      "confirmApprove": "确认通过此审批？",
+      "confirmApproveDesc": "通过后挂起的运行会继续执行",
+      "confirmReject": "确认拒绝此审批？",
+      "confirmRejectDesc": "拒绝后运行按 onRejection 策略处理",
+      "detailTitle": "审批详情",
+      "detail": "详情快照",
+      "auditHint": "决策会写审计（含审批人与时间）",
+      "status": {
+        "pending": "待审批",
+        "approved": "已通过",
+        "rejected": "已拒绝",
+        "timeout": "已超时",
+        "cancelled": "已取消"
+      },
+      "col": {
+        "title": "标题",
+        "nodeType": "节点类型",
+        "risk": "风险等级",
+        "expiresAt": "过期时间"
+      }
+    },
+    "error": {
+      "403": "无权访问此工作流",
+      "404": "工作流不存在",
+      "403Desc": "只有创建者或管理员可以访问。",
+      "404Desc": "它可能已被删除或归档。",
+      "run404": "运行不存在",
+      "backToList": "返回工作流列表",
+      "generic": "加载失败"
+    },
+    "inspector": {
+      "title": "节点检查器",
+      "tabs": {
+        "config": "配置",
+        "data": "数据",
+        "docs": "说明"
+      },
+      "saved": "节点已保存",
+      "deleteDisabled": "开始/结束节点不可删除",
+      "emptyTitle": "画布概览",
+      "emptyDesc": "选中一个节点查看配置、上游变量与说明。点击节点或按 Enter 打开检查器。",
+      "docs": {
+        "when": "何时使用",
+        "highRiskApprovalUnavailable": "高危审批绑定尚未实现。审批节点不能授权高危命令，命令仍可能被风险门禁拦截。",
+        "llmExecutionWarning": "LLM 输出不能直接作为脚本 raw 参数；主机执行须通过 script-exec，仍受风险门禁约束。",
+        "input": "输入",
+        "output": "输出",
+        "example": "最小示例",
+        "security": {
+          "ai-analyze": "AI 只分析文本，绝不执行命令或派发任务；输出不能直接作为脚本 raw 参数。",
+          "approval": "审批是唯一的人工授权路径；超时按节点配置处理。",
+          "script-exec": "脚本仍然经过统一风险门禁；非 LOW 脚本需要审批祖先。",
+          "llm": "LLM 输出不能直接作为脚本 raw 参数；需要执行时仍走 script-exec 并经过审批。",
+          "classifier": "分类只决定路由，不构成执行授权；下游执行仍受风险门禁约束。",
+          "code": "代码在隔离数据沙箱中运行，无主机 IO / 命令 / 网络访问；需要主机操作请用 script-exec 或 agent。"
+        }
+      },
+      "data": {
+        "upstream": "上游可用变量",
+        "copy": "复制",
+        "copied": "已复制变量引用",
+        "outputPath": "本节点输出路径",
+        "opaqueOutput": "该节点没有固定字段 schema，按整体 JSON 输出引用。",
+        "contract": "输入契约"
+      }
+    },
+    "variable": {
+      "insert": "插入变量",
+      "search": "搜索变量",
+      "empty": "没有可用的上游变量",
+      "emptyHint": "先从开始节点声明入参，或把节点连接到当前节点的上游。",
+      "noMatch": "没有匹配的变量",
+      "opaque": "整体输出",
+      "required": "必填",
+      "group": {
+        "input": "工作流入参",
+        "start": "开始节点",
+        "node": "上游节点",
+        "alias": "输出别名"
+      },
+      "type": {
+        "string": "文本",
+        "number": "数字",
+        "boolean": "布尔",
+        "json": "JSON"
+      },
+      "output": {
+        "condition": {
+          "result": "条件表达式结果"
+        },
+        "notify": {
+          "delivered": "成功送达的渠道列表",
+          "failed": "推送失败的渠道列表",
+          "skipped": "未启用/无目标的渠道列表"
+        },
+        "approval": {
+          "decision": "approved / rejected",
+          "comment": "审批意见",
+          "decidedBy": "审批人"
+        },
+        "wait": {
+          "waitedMs": "实际等待毫秒数"
+        },
+        "ai-analyze": {
+          "text": "分析结论文本",
+          "model": "使用的模型",
+          "truncated": "输入是否被截断",
+          "json": "json 模式解析结果（object / array / null）",
+          "structured": "是否为结构化 JSON 输出"
+        },
+        "llm": {
+          "text": "模型原始文本",
+          "json": "json 模式解析结果（未结构化时为 null）",
+          "structured": "是否为结构化 JSON 输出",
+          "model": "实际使用的 provider/model"
+        },
+        "classifier": {
+          "class": "命中的 class 名",
+          "reason": "分类理由",
+          "raw": "模型原始输出"
+        }
+      }
+    },
+    "start": {
+      "addVariable": "添加入参",
+      "empty": "还没有入参。运行触发时会按这里的声明渲染表单。",
+      "name": "变量名",
+      "namePlaceholder": "例如 targets",
+      "type": "类型",
+      "required": "必填",
+      "default": "默认值",
+      "defaultPlaceholder": "可选",
+      "description": "说明",
+      "descriptionPlaceholder": "这个入参控制什么？",
+      "invalidName": "变量名必须匹配 ^[a-z][a-z0-9_]*$ 且不能重复：",
+      "label": "展示名",
+      "labelPlaceholder": "例如 目标主机",
+      "options": "枚举值（仅字符串）",
+      "optionValue": "枚举值",
+      "optionPlaceholder": "例如 prod",
+      "addOption": "添加枚举值",
+      "optionsHint": "存在枚举值时，触发弹窗渲染下拉选择，只允许提交这些值。"
+    },
+    "end": {
+      "hint": "结束节点的输出就是 workflow_run.output；纯 ${path} 会保留原类型。",
+      "empty": "还没有输出映射。",
+      "addOutput": "添加输出",
+      "name": "输出名",
+      "namePlaceholder": "例如 summary",
+      "value": "取值"
+    },
+    "transform": {
+      "hint": "映射结果为 { name: value }；值支持字面量与 ${path}。",
+      "empty": "还没有映射。",
+      "addMapping": "添加映射",
+      "name": "字段名",
+      "namePlaceholder": "例如 usage",
+      "value": "取值"
+    },
+    "ai": {
+      "warning": "AI 分析节点只读取上游输出并产出结论文本，不能执行命令、不能派发任务。",
+      "externalInputWarning": "输入会发送给配置的模型，请勿输入敏感数据",
+      "instructions": "分析指令",
+      "instructionsHint": "告诉模型要分析什么、输出什么结论。",
+      "instructionsRequired": "请输入分析指令",
+      "input": "输入模板",
+      "inputHint": "用 ${path} 引用上游输出；过长的输入会按最大字符数截断。",
+      "maxInputChars": "最大输入字符",
+      "maxInputCharsHint": "1000..32000；默认 8000。",
+      "provider": "Provider",
+      "providerHint": "留空使用系统默认 AI provider；列表来自 AI 配置。",
+      "defaultProvider": "默认 provider",
+      "model": "模型",
+      "modelHint": "留空使用 provider 默认模型；可输入任意模型名。",
+      "defaultModel": "默认模型",
+      "outputMode": "输出模式",
+      "outputModeHint": "text = 只产出文本；json = 要求模型返回可解析的 JSON。",
+      "outputModeText": "文本（text）",
+      "outputModeJson": "结构化 JSON（json）",
+      "jsonSchema": "JSON Schema 提示",
+      "jsonSchemaHint": "仅作为提示词指导，不参与本地 schema 校验；建议描述字段与类型。"
+    },
+    "entryExit": {
+      "bannerTitle": "这个工作流缺少开始/结束节点",
+      "bannerDesc": "旧工作流可以一键补全：系统会插入开始/结束节点，并把当前入口/汇点连到它们。",
+      "action": "补全开始/结束节点",
+      "done": "已补全开始/结束节点"
+    },
+    "validate": {
+      "action": "校验",
+      "title": "校验结果",
+      "ok": "校验通过，可以发布"
+    },
+    "help": {
+      "action": "帮助",
+      "title": "工作流帮助",
+      "intro": "四步上手，再看变量语法、12 类节点与安全边界。",
+      "steps": {
+        "title": "四步入门",
+        "declare": {
+          "title": "声明入参",
+          "desc": "在开始节点写清楚运行需要什么：名称、类型、是否必填、默认值。"
+        },
+        "connect": {
+          "title": "拖节点连线",
+          "desc": "从左侧调色板拖入执行节点，按业务顺序连线；条件节点用 IF/ELSE 两个出口。"
+        },
+        "variables": {
+          "title": "插入变量",
+          "desc": "在字段旁点「插入变量」，选择上游输出；模板字段插入 ${path}，表达式插入裸路径。"
+        },
+        "outputs": {
+          "title": "用结束节点声明输出",
+          "desc": "在结束节点写 {name, value}，这里就是 workflow_run.output。"
+        }
+      },
+      "syntax": {
+        "title": "变量语法",
+        "form": "语法",
+        "example": "示例",
+        "where": "用在哪",
+        "template": "模板插值",
+        "expression": "表达式",
+        "script": "脚本槽位",
+        "templateWhere": "脚本参数、通知/审批模板、transform、AI/LLM 输入、结束输出",
+        "expressionWhere": "condition 节点与旧边条件",
+        "scriptWhere": "脚本内容中的 {{NAME}}，值来自 parameters"
+      },
+      "nodes": {
+        "title": "12 类节点速查"
+      },
+      "example": {
+        "title": "完整示例",
+        "desc": "start → script → transform → condition → notify → end"
+      },
+      "security": {
+        "title": "安全边界",
+        "ai": "AI / LLM 只产出文本或 JSON，永不执行命令；LLM 输出不能直接作为脚本 raw 参数。",
+        "approval": "审批是唯一的人工授权路径；高风险脚本必须有审批祖先。",
+        "script": "脚本仍经过统一风险门禁，不会因为放在工作流里而绕过。",
+        "code": "代码节点在隔离数据沙箱中运行，无主机 IO / 命令 / 网络；需要主机操作时仍用 script-exec / agent。",
+        "host": "主机操作只走 script-exec / agent 任务，并经过统一风险门禁与审批。"
+      },
+      "aiNodes": {
+        "title": "LLM / 分类 / 代码节点怎么用",
+        "intro": "这三类节点处理“理解与变换”，执行仍然只发生在 script-exec / agent。",
+        "llm": {
+          "desc": "选 provider/model，写 userPrompt（可插入上游变量）。text 模式返回文本；json 模式会要求模型只返回 JSON，剥离 ```json 围栏并解析，失败自动修复重试一次。",
+          "example": "userPrompt: 分析 ${nodes.check.output}\noutputMode: json\njsonSchema: {\"type\":\"object\",\"properties\":{\"verdict\":{\"type\":\"string\"}}}"
+        },
+        "classifier": {
+          "desc": "定义 1..10 个 class。每个 class 生成一个出边把手，画布上直接按 class 名连线；default 只在没有命中时兜底，每个 class / default 最多一条出边。",
+          "example": "classes: disk / network / permission\n出边: disk → 清理流程，network → 网络排查"
+        },
+        "code": {
+          "desc": "写 main(input) 做数据转换（JavaScript 或 Python）。inputs 把上游变量传进 input；代码在隔离沙箱运行，没有主机 IO、命令或网络权限。",
+          "example": "function main(input) {\n  return { total: input.a + input.b };\n}\ninputs: { a: ${nodes.a.output.count}, b: 2 }"
+        }
+      }
+    },
+    "template": {
+      "action": "模板",
+      "title": "模板库",
+      "intro": "模板会替换当前画布（先确认），保存后即可继续调整。",
+      "badge": "示例",
+      "simulated": "模拟数据",
+      "realSideEffects": "真实副作用",
+      "apply": "应用模板",
+      "applied": "已应用模板：{{name}}",
+      "replaceTitle": "替换当前画布？",
+      "replaceBody": "当前画布已有节点，应用模板会替换整张图（可用撤销恢复）。",
+      "replaceConfirm": "替换并应用",
+      "disk": {
+        "safeName": "模拟磁盘阈值演示",
+        "safeDesc": "使用固定值演示磁盘阈值判断，不采集磁盘数据，也不发送通知。",
+        "name": "磁盘巡检与告警",
+        "desc": "开始 → 采集磁盘用量 → 映射使用率 → 超阈值通知 → 结束。"
+      },
+      "restart": {
+        "safeName": "审批后真实重启",
+        "executionWarning": "此模板可能真实重启服务并产生副作用，不会验证服务健康状态。高危审批绑定尚未实现，审批通过后命令仍可能被风险门禁拦截。",
+        "safeDesc": "审批通过后真实重启服务，会产生副作用；可能发送通知，但不验证服务健康状态。",
+        "name": "服务重启审批",
+        "desc": "审批通过后重启服务，并把结果通知出去。"
+      },
+      "aiReview": {
+        "safeName": "人工输入的 AI 审查",
+        "safeDesc": "使用 AI 审查人工输入的观察信息。结果仅供参考，需人工复核；不会执行主机命令或发送通知。",
+        "realAiCall": "真实外部 AI 调用",
+        "externalInputWarning": "运行前请配置默认 AI 服务商和模型。输入会发送至配置的外部 AI 模型，请仅输入非敏感信息。"
+      },
+      "health": {
+        "safeName": "模拟数量条件",
+        "safeDesc": "使用固定值演示数量条件，并非真实健康检查，也不发送通知。",
+        "name": "批量健康检查",
+        "desc": "对目标主机批量探活，任一输出即通知，否则短暂等待。"
+      }
+    },
+    "llm": {
+      "warning": "LLM 节点只生成文本或 JSON，不执行命令；输出不能直接作为脚本 raw 参数。",
+      "userPrompt": "用户提示词",
+      "userPromptHint": "必填模板，用 ${path} 引用上游输出；过长输入会按最大字符数截断。",
+      "userPromptRequired": "请输入用户提示词",
+      "systemPrompt": "系统提示词",
+      "systemPromptHint": "可选，用来约束角色、语气与输出格式。",
+      "systemPromptPlaceholder": "You are an SRE assistant…",
+      "outputMode": "输出模式",
+      "outputModeHint": "json 模式会要求模型只返回 JSON，并自动剥离 ```json 围栏；解析失败会重试一次修复。",
+      "outputModeText": "文本（text）",
+      "outputModeJson": "结构化 JSON（json）",
+      "jsonSchema": "JSON Schema",
+      "jsonSchemaHint": "只作为提示词指导；格式错误只会产生发布警告，不会在本地做 schema 校验。",
+      "temperature": "温度",
+      "temperatureHint": "0..2，越低越稳定；结构化输出建议 0.1 ~ 0.3。",
+      "maxInputChars": "最大输入字符",
+      "maxInputCharsHint": "1000..32000；超出部分在送入模型前截断。"
+    },
+    "classifier": {
+      "warning": "分类结果只用于路由，不会执行命令；每个 class 对应一个出边把手。",
+      "input": "输入模板",
+      "inputHint": "用 ${path} 引用上游输出，作为分类模型的输入。",
+      "inputRequired": "请输入分类输入模板",
+      "classes": "分类（classes）",
+      "classesHint": "1..10 个，名称匹配 ^[a-z][a-z0-9_]{0,63}$ 且唯一；每个 class 生成一个出边把手（每个分支最多一条出边）。",
+      "emptyClasses": "还没有分类，至少添加一个 class。",
+      "addClass": "添加分类",
+      "classCount": "{{count}} / {{max}} 个分类",
+      "className": "分类名",
+      "classNamePlaceholder": "例如 disk",
+      "classDescription": "分类说明",
+      "classDescriptionPlaceholder": "这个分类包含哪些问题？",
+      "invalidClassName": "分类名必须匹配 ^[a-z][a-z0-9_]{0,63}$ 且不能重复：",
+      "invalidClassList": "分类节点至少需要一个合法且唯一的 class",
+      "tooManyClasses": "分类节点最多 10 个 class",
+      "instructions": "分类指令",
+      "instructionsHint": "可选，补充分类标准；执行器默认要求只返回一个 class。",
+      "instructionsPlaceholder": "Classify the operations input into exactly one class.",
+      "outputHint": "输出 { class, reason, raw }；画布会显示 {{count}} 个 class 把手 + default。"
+    },
+    "code": {
+      "unavailableNotice": "运行需要已配置的隔离执行服务；服务未就绪时会拒绝执行，且不会在服务器本地执行代码。",
+      "warning": "代码节点只在服务端隔离数据沙箱里做数据转换，没有主机文件/网络/命令访问权限。",
+      "previewNoExecution": "单节点测试运行仅为预演，不会执行这段代码。",
+      "sampleIsolationUnavailable": "隔离执行服务尚未就绪，无法运行样例。",
+      "workflowMemoryRisk": "运行需要已配置的隔离执行服务；服务未就绪时会拒绝执行，且不会在服务器本地执行代码。",
+      "sampleTitle": "样例运行",
+      "sampleWarning": "样例将在真实数据沙箱中运行，不会派发主机任务或推进工作流。请勿输入敏感值。",
+      "sampleInput": "样例输入（JSON 对象）",
+      "sampleRun": "运行样例",
+      "sampleInvalid": "请输入有效的 JSON 对象，不能是数组、标量或 null。",
+      "sampleTimeoutInvalid": "请选择 1 到 5 秒之间的整数超时。",
+      "sampleServiceUnavailable": "隔离执行服务尚未就绪，请在服务可用后重试。",
+      "sampleFailed": "样例运行失败。",
+      "sampleError": "样例运行出错。",
+      "sampleOutput": "样例输出",
+      "sampleElapsed": "耗时 {{ms}} 毫秒",
+      "previewOnly": "单节点测试运行仅为预演，不会执行这段代码。运行工作流时才会在数据沙箱中执行。",
+      "language": "语言",
+      "languageHint": "javascript 需定义 main(input)；python 需定义 def main(input)。",
+      "languageJavascript": "JavaScript",
+      "languagePython": "Python",
+      "code": "代码",
+      "codeHint": "代码长度 ≤ 20000 字符；返回值必须可 JSON 序列化。",
+      "codeRequired": "请输入代码",
+      "insertSkeleton": "插入 main 骨架",
+      "inputs": "输入映射",
+      "inputsHint": "名称 → 上游变量模板，会作为 main(input) 的输入对象。",
+      "inputContract": "输入名称会成为传入 main(input) 的对象属性。请使用上游变量模板；名称须以字母或下划线开头，且只能包含字母、数字或下划线，最多 64 个字符。",
+      "addInput": "添加输入",
+      "inputsEmpty": "还没有输入；main(input) 会收到空对象。",
+      "inputNamePlaceholder": "例如 a",
+      "timeoutSec": "超时（秒）",
+      "timeoutSecHint": "1..5 秒；超时会取消执行。",
+      "outputHint": "输出为 main 的 JSON 返回值，上限 8 KiB；数组和标量会放在 result 字段下。",
+      "outputTitle": "输出",
+      "outputContract": "返回值须为兼容 JSON 的对象、数组或标量。返回对象可暴露具名字段；输出字段取决于返回值，目前尚不支持输出 schema 校验。",
+      "inputName": "输入名",
+      "inputValue": "输入值"
+    },
+    "condition": {
+      "builderHint": "用结构化字段拼表达式；高级输入框始终保存最终文本。",
+      "left": "左值",
+      "operator": "操作符",
+      "right": "右值（字面量或变量）",
+      "rightPlaceholder": "90 或 nodes.n1.output.threshold",
+      "advanced": "高级：直接写表达式",
+      "advancedHint": "支持路径 / 数字 / 单引号字符串 / == != > < >= <= contains / && ||，≤512 字符。",
+      "advancedOnly": "当前表达式包含复合条件",
+      "advancedOnlyDesc": "结构化构建器只表达单个条件；请继续在高级输入框中编辑，保存的仍是这段原文。"
     }
   }
 }

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { List, Button, Space, Typography, Tooltip, Input, Modal } from 'antd';
+import { List, Button, Space, Typography, Tooltip, Input, Modal, theme } from 'antd';
 import {
   FolderOutlined,
   FileOutlined,
@@ -34,6 +34,7 @@ export const FileTree: React.FC<FileTreeProps> = ({
   onRename,
 }) => {
   const { t } = useTranslation();
+  const { token } = theme.useToken();
   const [editingFile, setEditingFile] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
 
@@ -100,7 +101,7 @@ export const FileTree: React.FC<FileTreeProps> = ({
             style={{ padding: '8px 12px' }}
             actions={
               isEditing ? [
-                <Button key="save" type="text" size="small" icon={<CheckOutlined />} onClick={() => submitEdit(item.name)} style={{ color: '#52c41a' }} />,
+                <Button key="save" type="text" size="small" icon={<CheckOutlined />} onClick={() => submitEdit(item.name)} style={{ color: token.colorSuccess }} />,
                 <Button key="cancel" type="text" size="small" icon={<CloseOutlined />} onClick={cancelEdit} />
               ] : [
                 !item.isDir && (
@@ -118,7 +119,7 @@ export const FileTree: React.FC<FileTreeProps> = ({
             }
           >
             <List.Item.Meta
-              avatar={item.isDir ? <FolderOutlined style={{ color: '#1890ff', fontSize: 18 }} /> : <FileOutlined style={{ fontSize: 18, color: '#8c8c8c' }} />}
+              avatar={item.isDir ? <FolderOutlined style={{ color: token.colorPrimary, fontSize: 18 }} /> : <FileOutlined style={{ fontSize: 18, color: token.colorTextTertiary }} />}
               title={
                 isEditing ? (
                   <Input
@@ -131,7 +132,7 @@ export const FileTree: React.FC<FileTreeProps> = ({
                   />
                 ) : (
                   <Text
-                    style={{ cursor: item.isDir ? 'pointer' : 'default', color: item.isDir ? '#1890ff' : 'inherit' }}
+                    style={{ cursor: item.isDir ? 'pointer' : 'default', color: item.isDir ? token.colorPrimary : token.colorText }}
                     onClick={() => item.isDir && onNavigate(getFullPath(item.name))}
                     ellipsis={{ tooltip: item.name }}
                   >
@@ -140,7 +141,7 @@ export const FileTree: React.FC<FileTreeProps> = ({
                 )
               }
               description={
-                <Space size="small" style={{ fontSize: 12, color: '#8c8c8c' }}>
+                <Space size="small" style={{ fontSize: 12, color: token.colorTextSecondary }}>
                   <span>{!item.isDir ? formatSize(item.size) : '--'}</span>
                   <span>{new Date(item.modTime * 1000).toLocaleString()}</span>
                   <span>{item.mode}</span>

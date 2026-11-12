@@ -12,6 +12,7 @@ import com.easyshell.server.repository.AgentRepository;
 import com.easyshell.server.repository.JobRepository;
 import com.easyshell.server.repository.TaskRepository;
 import com.easyshell.server.service.ClusterService;
+import com.easyshell.server.service.HostAclService;
 import com.easyshell.server.service.TagService;
 import com.easyshell.server.websocket.AgentWebSocketHandler;
 import com.easyshell.server.websocket.TaskLogWebSocketHandler;
@@ -88,6 +89,13 @@ class TaskServiceImplConcurrencyTest {
     @MockitoBean
     private TagService tagService;
 
+    @MockitoBean
+    private HostAclService hostAclService;
+
+    @MockitoBean private com.easyshell.server.service.HostIdentityService hostIdentityService;
+    @MockitoBean private com.easyshell.server.repository.TaskTargetSnapshotRepository targetSnapshots;
+    @MockitoBean private com.easyshell.server.security.ScriptAccess scriptAccess;
+
     /**
      * 咽喉要道的风险门禁引擎（B1-b 下沉后 TaskServiceImpl 的新依赖）。
      * 本测试关注计数/日志/派发的并发语义，脚本统一为 echo hi（LOW），
@@ -95,6 +103,10 @@ class TaskServiceImplConcurrencyTest {
      */
     @MockitoBean
     private CommandRiskEngine riskEngine;
+
+    /** 门禁依赖审计（豁免留痕）；本测试只跑无授权的 LOW 脚本，审计不会被触发 */
+    @MockitoBean
+    private com.easyshell.server.service.AuditLogService auditLogService;
 
     @Autowired
     private TaskServiceImpl taskService;
@@ -106,6 +118,10 @@ class TaskServiceImplConcurrencyTest {
         agentRepository.deleteAll();
         lenient().when(riskEngine.assessScript(anyString()))
                 .thenReturn(RiskAssessment.of(RiskLevel.LOW, List.of()));
+        lenient().when(hostAclService.allowed(any(), anyString(), eq(HostAclService.Permission.EXECUTE))).thenReturn(true);
+        lenient().when(hostIdentityService.lock(anyString())).thenAnswer(inv ->
+                new com.easyshell.server.service.HostIdentityService.Identity(inv.getArgument(0), 1L, true));
+        lenient().when(hostAclService.allowedForGeneration(any(), anyString(), org.mockito.ArgumentMatchers.anyLong(), eq(HostAclService.Permission.EXECUTE))).thenReturn(true);
     }
 
     @Test

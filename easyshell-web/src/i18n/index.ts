@@ -12,7 +12,7 @@ i18n
       'zh-CN': { translation: zhCN },
       'en-US': { translation: enUS },
     },
-    lng: localStorage.getItem('locale') || 'en-US',
+    lng: localStorage.getItem('locale') || (navigator.language.startsWith('zh') ? 'zh-CN' : 'en-US'),
     fallbackLng: 'en-US',
     interpolation: { escapeValue: false },
     detection: {

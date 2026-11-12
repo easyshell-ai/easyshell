@@ -4,7 +4,6 @@ import com.easyshell.server.ai.model.dto.AiExecutionRequest;
 import com.easyshell.server.ai.model.vo.AiExecutionResult;
 import com.easyshell.server.ai.service.AiExecutionService;
 import com.easyshell.server.repository.AgentRepository;
-import lombok.RequiredArgsConstructor;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
@@ -13,18 +12,28 @@ import java.util.List;
 import java.util.Map;
 
 @Component
-@RequiredArgsConstructor
 public class ScriptExecuteTool {
 
     private final AiExecutionService aiExecutionService;
     private final AgentRepository agentRepository;
 
-    private Long currentUserId;
-    private String currentSourceIp;
+    private final Long currentUserId;
+    private final String currentSourceIp;
 
-    public void setContext(Long userId, String sourceIp) {
+    @org.springframework.beans.factory.annotation.Autowired
+    public ScriptExecuteTool(AiExecutionService aiExecutionService, AgentRepository agentRepository) {
+        this(aiExecutionService, agentRepository, null, null);
+    }
+
+    private ScriptExecuteTool(AiExecutionService aiExecutionService, AgentRepository agentRepository, Long userId, String sourceIp) {
+        this.aiExecutionService = aiExecutionService;
+        this.agentRepository = agentRepository;
         this.currentUserId = userId;
         this.currentSourceIp = sourceIp;
+    }
+
+    public ScriptExecuteTool forUser(Long userId, String sourceIp) {
+        return new ScriptExecuteTool(aiExecutionService, agentRepository, userId, sourceIp);
     }
 
     @Tool(description = "在指定主机上执行 Shell 脚本。脚本会经过风险评估：低风险自动执行，中/高风险和封禁命令均需人工审批（用户确认后请调用 approveTask 工具）。注意：脚本中可能包含 {{variable_name}} 格式的参数占位符，执行前必须检查并通过 parameters 传入对应的值。")
@@ -34,6 +43,7 @@ public class ScriptExecuteTool {
             @ToolParam(description = "脚本用途简述") String description,
             @ToolParam(description = "脚本参数键值对。如果脚本内容中包含 {{variable_name}} 格式的占位符，必须提供对应的参数值。例如：{\"server_ip\": \"192.168.1.1\", \"port\": \"8080\"}。如果脚本不含参数占位符，传 null 即可", required = false) Map<String, String> parameters) {
 
+        if (currentUserId == null || currentUserId <= 0) return "错误：无法确定当前用户身份，已拒绝执行。";
         // Validate all agentIds exist before executing
         if (agentIds == null || agentIds.isEmpty()) {
             return "错误：未指定目标主机。请先调用 listHosts 工具获取可用主机列表。";
@@ -50,7 +60,7 @@ public class ScriptExecuteTool {
         request.setAgentIds(agentIds);
         request.setDescription(description);
         request.setTimeoutSeconds(60);
-        request.setUserId(currentUserId != null ? currentUserId : 0L);
+        request.setUserId(currentUserId);
         request.setSourceIp(currentSourceIp != null ? currentSourceIp : "ai-chat");
         request.setParameters(parameters);
 

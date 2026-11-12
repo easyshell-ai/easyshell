@@ -1,0 +1,264 @@
+{
+  "code": 200,
+  "message": "ok",
+  "data": {
+    "workflow": {
+      "id": 2,
+      "name": "Nginx 巡检",
+      "description": "每日巡检 nginx 状态并通知",
+      "category": "ops",
+      "status": "published",
+      "visibility": "public",
+      "currentVersionId": 11,
+      "currentVersion": 3,
+      "runCount": 42,
+      "successCount": 40,
+      "lastRunAt": "2026-02-10T09:30:00",
+      "createdBy": 1,
+      "createdAt": "2026-01-12T10:00:00",
+      "updatedAt": "2026-02-10T09:30:00"
+    },
+    "versions": [
+      {
+        "id": 11,
+        "version": 3,
+        "baseVersion": 3,
+        "isValid": true,
+        "estimatedRisk": "LOW",
+        "publishedAt": "2026-02-01T08:00:00",
+        "createdAt": "2026-02-01T08:00:00",
+        "changelog": "加通知节点"
+      },
+      {
+        "id": 10,
+        "version": 2,
+        "baseVersion": 2,
+        "isValid": true,
+        "estimatedRisk": "LOW",
+        "publishedAt": "2026-01-20T08:00:00",
+        "createdAt": "2026-01-20T08:00:00",
+        "changelog": null
+      }
+    ],
+    "draft": {
+      "id": 12,
+      "version": 4,
+      "baseVersion": 3,
+      "isValid": false,
+      "estimatedRisk": null,
+      "publishedAt": null,
+      "createdAt": "2026-02-14T10:00:00",
+      "changelog": null,
+      "definition": {
+        "schemaVersion": 1,
+        "defaultOnUpstreamFailure": "skip",
+        "onRejection": "abort",
+        "variables": {
+          "env": {
+            "type": "string",
+            "required": true,
+            "description": "目标环境"
+          },
+          "threshold": {
+            "type": "number",
+            "required": false,
+            "default": 80,
+            "description": "磁盘使用率阈值"
+          }
+        },
+        "nodes": [
+          {
+            "key": "start",
+            "type": "start",
+            "name": "开始",
+            "position": {
+              "x": 40,
+              "y": 120
+            },
+            "config": {}
+          },
+          {
+            "key": "n1",
+            "type": "script-exec",
+            "name": "磁盘检查",
+            "position": {
+              "x": 280,
+              "y": 120
+            },
+            "config": {
+              "script": "df -h /",
+              "targets": {
+                "mode": "explicit",
+                "agentIds": [
+                  "e2e-agent-01"
+                ]
+              },
+              "parameters": {},
+              "rawParams": [],
+              "riskPolicy": "block",
+              "onUnsafeValue": "reject"
+            },
+            "retryMax": 1,
+            "retryIntervalSec": 5,
+            "timeoutSec": 300,
+            "onFailure": "abort",
+            "outputVar": "disk"
+          },
+          {
+            "key": "n2",
+            "type": "condition",
+            "name": "使用率超阈值？",
+            "position": {
+              "x": 520,
+              "y": 120
+            },
+            "config": {
+              "expression": "nodes.n1.output.usage > run.input.threshold"
+            },
+            "outputVar": "decision"
+          },
+          {
+            "key": "n3",
+            "type": "approval",
+            "name": "人工确认",
+            "position": {
+              "x": 760,
+              "y": 120
+            },
+            "config": {
+              "mode": "approval",
+              "title": "确认清理磁盘",
+              "approverRole": "ADMIN",
+              "timeoutSec": 86400,
+              "onTimeout": "reject",
+              "parameters": {}
+            }
+          },
+          {
+            "key": "n4",
+            "type": "notify",
+            "name": "通知值班",
+            "position": {
+              "x": 760,
+              "y": 280
+            },
+            "config": {
+              "channels": [
+                "telegram"
+              ],
+              "messageTemplate": "磁盘已清理：${run.input.env}",
+              "parameters": {},
+              "level": "info"
+            }
+          },
+          {
+            "key": "n5",
+            "type": "wait",
+            "name": "等待 60 秒",
+            "position": {
+              "x": 520,
+              "y": 280
+            },
+            "config": {
+              "durationSec": 60
+            },
+            "timeoutSec": null
+          },
+          {
+            "key": "n6",
+            "type": "transform",
+            "name": "整理结果",
+            "position": {
+              "x": 280,
+              "y": 280
+            },
+            "config": {
+              "mappings": [
+                {
+                  "name": "summary",
+                  "value": "环境 ${run.input.env} 磁盘已处理"
+                },
+                {
+                  "name": "usage",
+                  "value": "${nodes.n1.output.usage}"
+                }
+              ]
+            },
+            "outputVar": "result"
+          },
+          {
+            "key": "end",
+            "type": "end",
+            "name": "结束",
+            "position": {
+              "x": 40,
+              "y": 280
+            },
+            "config": {
+              "outputs": [
+                {
+                  "name": "summary",
+                  "value": "${nodes.n6.output.summary}"
+                },
+                {
+                  "name": "approved",
+                  "value": "${nodes.n3.output.decision}"
+                }
+              ]
+            }
+          }
+        ],
+        "edges": [
+          {
+            "id": "start:out->n1",
+            "from": "start",
+            "to": "n1",
+            "sourceHandle": "out"
+          },
+          {
+            "id": "n1:out->n2",
+            "from": "n1",
+            "to": "n2",
+            "sourceHandle": "out"
+          },
+          {
+            "id": "n2:true->n3",
+            "from": "n2",
+            "to": "n3",
+            "sourceHandle": "true"
+          },
+          {
+            "id": "n3:out->n4",
+            "from": "n3",
+            "to": "n4",
+            "sourceHandle": "out"
+          },
+          {
+            "id": "n4:out->n5",
+            "from": "n4",
+            "to": "n5",
+            "sourceHandle": "out"
+          },
+          {
+            "id": "n5:out->n6",
+            "from": "n5",
+            "to": "n6",
+            "sourceHandle": "out"
+          },
+          {
+            "id": "n6:out->end",
+            "from": "n6",
+            "to": "end",
+            "sourceHandle": "out"
+          },
+          {
+            "id": "n2:false->end",
+            "from": "n2",
+            "to": "end",
+            "sourceHandle": "false"
+          }
+        ]
+      }
+    }
+  }
+}

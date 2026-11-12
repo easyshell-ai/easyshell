@@ -14,6 +14,17 @@ public interface TaskService {
 
     Task createAndDispatch(TaskCreateRequest request, Long userId);
 
+    /**
+     * 带显式派发授权的咽喉要道重载（B1-b / C-3）。
+     *
+     * <p>{@code authority} 只能由服务端白名单调用方按调用路径传入（见
+     * {@link DispatchAuthority}），绝不可从请求体绑定；{@code evidenceRef} 是该授权值
+     * 的可验证证据引用（如审批通过的任务 id / 定时任务 id），证据不成立一律 449
+     * （fail-closed），被豁免的派发同步写审计留痕。
+     */
+    Task createAndDispatch(TaskCreateRequest request, Long userId,
+                           DispatchAuthority authority, String evidenceRef);
+
     TaskDetailVO getTaskDetail(String taskId);
 
     List<Task> listTasks();

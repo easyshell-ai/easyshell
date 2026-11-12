@@ -143,15 +143,16 @@ public class TelegramBotService implements BotChannelService {
         if (message.isMissingNode()) return;
         String chatId = message.path("chat").path("id").asText();
         String text = message.path("text").asText("");
-        String fromUser = message.path("from").path("username").asText(
-                message.path("from").path("first_name").asText("unknown"));
+        String fromUser = message.path("from").path("id").asText("");
         if (text.isBlank()) return;
 
-        log.info("Telegram received message from {} (chat {}): {}", fromUser, chatId, text.length() > 100 ? text.substring(0, 100) + "..." : text);
+        log.debug("Telegram received authenticated provider message");
         if (!allowedChatIds.isEmpty() && !allowedChatIds.contains(chatId)) {
             log.warn("Telegram message from unauthorized chat: {} (user: {}). Configure allowed-chat-ids or leave empty to allow all.", chatId, fromUser);
             return;
         }
+        // A user binding must not cause a private AI reply to leak into a group chat.
+        if (!"private".equals(message.path("chat").path("type").asText()) || !chatId.equals(fromUser)) return;
 
         try {
             // Send typing indicator so user knows we're processing

@@ -97,9 +97,7 @@ const ChatMessages: React.FC<ChatMessagesProps> = ({
             fontSize: 24, 
             fontWeight: 700, 
             marginBottom: 8, 
-            background: `linear-gradient(90deg, ${token.colorPrimary}, #8b5cf6)`,
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
+            color: token.colorText,
             letterSpacing: '-0.5px'
           }}>
             {t('chat.aiAssistant')}
@@ -119,8 +117,8 @@ const ChatMessages: React.FC<ChatMessagesProps> = ({
                 className="suggested-prompt-card"
                 onClick={() => onSuggestedPrompt(t(item.text))}
                 style={{
-                  padding: '16px 20px',
-                  borderRadius: 12,
+                  padding: '12px 14px',
+                  borderRadius: 8,
                   border: `1px solid ${token.colorBorderSecondary}`,
                   borderLeft: `1px solid ${token.colorBorderSecondary}`,
                   background: token.colorBgContainer,
@@ -167,7 +165,7 @@ const ChatMessages: React.FC<ChatMessagesProps> = ({
                   width: 36,
                   height: 36,
                   borderRadius: 18,
-                  background: `linear-gradient(135deg, ${token.colorPrimary}, #8b5cf6)`,
+                  background: token.colorPrimary,
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -175,15 +173,15 @@ const ChatMessages: React.FC<ChatMessagesProps> = ({
                   flexShrink: 0,
                   boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
                 }}>
-                  <RobotOutlined style={{ color: '#fff', fontSize: 18 }} />
+                  <RobotOutlined style={{ color: token.colorTextLightSolid, fontSize: 18 }} />
                 </div>
               )}
               <div style={{ maxWidth: isMobile ? '85%' : '70%', position: 'relative', minWidth: 0 }}>
                 <div style={{
-                  padding: msg.role === 'user' ? '12px 18px' : '12px 18px',
-                  borderRadius: msg.role === 'user' ? '20px 20px 4px 20px' : '20px 20px 20px 4px',
-                  background: msg.role === 'user' ? `linear-gradient(135deg, ${token.colorPrimary}, #60a5fa)` : token.colorBgContainer,
-                  color: msg.role === 'user' ? '#fff' : token.colorText,
+                  padding: '12px 14px',
+                  borderRadius: msg.role === 'user' ? '8px 8px 2px 8px' : '8px 8px 8px 2px',
+                  background: msg.role === 'user' ? token.colorPrimary : token.colorFillTertiary,
+                  color: msg.role === 'user' ? token.colorTextLightSolid : token.colorText,
                   fontSize: 15,
                   lineHeight: 1.6,
                   boxShadow: msg.role === 'user' ? '0 4px 12px rgba(37, 99, 235, 0.2)' : '0 2px 8px rgba(0,0,0,0.08)',
@@ -214,9 +212,9 @@ const ChatMessages: React.FC<ChatMessagesProps> = ({
                         <Button
                           type="text"
                           size="small"
-                          icon={copiedMsgId === msg.id ? <CheckOutlined style={{ color: '#52c41a' }} /> : <CopyOutlined />}
+                          icon={copiedMsgId === msg.id ? <CheckOutlined style={{ color: token.colorSuccess }} /> : <CopyOutlined />}
                           onClick={() => handleCopy(msg.id, msg.content)}
-                          style={{ color: copiedMsgId === msg.id ? '#52c41a' : token.colorTextTertiary, fontSize: 12 }}
+                          style={{ color: copiedMsgId === msg.id ? token.colorSuccess : token.colorTextTertiary, fontSize: 12 }}
                         />
                       </Tooltip>
                       <Tooltip title={t('chat.regenerate')}>
@@ -258,7 +256,7 @@ const ChatMessages: React.FC<ChatMessagesProps> = ({
                 width: 36,
                 height: 36,
                 borderRadius: 18,
-                background: `linear-gradient(135deg, ${token.colorPrimary}, #8b5cf6)`,
+                background: token.colorPrimary,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -266,12 +264,13 @@ const ChatMessages: React.FC<ChatMessagesProps> = ({
                 flexShrink: 0,
                 boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
               }}>
-                <RobotOutlined style={{ color: '#fff', fontSize: 18 }} />
+                <RobotOutlined style={{ color: token.colorTextLightSolid, fontSize: 18 }} />
               </div>
               <div style={{
-                padding: '12px 18px',
-                borderRadius: '20px 20px 20px 4px',
-                background: token.colorBgContainer,
+                padding: '12px 14px',
+                borderRadius: '8px 8px 8px 2px',
+                background: token.colorFillTertiary,
+                color: token.colorText,
                 fontSize: 15,
                 lineHeight: 1.6,
                 boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
@@ -350,7 +349,7 @@ const ChatMessages: React.FC<ChatMessagesProps> = ({
                 width: 36,
                 height: 36,
                 borderRadius: 18,
-                background: `linear-gradient(135deg, ${token.colorPrimary}, #8b5cf6)`,
+                background: token.colorPrimary,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -358,12 +357,13 @@ const ChatMessages: React.FC<ChatMessagesProps> = ({
                 flexShrink: 0,
                 boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
               }}>
-                <RobotOutlined style={{ color: '#fff', fontSize: 18 }} />
+                <RobotOutlined style={{ color: token.colorTextLightSolid, fontSize: 18 }} />
               </div>
               <div style={{
-                padding: '12px 18px',
-                borderRadius: '20px 20px 20px 4px',
-                background: token.colorBgContainer,
+                padding: '12px 14px',
+                borderRadius: '8px 8px 8px 2px',
+                background: token.colorFillTertiary,
+                color: token.colorText,
                 fontSize: 15,
                 lineHeight: 1.6,
                 boxShadow: '0 2px 8px rgba(0,0,0,0.08)',

@@ -3,93 +3,124 @@ package com.easyshell.server.ai.controller;
 import com.easyshell.server.ai.learning.SopExtractor;
 import com.easyshell.server.ai.model.entity.AiSopTemplate;
 import com.easyshell.server.ai.repository.AiSopTemplateRepository;
-import com.easyshell.server.common.result.R;
+import com.easyshell.server.common.exception.BusinessException;
+import com.easyshell.server.model.entity.User;
+import com.easyshell.server.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 
+import java.util.List;
 import java.util.Optional;
 
-import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-@DisplayName("SopController — SOP CRUD API")
 class SopControllerTest {
-
-    @Mock
-    private AiSopTemplateRepository sopTemplateRepository;
-    @Mock
-    private SopExtractor sopExtractor;
-
-    private SopController controller;
+    @Mock AiSopTemplateRepository repository;
+    @Mock SopExtractor extractor;
+    @Mock UserRepository users;
+    SopController controller;
+    Authentication auth;
+    User user;
 
     @BeforeEach
     void setUp() {
-        controller = new SopController(sopTemplateRepository, sopExtractor);
+        controller = new SopController(repository, extractor, users);
+        auth = new UsernamePasswordAuthenticationToken(1L, "", List.of(new SimpleGrantedAuthority("ROLE_super_admin")));
+        user = new User();
+        user.setId(1L);
+        user.setRole("viewer");
+    }
+
+    void validUser() { when(users.findById(1L)).thenReturn(Optional.of(user)); }
+    AiSopTemplate sop(Long owner) { return AiSopTemplate.builder().id(7L).userId(owner).title("old").confidence(0.5).build(); }
+
+    @Test
+    void listFiltersBeforePaginationAndCategory() {
+        validUser();
+        AiSopTemplate own = sop(1L); own.setCategory("ops"); own.setConfidence(0.8);
+        AiSopTemplate global = sop(null); global.setCategory("ops");
+        AiSopTemplate other = sop(2L); other.setCategory("ops"); other.setConfidence(1.0);
+        when(repository.findByUserIdIsNullOrUserId(1L)).thenReturn(List.of(global, other, own));
+        var page = controller.list("ops", 0, 1, auth).getData();
+        assertThat(page.getTotalElements()).isEqualTo(2);
+        assertThat(page.getContent()).containsExactly(own);
+        assertThat(controller.list("ops", 1, 1, auth).getData().getContent()).containsExactly(global);
     }
 
     @Test
-    void getById_found() {
-        AiSopTemplate sop = AiSopTemplate.builder().id(1L).title("test").build();
-        when(sopTemplateRepository.findById(1L)).thenReturn(Optional.of(sop));
-
-        R<AiSopTemplate> result = controller.getById(1L);
-        assertThat(result.getCode()).isEqualTo(200);
-        assertThat(result.getData().getTitle()).isEqualTo("test");
+    void ownerCanReadUpdateAndDeleteButCannotTransferOwnership() {
+        validUser();
+        AiSopTemplate own = sop(1L);
+        when(repository.findById(7L)).thenReturn(Optional.of(own));
+        when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        assertThat(controller.getById(7L, auth).getData()).isSameAs(own);
+        AiSopTemplate request = sop(2L); request.setStepsJson("new steps");
+        controller.update(7L, request, auth);
+        assertThat(own.getUserId()).isEqualTo(1L);
+        assertThat(own.getStepsJson()).isEqualTo("new steps");
+        controller.delete(7L, auth);
+        verify(repository).deleteById(7L);
     }
 
     @Test
-    void getById_notFound() {
-        when(sopTemplateRepository.findById(99L)).thenReturn(Optional.empty());
-
-        R<AiSopTemplate> result = controller.getById(99L);
-        assertThat(result.getCode()).isNotEqualTo(200);
+    void otherUsersPrivateSopDeniedEvenToCurrentSuperAdmin() {
+        user.setRole("super_admin"); validUser();
+        AiSopTemplate other = sop(2L);
+        when(repository.findById(7L)).thenReturn(Optional.of(other));
+        assertThatThrownBy(() -> controller.getById(7L, auth)).isInstanceOf(BusinessException.class);
+        assertThatThrownBy(() -> controller.update(7L, sop(1L), auth)).isInstanceOf(BusinessException.class);
+        assertThatThrownBy(() -> controller.delete(7L, auth)).isInstanceOf(BusinessException.class);
+        verify(repository, never()).save(any());
+        verify(repository, never()).deleteById(any());
+        assertThat(other.getTitle()).isEqualTo("old");
     }
 
     @Test
-    void update_existingSop() {
-        AiSopTemplate existing = AiSopTemplate.builder().id(1L).title("old").description("old desc").build();
-        when(sopTemplateRepository.findById(1L)).thenReturn(Optional.of(existing));
-        when(sopTemplateRepository.save(any())).thenAnswer(i -> i.getArgument(0));
-
-        AiSopTemplate request = new AiSopTemplate();
-        request.setTitle("new title");
-
-        R<AiSopTemplate> result = controller.update(1L, request);
-        assertThat(result.getCode()).isEqualTo(200);
-        assertThat(result.getData().getTitle()).isEqualTo("new title");
+    void globalReadableButWritesRequireCurrentDatabaseSuperAdmin() {
+        validUser();
+        AiSopTemplate global = sop(null);
+        when(repository.findById(7L)).thenReturn(Optional.of(global));
+        assertThat(controller.getById(7L, auth).getData()).isSameAs(global);
+        assertThatThrownBy(() -> controller.update(7L, sop(1L), auth)).isInstanceOf(BusinessException.class);
+        assertThatThrownBy(() -> controller.delete(7L, auth)).isInstanceOf(BusinessException.class);
+        assertThatThrownBy(() -> controller.triggerExtraction(auth)).isInstanceOf(BusinessException.class);
+        user.setRole("super_admin");
+        when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        controller.update(7L, sop(1L), auth);
+        controller.delete(7L, auth);
+        controller.triggerExtraction(auth);
+        verify(extractor).extractSopPatterns();
+        verify(repository).deleteById(7L);
     }
 
     @Test
-    void update_notFound() {
-        when(sopTemplateRepository.findById(99L)).thenReturn(Optional.empty());
-        R<AiSopTemplate> result = controller.update(99L, new AiSopTemplate());
-        assertThat(result.getCode()).isNotEqualTo(200);
+    void disabledMissingAndUntrustedPrincipalsFailClosed() {
+        assertThatThrownBy(() -> controller.list(null, 0, 20, null)).isInstanceOf(BusinessException.class);
+        Authentication unauthenticated = new UsernamePasswordAuthenticationToken(1L, "");
+        assertThatThrownBy(() -> controller.list(null, 0, 20, unauthenticated)).isInstanceOf(BusinessException.class);
+        Authentication stringPrincipal = new UsernamePasswordAuthenticationToken("1", "", List.of());
+        assertThatThrownBy(() -> controller.list(null, 0, 20, stringPrincipal)).isInstanceOf(BusinessException.class);
+        when(users.findById(1L)).thenReturn(Optional.empty(), Optional.of(user));
+        assertThatThrownBy(() -> controller.getById(7L, auth)).isInstanceOf(BusinessException.class);
+        user.setStatus(0);
+        assertThatThrownBy(() -> controller.delete(7L, auth)).isInstanceOf(BusinessException.class);
+        verifyNoInteractions(repository, extractor);
     }
 
     @Test
-    void delete_existingSop() {
-        when(sopTemplateRepository.existsById(1L)).thenReturn(true);
-        R<Void> result = controller.delete(1L);
-        assertThat(result.getCode()).isEqualTo(200);
-        verify(sopTemplateRepository).deleteById(1L);
-    }
-
-    @Test
-    void delete_notFound() {
-        when(sopTemplateRepository.existsById(99L)).thenReturn(false);
-        R<Void> result = controller.delete(99L);
-        assertThat(result.getCode()).isNotEqualTo(200);
-    }
-
-    @Test
-    void triggerExtraction_callsSopExtractor() {
-        R<String> result = controller.triggerExtraction();
-        assertThat(result.getCode()).isEqualTo(200);
-        verify(sopExtractor).extractSopPatterns();
+    void missingSopReturnsFailure() {
+        validUser();
+        when(repository.findById(7L)).thenReturn(Optional.empty());
+        assertThat(controller.getById(7L, auth).getCode()).isNotEqualTo(200);
+        assertThat(controller.update(7L, sop(1L), auth).getCode()).isNotEqualTo(200);
+        assertThat(controller.delete(7L, auth).getCode()).isNotEqualTo(200);
     }
 }

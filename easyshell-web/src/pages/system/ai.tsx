@@ -732,7 +732,7 @@ const AiConfig: React.FC = () => {
 
     return (
       <Card
-        style={{ borderRadius: 12, marginBottom: 16, opacity: enabled ? 1 : 0.5, pointerEvents: enabled ? 'auto' : 'none' }}
+        style={{ borderRadius: 8, marginBottom: 16, opacity: enabled ? 1 : 0.5, pointerEvents: enabled ? 'auto' : 'none' }}
       >
         <Space style={{ marginBottom: 16 }}>
           <DatabaseOutlined style={{ fontSize: 18, color: token.colorPrimary }} />
@@ -794,7 +794,7 @@ const AiConfig: React.FC = () => {
   const renderOrchestratorConfig = () => {
     return (
       <Card
-        style={{ borderRadius: 12, marginBottom: 16, opacity: enabled ? 1 : 0.5, pointerEvents: enabled ? 'auto' : 'none' }}
+        style={{ borderRadius: 8, marginBottom: 16, opacity: enabled ? 1 : 0.5, pointerEvents: enabled ? 'auto' : 'none' }}
       >
         <Space style={{ marginBottom: 16 }}>
           <RobotOutlined style={{ fontSize: isMobile ? 16 : 18, color: token.colorPrimary }} />
@@ -921,7 +921,7 @@ const AiConfig: React.FC = () => {
         </Button>
       </div>
 
-      <Card style={{ borderRadius: 12, marginBottom: 16 }}>
+      <Card style={{ borderRadius: 8, marginBottom: 16 }}>
         <Row gutter={[16, 16]} align="middle">
           <Col xs={24} sm={12} md={8}>
             <Space size="middle" wrap>
@@ -955,7 +955,7 @@ const AiConfig: React.FC = () => {
         </Row>
       </Card>
 
-      <Card style={{ borderRadius: 12, marginBottom: 16 }}>
+      <Card style={{ borderRadius: 8, marginBottom: 16 }}>
         <Tabs
           items={allProviders().map(({ key, label }) => ({
             key,
@@ -981,7 +981,7 @@ const AiConfig: React.FC = () => {
       {renderOrchestratorConfig()}
 
       <Card
-        style={{ borderRadius: 12, marginBottom: 16, opacity: enabled ? 1 : 0.5, pointerEvents: enabled ? 'auto' : 'none' }}
+        style={{ borderRadius: 8, marginBottom: 16, opacity: enabled ? 1 : 0.5, pointerEvents: enabled ? 'auto' : 'none' }}
       >
         <Title level={5} style={{ marginTop: 0, color: token.colorText }}>{t('aiConfig.quota.title')}</Title>
         <Form layout="vertical" style={{ maxWidth: 400 }}>

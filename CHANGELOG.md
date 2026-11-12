@@ -6,6 +6,243 @@ web UI and is served by `GET /api/v1/system/version`.
 
 ## [Unreleased]
 
+### Workflow 2.0 — editor and node contract redesign (unreleased)
+
+- **Start / End are real nodes.** New workflows open with an explicit input contract
+  (`definition.variables`) and output contract (`end.config.outputs`). Old workflows
+  keep working and can be completed from the editor. `start` has no incoming edge,
+  `end` has no outgoing edge.
+- **Two new node types: `transform` and `ai-analyze`.** `transform` maps upstream
+  values into named outputs; `ai-analyze` sends filtered, truncated upstream output
+  to the platform-configured model and returns analysis text only. The AI node cannot
+  dispatch commands and never becomes a source of dispatch authority.
+- **Condition IF/ELSE is now a real gate.** Edges carry `sourceHandle` (`true` /
+  `false`); the engine reads the condition node's `output.result` and only traverses
+  the matching edge. Legacy definitions without `sourceHandle` keep the old
+  `edge.condition` semantics. This removes the previous trap where a TRUE branch was
+  always traversable unless the user duplicated the expression on the edge.
+- **Run output follows the End node.** When a workflow has exactly one End node, its
+  mapped output becomes `workflow_run.output`; workflows without an End keep the old
+  per-node aggregate.
+- **Editor rebuilt around comprehension.** Grouped/searchable palette, full-height
+  canvas, right-side inspector with Config / Data / Docs tabs, variable picker for
+  every template and expression field, Start input editor, End output editor,
+  Transform mapping editor, AI instructions/input editor, node summaries on the
+  canvas, IF/ELSE edge pills readable in light and dark themes, an in-app help drawer
+  and three workflow templates.
+- **Fixed React error #185 when dragging a connection.** Selection is no longer lifted
+  into page state and written back into the node array; React Flow callbacks are
+  stable, editor-mode nodes are not cloned on every render, and node/data identity is
+  preserved. Added a regression test for connecting nodes.
+- **Fixed stale-draft publish and lost trailing edits.** Autosave now uses an edit
+  generation token and serialises concurrent saves; publishing and test runs flush the
+  draft first. Switching workflows resets the snapshot and history correctly.
+- **Run monitor node inspector and single-node test run.** Clicking a node row shows
+  inputs, outputs, errors and warnings, and can call the existing test-run endpoint
+  without rerunning the whole workflow.
+
+### Workflow 2.1 — Dify-style nodes and field UX
+
+- **LLM node** with provider/model selection, system/user prompts, temperature,
+  text or structured JSON output, optional JSON Schema guidance, and one repair
+  retry on invalid JSON.
+- **Question Classifier node** with 1–10 named classes, LLM-based classification,
+  dynamic class handles + `default`, and fail-closed routing.
+- **Code node** for JavaScript and Python data transformation inside a GraalVM
+  Polyglot sandbox (`HostAccess.NONE`, no IO/environment/process/threads, bounded
+  timeout with forced context cancellation). Host operations still go through
+  `script-exec`/agents.
+- **Start fields** gain display labels and string options; trigger forms render a
+  Select when options are declared.
+- **Condition builder** (variable + operator + value) with an advanced raw
+  expression fallback.
+- Fix the unreadable white palette tooltip (removed; inline descriptions remain).
+- Fix inspector Config/Data/Docs panes not scrolling to the bottom.
+- Fix host management dropping the agent hostname from the unified list
+  (`hostName`/`hostname` JavaBean collision).
+
+## [1.2.0] - 2026-11-09
+
+Feature release: the workflow engine (orchestrate operations as a versioned,
+visual DAG) and a full frontend visual refresh built on a design-token layer.
+Two security defects that were reachable in the released 1.1.2 code are also
+fixed here. No migration steps are required — see the upgrade notes in the
+release description.
+
+### Added
+- **Server — the workflow execution engine.** A new `workflow` package runs a
+  workflow definition as a persisted DAG: topological scheduling in waves,
+  end-of-wave checkpointing, per-run and per-node concurrency limits, retry with
+  exponential backoff and jitter, idempotency via unique keys on node runs and
+  conditional status transitions, cancellation that propagates to the next
+  checkpoint, and a watchdog plus a wake-up scanner for suspended and queued
+  runs. `ai/orchestrator` is untouched, so AI Chat keeps its exact behaviour.
+- **Server — five node types.** `script-exec` (dispatches to a real Task through
+  the same chokepoint as any other script, inheriting audit, live logs, the
+  timeout watchdog and agent-disconnect handling), `condition` (expression
+  evaluated into `output.result`; the edge condition is the only gate),
+  `notify` (pushes through the existing bot channels), `approval` (suspends the
+  run without holding a thread, with timeout, optional mandatory comment, an
+  immutable detail snapshot, and a `human-confirm` configuration variant) and
+  `wait` (a sleep-loop with a cancellation checkpoint every 500 ms).
+- **Server — parameter passing between nodes.** Run inputs, node outputs and
+  `outputVar` aliases, with a hand-written fail-closed expression evaluator
+  (no SpEL/OGNL), JsonPath read-only path resolution, four typed values
+  (string / number / boolean / json), and a four-layer defence for script
+  interpolation: a whitelist value policy, single-quoted reference rendering,
+  a segment-level substitution guard, and the existing risk gate at the
+  dispatch chokepoint. Values are visible only to a node's topological
+  successors; anything that looks like a slot but does not match the contract
+  is refused outright.
+- **Server — failure policies.** `abort` / `skip` / `partial`, resolved per edge,
+  per node and per definition, with the strictest policy winning when incoming
+  edges disagree and unknown policies treated as `abort`.
+- **Server — 17 REST endpoints** under `/api/v1/workflow` for definitions,
+  versions, drafts, validation, publishing, triggering, runs, cancellation,
+  single-node test runs and approvals, plus a WebSocket run channel at
+  `/ws/workflow/run/{runId}`. Method-level `@PreAuthorize` decides the role;
+  three data-level checks in one place decide ownership, and every
+  path-variable endpoint has a parameterised non-owner-403 test. Outbound VOs
+  parse JSON columns and keep internal fields off the wire; inputs and
+  variables pass through the sensitive-data filter on the way out.
+- **Server — Flyway for the five new workflow tables.** One migration script
+  (`V1_2_0__workflow_engine.sql`) creates `workflow`, `workflow_version`,
+  `workflow_run`, `workflow_node_run` and `workflow_approval`. The 22
+  pre-existing tables stay under Hibernate's `ddl-auto`: a schema filter keeps
+  the two jurisdictions from overlapping, and a startup checker compares every
+  column, nullability, length, key and unique constraint of the new tables
+  against the JPA entities and refuses to boot on a mismatch. On an existing
+  1.1.x database Flyway baselines first (`baseline-on-migrate: true`), so no
+  manual step is needed; `validate-on-migrate` fails fast if an applied script
+  is edited.
+- **Web — the workflow editor with a fully interactive canvas.** Box selection,
+  alignment guides with snapping, snap-to-grid, undo/redo, minimap, auto layout
+  (reusing the depth algorithm from the AI plan view — no layout library),
+  copy/paste/duplicate with key regeneration, and the full keyboard map. The
+  canvas is the only editor of structure and the form is the only editor of a
+  selected node's configuration; the node palette can only add. Invalid
+  connections (self-loops, duplicates, cycles, a condition on a `condition`
+  node's false branch) are refused client-side with the server authoritative.
+- **Web — workflow list, editor, run list, run monitor, approval centre and
+  trigger dialog**, including the optimistic-lock 409 dialog (overwrite, save a
+  copy, or discard — never an automatic merge) and the read-only run canvas
+  coloured by what actually happened. All new UI strings ship in both locales.
+- **Web — a design-token layer applied across every route.** `src/theme/` is the
+  single source for colour, type and spacing; AntD's `ConfigProvider` is fed
+  from it and the same values are exposed as `--es-*` CSS variables so business
+  semantics and component styling cannot drift apart. Visual baselines for the
+  core routes were regenerated in the same commit, as the regression policy
+  requires.
+- **Web — a Playwright visual regression suite** with dark/light projects at two
+  viewports, axe-core accessibility checks, API fixtures shaped after the real
+  envelopes, and a canvas drag benchmark. Updating a baseline must happen in the
+  same commit as the style change.
+
+### Changed
+- **Web — visual refresh.** Colour, type, spacing and table density across all
+  routes, driven by the token layer. Dark is the default for an operations
+  console; light is one toggle away. No layout dimensions changed.
+- **Server — runs now record the agent version at dispatch time**
+  (`workflow_node_run.agent_versions`). Dispatching to an older agent still
+  executes normally, so upgrading agents is recommended but not required.
+- **Version identifiers** moved to 1.2.0: `Dockerfile.server` ARG/ENV,
+  `docker-compose.build.yml` `VERSION` defaults, `application.yml`
+  `easyshell.version`, `VersionController` default, the AI `User-Agent` string,
+  and `easyshell-mcp` package version. `easyshell-web/package.json` stays at the
+  `0.0.0` placeholder.
+
+### Fixed
+- **Server — the dispatch risk gate could be switched off from the request body.**
+  1.1.2 moved the risk check into `TaskServiceImpl.createAndDispatch` and added a
+  settable `riskCleared` boolean to the task DTO to avoid mis-blocking
+  already-authorised paths. A Jackson binding test proves that posting
+  `{"riskCleared":true}` alongside a non-LOW script dispatched the job and wrote
+  the row: any caller could bypass the chokepoint with one JSON key. The field is
+  gone. Dispatch is now parameterised by a `DispatchAuthority` enum plus an
+  evidence reference decided by the server from the call path, never bound from
+  the request: `HUMAN_APPROVED` (evidence is the approved task row),
+  `BUILTIN_READONLY_SCRIPT` (evidence is that the script hashes to the known
+  detection script) and `USER_SCHEDULED_TASK` (evidence is that the scheduled
+  task row exists and belongs to the caller). BANNED commands can only ever be
+  waived by a human approval; when evidence cannot be produced the dispatch is
+  refused. Every waived dispatch is logged synchronously with the authority,
+  evidence reference, risk class and matched rules, but never the script body.
+  An architecture test pins the list of classes allowed to reference
+  `DispatchAuthority` and asserts the request DTO can never grow an exemption
+  field again.
+- **Server — read-only downgrading commands that write.** The 1.1.1 read-only
+  downgrade was keyed on the command name alone, and several commands hide write
+  operations behind a read-only face: `find ... -delete` was LOW (auto-approved
+  destructive deletion) while the identical command wrapped in `bash -c` was
+  HIGH. Write forms are now excluded from the read-only allowlist — `find` with
+  `-delete` / `-exec` / `-execdir` / `-ok` / `-okdir` / `-fprint` / `-fprintf`,
+  `awk` with `system()` / `getline` / print-to-file / pipe, `sort -o`, `date -s`,
+  `ping -f`, the mutating `ip` and `ifconfig` subcommands, `env FOO=1 <cmd>`,
+  and `hostname <newname>` — each narrowed in both the direct and the `bash -c`
+  paths. Read-only usage is untouched and `bash -c "df -h"` is pinned by a
+  regression test. Bare redirection (`cmd > /tmp/x`) remains a known blind spot,
+  documented and scheduled for a later release.
+- **Server — twelve workflow API contract mismatches between the two ends.** The
+  front end was written against the design document while the back end was
+  written against the same document read separately; the seams only showed up
+  once both were running. Nine were fixed on the server and three on the client:
+  the detail endpoint now returns the workflow, its versions and its draft
+  together; version summaries and definitions are flattened rather than nested;
+  saving a draft returns the base-version token alongside the definition; run,
+  node-run and approval responses go through outbound VOs; approvals carry the
+  workflow they belong to; the page endpoint accepts keyword and category; and
+  `currentVersion` is back-filled for lists. Three server defects that only an
+  end-to-end run could expose are fixed here as well: the approval decision
+  response echoed a stale snapshot (a `@Modifying` update does not refresh the
+  persistence context), queued runs were never pumped back because the scheduled
+  thread had no transaction, and an idempotency key reused with different inputs
+  returned the first run instead of a conflict. On the client, the draft is read
+  from the detail response, validation consumes `{valid, issues}` instead of a
+  bare array, and triggering sends `{input, idempotencyKey}` in the body.
+- **CI — the visual regression job now runs.** The preview server is started
+  directly instead of through the npm wrapper (whose failure produced no usable
+  diagnostics), `fonts-noto-cjk` is installed before the browser (the baselines
+  were rendered with it and the stack never named a CJK family, so every Chinese
+  string fell back to a different face), the CJK family is pinned explicitly,
+  the visual port moved off Vite's default with a hard failure on collision, the
+  canvas frame budget is a ratio rather than a fixed additive allowance, and the
+  workflow can be re-run manually.
+
+### Security
+- The dispatch risk gate can no longer be disabled by a request body field; the
+  authority model is a server-side enum with verifiable evidence, an
+  architecture test locking its callers, and synchronous audit for every waived
+  dispatch. See *Fixed* above for the full description.
+- Commands that write behind a read-only face are no longer auto-approved.
+- The workflow run WebSocket channel verifies run ownership during the
+  handshake and denies on missing runs and on lookup failures alike, following
+  the pattern 1.1.2 established for the task-log channel; 449 bodies and
+  approval risk fields carry the risk level and the matched pattern but never
+  the command text.
+- **No secret channel.** There is no `secret` variable type and no way to inject
+  a credential into a script: the agent protocol carries only the script body,
+  so a secret injected here would be written into the task's script column and
+  printed by any `env`-like command. Outbound messages, node output, error and
+  warning messages and run variables all pass through the existing
+  sensitive-data filter (mask `***`), reusing the one implementation rather than
+  adding a second.
+
+### Documentation
+- New "Workflow Engine" section in `README.md` and `README.zh-CN.md`, with
+  matching sections in the ja / ko / ru / zh-TW translations: what the engine
+  is, the five node types, the three data channels and their real boundaries,
+  the failure policies, approvals and the human in the loop, the full canvas
+  interaction set, monitoring and audit, and an explicit list of what is not
+  implemented.
+- New "Workflow from 0 to 1" guide on the documentation site (English and
+  简体中文): bring the stack up, compose a three-node workflow with the real
+  definition JSON, pass values between nodes, choose failure policies, run an
+  approval, monitor a run, and the questions people actually ask. Every command
+  and payload is checked against the server's contract test.
+- `AGENTS.md` now records the workflow API hard rules, the local stack and test
+  commands, and the PR checklist (design admission criteria that belong to
+  engineering discipline).
+
 ## [1.1.2] - 2026-11-08
 
 Security patch release. Three pre-existing authorization/auditability defects were

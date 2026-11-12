@@ -253,6 +253,194 @@ The skill bundles `resources/tool-catalog.md` (every tool with parameters and ex
 
 If that is your use case, add it to the discussion in [issue #6](https://github.com/easyshell-ai/easyshell/issues/6) ("how do the mcp and skill modules work?"), or open a feature request.
 
+### 9. Workflow Engine
+
+> Drag the runbook onto a canvas. Pass values between steps. Put a human gate in front of anything destructive.
+
+The Workflow Engine turns a sequence of operational steps into a **visual, versioned, auditable workflow**.
+Every node does one thing; inputs come from upstream, outputs go downstream. The Start node declares what
+a run needs; the End node declares what a run produces. Execution uses the same dispatch, risk gate, audit
+and log path as ordinary script tasks.
+
+<p align="center">
+  <img src="docs/images/workflow-canvas.png" alt="Workflow canvas with Start, Script, Condition, Approval, Notify and End nodes" width="90%" />
+</p>
+
+#### What a workflow looks like
+
+```
+Start ──> Collect disk usage ──> Normalize ──> Over threshold? ──IF──> Notify ──> End
+                                                    └──────────ELSE──────────────┘
+```
+
+- **Start** declares inputs (name, type, required, default, description). The trigger dialog is generated from it.
+- **Script Exec** runs a script on agents / clusters / tags and becomes a real Task.
+- **Transform** reshapes upstream output into named variables so downstream nodes do not repeat long paths.
+- **Condition** evaluates one expression and has two real exits: `IF` and `ELSE`.
+- **AI Analyze** asks the platform-configured model for a conclusion (**analysis only, never executes commands**).
+- **Approval** suspends the run until an administrator decides; it is the only legitimate path for high-risk scripts.
+- **Notify** pushes to configured bot channels and reports delivery honestly.
+- **Wait** sleeps for a bounded duration; cancellation is never trapped in the sleep.
+- **End** declares the run's final output fields, shown directly in the run detail.
+
+#### Twelve node types
+
+| Node | Purpose | Output available downstream |
+|---|---|---|
+| `start` | Declare run inputs; the only entry | each input as `nodes.start.output.<name>` |
+| `script-exec` | Execute a script on target hosts, as a real Task | stdout (text or JSON), referenced as a whole |
+| `transform` | Map / rename / compose values | `nodes.<key>.output.<name>` |
+| `condition` | Evaluate an expression, IF / ELSE branches | `nodes.<key>.output.result` (boolean) |
+| `ai-analyze` | Analyze upstream output with the configured model | `.text` / `.json` / `.structured` / `.truncated` |
+| `llm` | Generic LLM: prompt to text or structured JSON | `.text` / `.json` / `.structured` / `.model` |
+| `classifier` | Question classifier: route by model-selected class | `.class` / `.reason` / `.raw` |
+| `code` | JavaScript / Python data transformation (isolated sandbox) | JSON value returned by code |
+| `approval` | Suspend for human approval | `.decision` / `.comment` / `.decidedBy` |
+| `notify` | Push a rendered message to bot channels | `.delivered` / `.failed` / `.skipped` |
+| `wait` | Wait a bounded number of seconds | `.waitedMs` |
+| `end` | Declare workflow outputs | the run detail `output` |
+
+`approval` also has a lighter `mode: "human-confirm"` variant, reusing the same approval row and
+suspend/resume state machine.
+
+#### Passing values between nodes
+
+You do not memorize paths. Every template, parameter, mapping and condition field has a **variable picker**
+grouped by "run inputs / upstream nodes / output aliases". It only lists ancestors that the current node can
+actually read. Selecting an item inserts it:
+
+<p align="center">
+  <img src="docs/images/workflow-inspector.png" alt="Node inspector Data tab: upstream variables grouped by node, click to insert" width="90%" />
+</p>
+
+- **Template fields** (script parameters, notify templates, approval details, transform values, AI input,
+  End outputs) use `${path}`:
+  ```text
+  Disk ${nodes.probe.output.mount} is at ${nodes.probe.output.usage}%
+  ```
+- **Expression fields** (condition / edge conditions) use a bare path:
+  ```text
+  nodes.metrics.output.usage > run.input.threshold
+  ```
+- **Script bodies** keep the script-library `{{NAME}}` slots. Values come from `parameters`, and a value
+  may itself be `${path}`. Example: script `systemctl restart {{SERVICE}}`, parameter
+  `SERVICE = ${run.input.service_name}`.
+
+Path rules:
+
+| Source | Syntax |
+|---|---|
+| Run input | `run.input.<name>` |
+| Start node output | `nodes.<startKey>.output.<name>` |
+| Upstream node output | `nodes.<key>.output` / `nodes.<key>.output.<field>` |
+| Output alias | `<outputVar>` / `<outputVar>.<field>` (equivalent to `nodes.<key>.output`) |
+
+Values are visible only to topological descendants. Referencing a non-ancestor fails publishing with
+`EXPRESSION_REFERENCE_NOT_ANCESTOR` and is unreadable at runtime. A single value is inlined up to 8192 UTF-8
+bytes; larger values become a head/tail preview with a warning. There is no secret-injection channel: keep
+credentials in the host's own credential store.
+
+
+Start is not raw JSON: its field editor declares `label`, `name`, `type`
+(string / number / boolean / json), required, default and description. String fields can also declare
+`options`; the trigger dialog renders them as a Select instead of asking for free text. Condition nodes
+also provide a structured "variable + operator + value" builder with an advanced raw-expression escape hatch.
+
+#### Conditions: IF / ELSE are real gates
+
+A Condition node evaluates one expression to `true` / `false`. Its two exits connect to `IF` and `ELSE`.
+The engine reads the upstream node's `result` and only traverses the matching edge; the other edge is not
+traversable. If the upstream output is missing, neither edge is traversed (fail-closed). The `IF` / `ELSE`
+pills are readable in both light and dark themes; the expression itself is edited in the node inspector.
+
+#### AI nodes: text, structured JSON and classification
+
+- `ai-analyze`: reads upstream operations output and produces a conclusion; supports `text` and structured
+  `json` modes.
+- `llm`: generic LLM node with provider/model selection, system/user prompts and temperature; supports
+  `text` and structured `json`, with optional JSON Schema guidance and one repair retry on invalid JSON.
+- `classifier`: Dify-style question classifier with 1–10 classes (name + description). The model returns
+  `{"class":"...","reason":"..."}`; each class gets a real source handle on the canvas plus a `default`
+  fallback. An unknown class fails the node closed; it never routes silently.
+
+All three reuse the platform's AI configuration under System Settings → AI. Input and output are masked by
+the sensitive-data filter. They **only produce text/JSON/classification results and cannot execute
+anything**: even if the output says `rm -rf`, it gains no dispatch authority. Turning AI output into an
+action requires a human-written script and an `approval` node/risk gate; AI/LLM output is also forbidden
+as a script `raw` parameter.
+
+<p align="center">
+  <img src="docs/images/workflow-llm-structured.png" alt="LLM node structured JSON output: mode, JSON Schema and temperature" width="90%" />
+</p>
+
+Explicitly not supported: autonomous AI agents with tools, and AI-generated scripts executed directly.
+`CommandRiskEngine` is pattern-based; semantic prompt injection cannot be safely backstopped by it alone.
+
+#### Code node: data sandbox, not a host executor
+
+The `code` node supports JavaScript and Python for field extraction, formatting and composition:
+
+```javascript
+function main(input) {
+  return { total: Number(input.a) + Number(input.b) };
+}
+```
+
+```python
+def main(input):
+    return {"total": float(input["a"]) + float(input["b"])}
+```
+
+- Inputs are declared as an `inputs` map and may reference upstream variables. Code runs in a
+  **GraalVM Polyglot sandbox**: no host objects, no file/network/environment/process/thread access, and a
+  hard timeout that closes the context.
+- The return value must be JSON-serializable and is written to `nodes.<key>.output`.
+- It does not operate on servers. Host operations still use `script-exec` + agents.
+
+#### Failure policy
+
+| Policy | Effect |
+|---|---|
+| `abort` | Cancel this node and every unstarted node; run ends `failed` |
+| `skip` (default) | Mark this node `skipped`; its descendants re-evaluate their own policy |
+| `partial` | Run this node even if upstream failed; the failed output is treated as absent |
+
+When incoming edges disagree, the strictest policy wins (`abort > skip > partial`). Unknown policies are
+treated as `abort`: failure always closes, never opens.
+
+#### Editor
+
+- The palette groups nodes into Entry / Execute / Flow / Human, with one-line docs and search.
+- The canvas fills the viewport; node cards show type, input/output summary, output variable and run status.
+- The right inspector has **Config / Data / Docs** tabs: fields, readable upstream variables, purpose and example.
+- The top bar **Help** drawer has a four-step tour, variable syntax, node reference and a full example.
+  **Templates** offers three editable starting points: disk inspection, service-restart approval, batch health check.
+- The canvas supports box selection, alignment guides, undo/redo, minimap, auto-layout, copy/paste and
+  shortcuts. Connections are validated client-side (no self-loop, duplicate, cycle; Start has no input;
+  End has no output), with the server authoritative.
+
+#### Run monitoring and audit
+
+The run detail is a read-only status-colored canvas plus a node table. Click a node to inspect input, output,
+error, attempt and the linked Task, and **test-run that single node** without rerunning the whole workflow.
+Outputs declared by the End node appear directly in Run Output.
+
+Every run records enough to explain what happened and why: immutable definition version and SHA-256, full
+input snapshot, per-node input/output and fingerprints, attempt number, Task id, agent version at dispatch,
+and the risk-rule snapshot active when the run started. Five high-risk events (publish, approve, reject,
+trigger, cancel) are audited synchronously; an audit write failure fails the business action.
+
+#### Current boundaries
+
+The 2.1 release covers Start/End contracts, twelve node types, the variable picker, real IF/ELSE gating,
+LLM/structured output, a question classifier, a JS/Python data sandbox and per-node test runs. Still not
+implemented: cron / webhook triggers, HTTP nodes, parallel fan-out/fan-in, sub-workflows, loops, artifact
+storage, secret injection, dry-run / replay, and cross-instance scheduling. Per-node test-run is available
+in run detail and only applies to an existing run.
+
+See the [Workflow guide](https://docs.easyshell.ai/guides/workflow/) for a from-zero walkthrough, or open a
+feature request for what is missing.
+
 ---
 
 ## Quick Start
@@ -309,7 +497,7 @@ Local web development and dependency checks require Node.js `^20.19.0 || >=22.12
 | Category | Features |
 |----------|----------|
 | **AI Intelligence** | AI Script Assistant (generate / modify / diff / summary), AI Task Orchestration (multi-step plans, parallel execution, analysis), AI Scheduled Inspections (cron-based, AI output analysis, intelligent alert decisions, multi-channel bot push), AI Chat, Inspection Reports, Operation Approvals |
-| **Operations** | Script library, batch execution, real-time streaming logs, Web SSH terminal with file manager |
+| **Operations** | Script library, batch execution, real-time streaming logs, Web SSH terminal with file manager, **Workflow Engine** (visual DAG canvas, node parameter passing, failure policies, human approvals, run monitoring) |
 | **Infrastructure** | Host management, real-time monitoring, cluster grouping, agent auto-deployment |
 | **Administration** | User management, system config, AI model settings (OpenAI / Gemini / Copilot / Custom), risk control |
 | **Platform** | i18n (EN / ZH), dark/light theme, responsive design, audit logging |

@@ -9,7 +9,7 @@ services:
       context: .
       dockerfile: Dockerfile.server
       args:
-        VERSION: ${VERSION:-1.1.2}
+        VERSION: ${VERSION:-1.2.0}
     container_name: easyshell-secrets
     entrypoint: ["/opt/easyshell/scripts/init-secrets.sh"]
     environment:
@@ -65,7 +65,7 @@ services:
       context: .
       dockerfile: Dockerfile.server
       args:
-        VERSION: ${VERSION:-1.1.2}
+        VERSION: ${VERSION:-1.2.0}
     container_name: easyshell-server
     ports:
       - "${SERVER_PORT:-18080}:18080"

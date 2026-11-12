@@ -28,6 +28,7 @@ export interface ActiveStreamState {
   messages: AiChatMessage[];
   onStateChange?: () => void;
   planConfirmationStatus?: 'awaiting' | 'confirmed' | 'rejected';
+  planId?: string;
   reviewResult?: string;
   parallelProgress?: Array<{ group: number; completed: number; total: number }>;
 }

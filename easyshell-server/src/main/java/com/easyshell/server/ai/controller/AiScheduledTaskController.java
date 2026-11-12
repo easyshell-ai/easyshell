@@ -17,6 +17,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -35,23 +36,27 @@ public class AiScheduledTaskController {
     private final AuditLogService auditLogService;
 
     @GetMapping
-    public R<List<AiScheduledTaskVO>> list() {
-        List<AiScheduledTask> tasks = taskRepository.findAllByOrderByCreatedAtDesc();
+    @PreAuthorize("hasAnyRole('VIEWER','OPERATOR','ADMIN','SUPER_ADMIN')")
+    public R<List<AiScheduledTaskVO>> list(Authentication auth) {
+        Long userId = requireUserId(auth);
+        List<AiScheduledTask> tasks = isAdmin(auth) ? taskRepository.findAllByOrderByCreatedAtDesc()
+                : taskRepository.findByCreatedByOrderByCreatedAtDesc(userId);
         List<AiScheduledTaskVO> vos = tasks.stream().map(this::toVO).collect(Collectors.toList());
         return R.ok(vos);
     }
 
     @GetMapping("/{id}")
-    public R<AiScheduledTaskVO> getById(@PathVariable Long id) {
-        AiScheduledTask task = taskRepository.findById(id)
-                .orElseThrow(() -> new BusinessException(404, "定时任务不存在"));
+    @PreAuthorize("hasAnyRole('VIEWER','OPERATOR','ADMIN','SUPER_ADMIN')")
+    public R<AiScheduledTaskVO> getById(@PathVariable Long id, Authentication auth, HttpServletRequest httpRequest) {
+        AiScheduledTask task = requireAccess(id, auth, httpRequest, true, "VIEW_SCHEDULED_TASK");
         return R.ok(toVO(task));
     }
 
     @PostMapping
+    @PreAuthorize("hasAnyRole('VIEWER','OPERATOR','ADMIN','SUPER_ADMIN')")
     public R<AiScheduledTaskVO> create(@Valid @RequestBody AiScheduledTaskRequest request,
                                        Authentication auth, HttpServletRequest httpRequest) {
-        Long userId = (Long) auth.getPrincipal();
+        Long userId = requireUserId(auth);
 
         AiScheduledTask task = new AiScheduledTask();
         task.setName(request.getName());
@@ -82,13 +87,13 @@ public class AiScheduledTaskController {
     }
 
     @PutMapping("/{id}")
+    @PreAuthorize("hasAnyRole('VIEWER','OPERATOR','ADMIN','SUPER_ADMIN')")
     public R<AiScheduledTaskVO> update(@PathVariable Long id,
                                        @Valid @RequestBody AiScheduledTaskRequest request,
                                        Authentication auth, HttpServletRequest httpRequest) {
-        Long userId = (Long) auth.getPrincipal();
+        Long userId = requireUserId(auth);
 
-        AiScheduledTask task = taskRepository.findById(id)
-                .orElseThrow(() -> new BusinessException(404, "定时任务不存在"));
+        AiScheduledTask task = requireAccess(id, auth, httpRequest, false, "UPDATE_SCHEDULED_TASK");
 
         task.setName(request.getName());
         task.setDescription(request.getDescription());
@@ -120,11 +125,11 @@ public class AiScheduledTaskController {
     }
 
     @DeleteMapping("/{id}")
+    @PreAuthorize("hasAnyRole('VIEWER','OPERATOR','ADMIN','SUPER_ADMIN')")
     public R<Void> delete(@PathVariable Long id, Authentication auth, HttpServletRequest httpRequest) {
-        Long userId = (Long) auth.getPrincipal();
+        Long userId = requireUserId(auth);
 
-        AiScheduledTask task = taskRepository.findById(id)
-                .orElseThrow(() -> new BusinessException(404, "定时任务不存在"));
+        AiScheduledTask task = requireAccess(id, auth, httpRequest, true, "DELETE_SCHEDULED_TASK");
 
         schedulerService.cancelTask(id);
         taskRepository.deleteById(id);
@@ -137,9 +142,9 @@ public class AiScheduledTaskController {
     }
 
     @PostMapping("/{id}/enable")
-    public R<Void> enable(@PathVariable Long id) {
-        AiScheduledTask task = taskRepository.findById(id)
-                .orElseThrow(() -> new BusinessException(404, "定时任务不存在"));
+    @PreAuthorize("hasAnyRole('VIEWER','OPERATOR','ADMIN','SUPER_ADMIN')")
+    public R<Void> enable(@PathVariable Long id, Authentication auth, HttpServletRequest httpRequest) {
+        AiScheduledTask task = requireAccess(id, auth, httpRequest, false, "ENABLE_SCHEDULED_TASK");
         task.setEnabled(true);
         taskRepository.save(task);
         schedulerService.scheduleTask(task);
@@ -147,9 +152,9 @@ public class AiScheduledTaskController {
     }
 
     @PostMapping("/{id}/disable")
-    public R<Void> disable(@PathVariable Long id) {
-        AiScheduledTask task = taskRepository.findById(id)
-                .orElseThrow(() -> new BusinessException(404, "定时任务不存在"));
+    @PreAuthorize("hasAnyRole('VIEWER','OPERATOR','ADMIN','SUPER_ADMIN')")
+    public R<Void> disable(@PathVariable Long id, Authentication auth, HttpServletRequest httpRequest) {
+        AiScheduledTask task = requireAccess(id, auth, httpRequest, true, "DISABLE_SCHEDULED_TASK");
         task.setEnabled(false);
         taskRepository.save(task);
         schedulerService.cancelTask(id);
@@ -157,11 +162,11 @@ public class AiScheduledTaskController {
     }
 
     @PostMapping("/{id}/run")
+    @PreAuthorize("hasAnyRole('VIEWER','OPERATOR','ADMIN','SUPER_ADMIN')")
     public R<Void> runNow(@PathVariable Long id, Authentication auth, HttpServletRequest httpRequest) {
-        Long userId = (Long) auth.getPrincipal();
+        Long userId = requireUserId(auth);
 
-        AiScheduledTask task = taskRepository.findById(id)
-                .orElseThrow(() -> new BusinessException(404, "定时任务不存在"));
+        AiScheduledTask task = requireAccess(id, auth, httpRequest, false, "MANUAL_RUN_SCHEDULED_TASK");
 
         schedulerService.executeScheduledTaskAsync(id);
 
@@ -190,6 +195,33 @@ public class AiScheduledTaskController {
     public R<AiAlertAnalysis> analyzeAlert(@RequestBody AiAlertRequest request) {
         AiAlertAnalysis analysis = alertResponder.analyzeAlert(request);
         return R.ok(analysis);
+    }
+
+    private Long requireUserId(Authentication auth) {
+        Long userId = AuditUsers.id(auth);
+        if (userId == null || !auth.isAuthenticated()) {
+            throw new BusinessException(403, "Access denied");
+        }
+        return userId;
+    }
+
+    private boolean isAdmin(Authentication auth) {
+        return auth.getAuthorities().stream().anyMatch(a ->
+                "ROLE_ADMIN".equals(a.getAuthority()) || "ROLE_SUPER_ADMIN".equals(a.getAuthority()));
+    }
+
+    private AiScheduledTask requireAccess(Long id, Authentication auth, HttpServletRequest request,
+                                          boolean adminAllowed, String action) {
+        Long userId = requireUserId(auth);
+        AiScheduledTask task = taskRepository.findById(id)
+                .orElseThrow(() -> new BusinessException(404, "定时任务不存在"));
+        if (!userId.equals(task.getCreatedBy()) && !(adminAllowed && isAdmin(auth))) {
+            log.warn("Scheduled task access denied: userId={}, taskId={}, action={}", userId, id, action);
+            auditLogService.log(userId, AuditUsers.name(auth), action, "ai_scheduled_task",
+                    String.valueOf(id), "Access denied", request.getRemoteAddr(), "denied");
+            throw new BusinessException(403, "Access denied");
+        }
+        return task;
     }
 
     private AiScheduledTaskVO toVO(AiScheduledTask task) {

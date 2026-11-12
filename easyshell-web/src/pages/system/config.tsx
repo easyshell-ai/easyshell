@@ -219,7 +219,7 @@ const SystemConfig: React.FC = () => {
               <span style={{ color: token.colorText }}>{t('config.agentConfig')}</span>
             </Space>
           }
-          style={{ ...{ borderRadius: 12 }, marginBottom: 16 }}
+          style={{ marginBottom: 16 }}
         >
           <Descriptions column={{ xs: 1, sm: 2, md: 4 }} size="small">
             {agentConfigs.map((c) => (
@@ -243,7 +243,7 @@ const SystemConfig: React.FC = () => {
         </Card>
       )}
 
-      <Card style={{ borderRadius: 12 }} styles={{ body: { padding: 0 } }}>
+      <Card styles={{ body: { padding: 0 } }}>
         <Table<SystemConfigVO>
           columns={columns}
           dataSource={configs}

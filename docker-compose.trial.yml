@@ -1,0 +1,103 @@
+# Standalone trial stack. Always supply a new project name and an explicit env file.
+services:
+  easyshell-secrets:
+    image: ${EASYSHELL_TRIAL_SERVER_IMAGE:?Set EASYSHELL_TRIAL_SERVER_IMAGE}
+    pull_policy: never
+    entrypoint: ["/opt/easyshell/scripts/init-secrets.sh"]
+    environment:
+      EASYSHELL_SECRETS_DIR: /secrets
+      MYSQL_PASSWORD: ""
+      JWT_SECRET: ""
+      ENCRYPTION_KEY: ""
+      AGENT_REGISTER_SECRET: ""
+    volumes:
+      - trial_secrets:/secrets
+    networks: [trial]
+    restart: "no"
+
+  easyshell-mysql:
+    image: mysql:8.0
+    pull_policy: never
+    environment:
+      MYSQL_ROOT_PASSWORD_FILE: /secrets/db_password
+      MYSQL_DATABASE: easyshell_trial
+    volumes:
+      - trial_secrets:/secrets:ro
+      - trial_mysql:/var/lib/mysql
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    depends_on:
+      easyshell-secrets:
+        condition: service_completed_successfully
+    networks: [trial]
+    restart: "no"
+
+  easyshell-redis:
+    image: redis:7-alpine
+    pull_policy: never
+    volumes:
+      - trial_redis:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [trial]
+    restart: "no"
+
+  easyshell-server:
+    image: ${EASYSHELL_TRIAL_SERVER_IMAGE:?Set EASYSHELL_TRIAL_SERVER_IMAGE}
+    pull_policy: never
+    environment:
+      MYSQL_HOST: easyshell-mysql
+      MYSQL_PORT: "3306"
+      MYSQL_DATABASE: easyshell_trial
+      MYSQL_USER: root
+      MYSQL_PASSWORD: ""
+      JWT_SECRET: ""
+      ENCRYPTION_KEY: ""
+      AGENT_REGISTER_SECRET: ""
+      EASYSHELL_ADMIN_PASSWORD: ""
+      EASYSHELL_SECRETS_FILE: /secrets/server.env
+      REDIS_HOST: easyshell-redis
+      REDIS_PORT: "6379"
+      PROVISION_SERVER_URL: http://easyshell-server:18080
+      JAVA_OPTS: -Xms256m -Xmx512m
+      EASYSHELL_WORKFLOW_ENGINE_AUTOMATIC_RECOVERY_ENABLED: "false"
+    volumes:
+      - trial_secrets:/secrets:ro
+    depends_on:
+      easyshell-secrets:
+        condition: service_completed_successfully
+      easyshell-mysql:
+        condition: service_healthy
+      easyshell-redis:
+        condition: service_healthy
+    networks: [trial]
+    restart: "no"
+
+  easyshell-web:
+    image: ${EASYSHELL_TRIAL_WEB_IMAGE:?Set EASYSHELL_TRIAL_WEB_IMAGE}
+    pull_policy: never
+    ports:
+      - "127.0.0.1:${EASYSHELL_TRIAL_WEB_PORT:?Set EASYSHELL_TRIAL_WEB_PORT}:80"
+    depends_on:
+      easyshell-server:
+        condition: service_healthy
+    networks: [trial]
+    restart: "no"
+
+networks:
+  trial:
+    internal: true
+
+volumes:
+  trial_secrets:
+  trial_mysql:
+  trial_redis:

@@ -8,6 +8,33 @@ import axios from 'axios';
  *   revokes it server-side), so a stolen access token cannot be extended indefinitely.
  */
 const TOKEN_KEY = 'token';
+let sessionEpoch = 0;
+const sessionListeners = new Set<() => void>();
+
+/** Opaque session generation; compare snapshots, never credentials. */
+export function getSessionEpoch(): number {
+  return sessionEpoch;
+}
+
+export function subscribeSessionEpoch(listener: () => void): () => void {
+  sessionListeners.add(listener);
+  return () => { sessionListeners.delete(listener); };
+}
+
+function advanceSessionEpoch(): void {
+  sessionEpoch += 1;
+  for (const listener of [...sessionListeners]) listener();
+}
+
+// sessionStorage events are delivered to other documents in the same tab, not
+// the document that performed the write. Do not inspect or retain event values.
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (event) => {
+    if (event.storageArea === sessionStorage && (event.key === TOKEN_KEY || event.key === null)) {
+      advanceSessionEpoch();
+    }
+  });
+}
 
 export function getToken(): string | null {
   return sessionStorage.getItem(TOKEN_KEY);
@@ -15,10 +42,12 @@ export function getToken(): string | null {
 
 export function setToken(token: string): void {
   sessionStorage.setItem(TOKEN_KEY, token);
+  advanceSessionEpoch();
 }
 
 export function clearSession(): void {
   sessionStorage.removeItem(TOKEN_KEY);
+  advanceSessionEpoch();
   // Defensive: older builds stored these keys, make sure they are gone as well.
   localStorage.removeItem('token');
   localStorage.removeItem('refreshToken');
@@ -45,15 +74,19 @@ const request = axios.create({
   timeout: 30000,
 });
 
+const requestEpochs = new WeakMap<object, number>();
+
 request.interceptors.request.use(
   (config) => {
+    requestEpochs.set(config, getSessionEpoch());
     const token = getToken();
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
     return config;
   },
-  (error) => Promise.reject(error)
+  (error) => { throw error; },
+  { synchronous: true }
 );
 
 /**
@@ -66,9 +99,22 @@ function isAuthRequest(url: unknown): boolean {
   return typeof url === 'string' && url.includes('/auth/');
 }
 
+function isStaleRequest(config: object | undefined): boolean {
+  return !!config && requestEpochs.has(config) && requestEpochs.get(config) !== getSessionEpoch();
+}
+
+function staleSessionError(): Error {
+  // Do not attach the response or request: either may contain sensitive data.
+  return new Error('Request belongs to an expired session');
+}
+
 request.interceptors.response.use(
-  (response) => response.data,
+  (response) => {
+    if (isStaleRequest(response.config)) throw staleSessionError();
+    return response.data;
+  },
   (error) => {
+    if (isStaleRequest(error.config)) return Promise.reject(staleSessionError());
     const status = error.response?.status;
     const body = error.response?.data;
     // Business failures arrive as a proper 4xx status together with the API envelope
@@ -83,7 +129,8 @@ request.interceptors.response.use(
     // A 401 without an envelope is not a business decision: it comes from the security
     // filter chain (expired/missing token), i.e. the session really is dead. Only then
     // drop the token and go back to the login screen.
-    if (status === 401 && !hasEnvelope && !isAuthRequest(error.config?.url)) {
+    if (status === 401 && !hasEnvelope && !isAuthRequest(error.config?.url)
+      && requestEpochs.get(error.config) === getSessionEpoch()) {
       clearSession();
       window.location.href = '/login';
     }

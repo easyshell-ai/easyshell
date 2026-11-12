@@ -11,6 +11,7 @@ import com.easyshell.server.ai.repository.AiIterationMessageRepository;
 import com.easyshell.server.ai.service.AiChatService;
 import com.easyshell.server.ai.service.AiExecutionService;
 import com.easyshell.server.common.result.R;
+import com.easyshell.server.common.exception.BusinessException;
 import com.easyshell.server.model.entity.Task;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
@@ -114,17 +115,31 @@ public class AiChatController {
     }
 
     @PostMapping("/sessions/{sessionId}/plan/confirm")
-    public R<Void> confirmPlan(@PathVariable String sessionId, Authentication auth) {
+    public R<Void> confirmPlan(@PathVariable String sessionId, @RequestBody(required = false) PlanDecisionRequest body, Authentication auth) {
         aiChatService.requireSessionOwner(sessionId, (Long) auth.getPrincipal());
-        planConfirmationManager.confirm(sessionId);
+        requirePlanId(body);
+        if (!planConfirmationManager.confirm(sessionId, body.planId())) {
+            throw new BusinessException(409, "Plan is no longer awaiting confirmation");
+        }
         return R.ok();
     }
 
     @PostMapping("/sessions/{sessionId}/plan/reject")
-    public R<Void> rejectPlan(@PathVariable String sessionId, Authentication auth) {
+    public R<Void> rejectPlan(@PathVariable String sessionId, @RequestBody(required = false) PlanDecisionRequest body, Authentication auth) {
         aiChatService.requireSessionOwner(sessionId, (Long) auth.getPrincipal());
-        planConfirmationManager.reject(sessionId);
+        requirePlanId(body);
+        if (!planConfirmationManager.reject(sessionId, body.planId())) {
+            throw new BusinessException(409, "Plan is no longer awaiting confirmation");
+        }
         return R.ok();
+    }
+
+    public record PlanDecisionRequest(String planId) {}
+
+    private void requirePlanId(PlanDecisionRequest body) {
+        if (body == null || body.planId() == null || body.planId().isBlank()) {
+            throw new BusinessException(400, "planId is required");
+        }
     }
 
     @PostMapping("/sessions/{sessionId}/checkpoint/{stepIndex}/approve")

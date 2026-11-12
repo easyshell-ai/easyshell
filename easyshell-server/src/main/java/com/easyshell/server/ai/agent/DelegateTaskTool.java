@@ -16,16 +16,30 @@ public class DelegateTaskTool {
     private final BackgroundTaskManager backgroundTaskManager;
     private final OrchestratorEngine orchestratorEngine;
     private final ChatModelFactory chatModelFactory;
+    private final Long userId;
+    private final String sourceIp;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public DelegateTaskTool(
             AgentDefinitionRepository agentDefinitionRepository,
             BackgroundTaskManager backgroundTaskManager,
             @Lazy OrchestratorEngine orchestratorEngine,
             ChatModelFactory chatModelFactory) {
+        this(agentDefinitionRepository, backgroundTaskManager, orchestratorEngine, chatModelFactory, null, null);
+    }
+
+    private DelegateTaskTool(AgentDefinitionRepository agentDefinitionRepository, BackgroundTaskManager backgroundTaskManager,
+                             OrchestratorEngine orchestratorEngine, ChatModelFactory chatModelFactory, Long userId, String sourceIp) {
         this.agentDefinitionRepository = agentDefinitionRepository;
         this.backgroundTaskManager = backgroundTaskManager;
         this.orchestratorEngine = orchestratorEngine;
         this.chatModelFactory = chatModelFactory;
+        this.userId = userId;
+        this.sourceIp = sourceIp;
+    }
+
+    public DelegateTaskTool forUser(Long userId, String sourceIp) {
+        return new DelegateTaskTool(agentDefinitionRepository, backgroundTaskManager, orchestratorEngine, chatModelFactory, userId, sourceIp);
     }
 
     @Tool(description = "委派任务给子Agent执行。适用于需要并行处理或专门技能的复杂任务。简单查询不需要委派。调用前请先确认可用的agent类型。")
@@ -35,6 +49,7 @@ public class DelegateTaskTool {
             @ToolParam(description = "详细任务提示词，提供足够的上下文和具体要求") String prompt,
             @ToolParam(description = "是否异步执行: true=后台执行并立即返回taskId, false=同步等待结果返回") boolean async) {
 
+        if (userId == null || userId <= 0) return "错误：无法确定当前用户身份，已拒绝委派。";
         log.info("DelegateTask invoked: agent={}, async={}, desc={}", agentType, async, description);
 
         var availableAgents = agentDefinitionRepository.findByEnabledTrue().stream()
@@ -54,11 +69,11 @@ public class DelegateTaskTool {
 
         try {
             if (async) {
-                String taskId = backgroundTaskManager.submit(agentDef, prompt, orchestratorEngine, chatModelFactory);
+                String taskId = backgroundTaskManager.submit(agentDef, prompt, orchestratorEngine, chatModelFactory, userId, sourceIp);
                 log.info("Async task submitted: taskId={}, agent={}", taskId, agentType);
                 return "异步任务已提交。任务ID: " + taskId + "，可使用 get_task_result 工具查询结果。";
             } else {
-                String result = orchestratorEngine.executeAsSubAgent(agentDef, prompt, chatModelFactory);
+                String result = orchestratorEngine.executeAsSubAgent(agentDef, prompt, chatModelFactory, userId, sourceIp);
                 log.info("Sync delegation completed: agent={}, resultLength={}", agentType, result != null ? result.length() : 0);
                 return "<task_result agent=\"" + agentType + "\">\n" + (result != null ? result : "(无结果)") + "\n</task_result>";
             }

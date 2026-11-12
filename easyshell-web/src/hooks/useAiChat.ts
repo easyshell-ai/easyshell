@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { getChatSessions, getChatMessages, deleteChatSession, sendChatStream, approveExecution, rejectExecution, saveProcessData, confirmPlan, rejectPlan, approveCheckpoint, rejectCheckpoint } from '../api/ai';
 import { getClusterList, getClusterDetail } from '../api/cluster';
 import { getHostList } from '../api/host';
+import { getSessionEpoch, subscribeSessionEpoch } from '../api/request';
 import type { AiChatSession, AiChatMessage, ClusterDetailVO, Agent, AgentEvent, ExecutionPlan } from '../types';
 import type { ApprovalRequest, ProcessData, ActiveStreamState, CompletedStreamResult, TreeNode } from '../pages/ai/chat/types';
 
@@ -11,6 +12,30 @@ import type { ApprovalRequest, ProcessData, ActiveStreamState, CompletedStreamRe
 // These are intentionally NOT React state.
 let activeStream: ActiveStreamState | null = null;
 let completedStreamResult: CompletedStreamResult | null = null;
+let completedStreamOwner: ActiveStreamState | null = null;
+let latestStream: ActiveStreamState | null = null;
+const pendingSessionDeletes = new Map<object, { sessionId: string; done: Promise<void> }>();
+const deletedSessions = new Set<string>();
+const deleteSubscribers = new Set<(sessionId: string) => void>();
+const streamSubscribers = new WeakMap<ActiveStreamState, Set<() => void>>();
+function notifyStream(stream: ActiveStreamState) {
+  streamSubscribers.get(stream)?.forEach(listener => listener());
+}
+const streamCheckpoints = new WeakMap<ActiveStreamState, Set<number>>();
+const streamResults = new WeakMap<ActiveStreamState, CompletedStreamResult>();
+subscribeSessionEpoch(() => {
+  const previous = activeStream;
+  activeStream = null;
+  completedStreamResult = null;
+  completedStreamOwner = null;
+  latestStream = null;
+  pendingSessionDeletes.clear();
+  deletedSessions.clear();
+  if (previous) {
+    streamSubscribers.delete(previous);
+    previous.controller?.abort();
+  }
+});
 
 export function useAiChat() {
   const { token } = theme.useToken();
@@ -18,13 +43,19 @@ export function useAiChat() {
 
   const [sessions, setSessions] = useState<AiChatSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<AiChatMessage[]>([]);
+  const [messages, setMessagesState] = useState<AiChatMessage[]>([]);
+  const messagesRef = useRef(messages);
+  const setMessages = useCallback((next: AiChatMessage[]) => {
+    messagesRef.current = next;
+    setMessagesState(next);
+  }, []);
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
   const [provider, setProvider] = useState('default');
   const [model, setModel] = useState('');
   const [enableTools, setEnableTools] = useState(true);
   const [loadingSessions, setLoadingSessions] = useState(false);
+  const [sessionEpoch, setSessionEpoch] = useState(getSessionEpoch);
   const [hoveredMsgId, setHoveredMsgId] = useState<number | null>(null);
 
   const [selectedTargetIds, setSelectedTargetIds] = useState<string[]>([]);
@@ -43,6 +74,7 @@ export function useAiChat() {
   const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequest[]>([]);
   const [approvalLoading, setApprovalLoading] = useState(false);
   const [planConfirmationStatus, setPlanConfirmationStatus] = useState<'awaiting' | 'confirmed' | 'rejected' | undefined>();
+  const [planId, setPlanId] = useState<string | undefined>();
   const [reviewResult, setReviewResult] = useState<string | undefined>();
   const [parallelProgress, setParallelProgress] = useState<Array<{ group: number; completed: number; total: number }>>([]);
   const [planConfirmLoading, setPlanConfirmLoading] = useState(false);
@@ -54,6 +86,16 @@ export function useAiChat() {
   const abortRef = useRef<AbortController | null>(null);
   const currentSessionIdRef = useRef<string | null>(null);
   const initialSessionsLoadedRef = useRef(false);
+  const viewVersionRef = useRef(0);
+  const attachedStreamRef = useRef<ActiveStreamState | null>(null);
+  const mountedRef = useRef(false);
+  const unsubscribeStreamRef = useRef<(() => void) | null>(null);
+  const sessionsRequestRef = useRef(0);
+  const detachStream = useCallback(() => {
+    unsubscribeStreamRef.current?.();
+    unsubscribeStreamRef.current = null;
+    attachedStreamRef.current = null;
+  }, []);
 
   // Refs to capture current streaming state inside callbacks (closures capture stale state)
   const streamingPlanRef = useRef<ExecutionPlan | null>(null);
@@ -107,6 +149,9 @@ export function useAiChat() {
 
   const attachToActiveStream = useCallback(() => {
     if (!activeStream) return;
+    detachStream();
+    const stream = activeStream;
+    attachedStreamRef.current = stream;
     setStreamingContent(activeStream.content);
     setStreamingPlan(activeStream.plan);
     setStreamingStepIndex(activeStream.stepIndex);
@@ -117,15 +162,43 @@ export function useAiChat() {
     setIsStreaming(true);
     setLoading(true);
     setPendingApprovals([...activeStream.pendingApprovals]);
+    setCheckpointSteps(new Set(streamCheckpoints.get(activeStream) || []));
     setPlanConfirmationStatus(activeStream.planConfirmationStatus);
+    setPlanId(activeStream.planId);
     setReviewResult(activeStream.reviewResult);
     setParallelProgress(activeStream.parallelProgress || []);
     if (activeStream.messages.length > 0) {
       setMessages([...activeStream.messages]);
     }
     abortRef.current = activeStream.controller;
-    activeStream.onStateChange = () => {
-      if (!activeStream) return;
+    const listener = () => {
+      if (!activeStream || attachedStreamRef.current !== activeStream) return;
+      if (!activeStream.isStreaming) {
+        const result = streamResults.get(activeStream);
+        if (result) {
+          setMessages([...result.messages]);
+          setProcessDataMap(prev => ({ ...prev, ...result.processDataMap }));
+        }
+        setLoading(false);
+        setIsStreaming(false);
+        setStreamingContent('');
+        setStreamingPlan(null);
+        setStreamingThinkingLog([]);
+        setStreamingToolCalls([]);
+        setPendingApprovals([]);
+        setCheckpointSteps(new Set());
+        setApprovalLoading(false);
+        setCheckpointLoading(null);
+        setPlanConfirmLoading(false);
+        setPlanId(undefined);
+        setPlanConfirmationStatus(undefined);
+        detachStream();
+        return;
+      }
+      if (activeStream.sessionId && currentSessionIdRef.current !== activeStream.sessionId) {
+        currentSessionIdRef.current = activeStream.sessionId;
+        setCurrentSessionId(activeStream.sessionId);
+      }
       setStreamingContent(activeStream.content);
       setStreamingPlan(activeStream.plan);
       setStreamingStepIndex(activeStream.stepIndex);
@@ -134,54 +207,114 @@ export function useAiChat() {
       setStreamingStepDescription(activeStream.stepDescription);
       setStreamingToolCalls([...activeStream.toolCalls]);
       setPendingApprovals([...activeStream.pendingApprovals]);
+      setCheckpointSteps(new Set(streamCheckpoints.get(activeStream) || []));
       setPlanConfirmationStatus(activeStream.planConfirmationStatus);
+      setPlanId(activeStream.planId);
       setReviewResult(activeStream.reviewResult);
       setParallelProgress(activeStream.parallelProgress || []);
     };
+    let subscribers = streamSubscribers.get(stream);
+    if (!subscribers) {
+      subscribers = new Set();
+      streamSubscribers.set(stream, subscribers);
+    }
+    subscribers.add(listener);
+    unsubscribeStreamRef.current = () => subscribers.delete(listener);
+  }, [detachStream]);
+
+  useEffect(() => {
+    return subscribeSessionEpoch(() => {
+      viewVersionRef.current++;
+      detachStream();
+      sessionsRequestRef.current++;
+      setLoadingSessions(false);
+      setLoadingTargets(false);
+      setSessionEpoch(getSessionEpoch());
+      initialSessionsLoadedRef.current = false;
+      abortRef.current = null;
+      currentSessionIdRef.current = null;
+      setCurrentSessionId(null);
+      setMessages([]);
+      setInputValue('');
+      setSessions([]);
+      setProcessDataMap({});
+      setProcessModalVisible(false);
+      setViewingProcessMsgId(null);
+      setHoveredMsgId(null);
+      setStreamingContent('');
+      setStreamingPlan(null);
+      setStreamingStepIndex(-1);
+      setStreamingThinkingLog([]);
+      setStreamingAgent('');
+      setStreamingStepDescription('');
+      setStreamingToolCalls([]);
+      setPendingApprovals([]);
+      setPlanId(undefined);
+      setPlanConfirmationStatus(undefined);
+      setReviewResult(undefined);
+      setParallelProgress([]);
+      setCheckpointSteps(new Set());
+      setClusters([]);
+      setHosts([]);
+      setSelectedTargetIds([]);
+      setLoading(false);
+      setIsStreaming(false);
+      setApprovalLoading(false);
+      setPlanConfirmLoading(false);
+      setCheckpointLoading(null);
+    });
   }, []);
 
   useEffect(() => {
+    mountedRef.current = true;
     if (activeStream && activeStream.isStreaming) {
+      currentSessionIdRef.current = activeStream.sessionId;
       setCurrentSessionId(activeStream.sessionId);
       attachToActiveStream();
     } else if (completedStreamResult) {
       const result = completedStreamResult;
-      completedStreamResult = null;
+      currentSessionIdRef.current = result.sessionId;
       setCurrentSessionId(result.sessionId);
       setMessages(result.messages);
       setProcessDataMap(prev => ({ ...prev, ...result.processDataMap }));
     }
 
     return () => {
-      if (activeStream) {
-        activeStream.onStateChange = undefined;
-      }
+      mountedRef.current = false;
+      viewVersionRef.current++;
+      detachStream();
     };
   }, []);
 
   const loadSessions = useCallback(async () => {
+    const epoch = getSessionEpoch();
+    const request = ++sessionsRequestRef.current;
+    const valid = () => mountedRef.current && epoch === getSessionEpoch() && request === sessionsRequestRef.current;
     if (!initialSessionsLoadedRef.current) {
       setLoadingSessions(true);
     }
     try {
       const res = await getChatSessions();
-      if (res.code === 200) {
-        setSessions(res.data || []);
+      if (valid() && res.code === 200) {
+        setSessions((res.data || []).filter(session => !deletedSessions.has(session.id)));
       }
     } catch {
       // ignore
     } finally {
-      setLoadingSessions(false);
-      initialSessionsLoadedRef.current = true;
+      if (valid()) {
+        setLoadingSessions(false);
+        initialSessionsLoadedRef.current = true;
+      }
     }
   }, []);
 
   useEffect(() => {
     loadSessions();
-  }, [loadSessions]);
+  }, [loadSessions, sessionEpoch]);
 
   useEffect(() => {
     const loadTargets = async () => {
+      const epoch = getSessionEpoch();
       setLoadingTargets(true);
       try {
         const [clusterRes, hostRes] = await Promise.all([
@@ -189,12 +322,15 @@ export function useAiChat() {
           getHostList(),
         ]);
 
+        if (epoch !== getSessionEpoch()) return;
+
         const allHosts = hostRes.code === 200 ? (hostRes.data || []) : [];
         setHosts(allHosts);
 
         if (clusterRes.code === 200 && clusterRes.data) {
           const detailPromises = clusterRes.data.map(c => getClusterDetail(c.id));
           const details = await Promise.all(detailPromises);
+          if (epoch !== getSessionEpoch()) return;
           const clusterDetails = details
             .filter(d => d.code === 200 && d.data)
             .map(d => d.data as ClusterDetailVO);
@@ -203,11 +339,11 @@ export function useAiChat() {
       } catch {
         // ignore
       } finally {
-        setLoadingTargets(false);
+        if (epoch === getSessionEpoch()) setLoadingTargets(false);
       }
     };
     loadTargets();
-  }, []);
+  }, [sessionEpoch]);
 
   const targetTreeData = useMemo<TreeNode[]>(() => {
     const clusteredAgentIds = new Set<string>();
@@ -249,9 +385,12 @@ export function useAiChat() {
   }, [clusters, hosts]);
 
   const loadMessages = useCallback(async (sessionId: string) => {
+    const epoch = getSessionEpoch();
+    const version = viewVersionRef.current;
+    const isCurrentView = () => mountedRef.current && epoch === getSessionEpoch() && version === viewVersionRef.current && !deletedSessions.has(sessionId);
     try {
       const res = await getChatMessages(sessionId);
-      if (res.code === 200) {
+      if (isCurrentView() && res.code === 200) {
         const msgs = res.data || [];
         setMessages(msgs);
         const newProcessDataMap: Record<number, ProcessData> = {};
@@ -266,7 +405,7 @@ export function useAiChat() {
         setProcessDataMap(prev => ({ ...prev, ...newProcessDataMap }));
       }
     } catch {
-      message.error(t('chat.loadMessagesFailed'));
+      if (isCurrentView()) message.error(t('chat.loadMessagesFailed'));
     }
   }, []);
 
@@ -281,9 +420,11 @@ export function useAiChat() {
     setStreamingStepDescription('');
     setStreamingToolCalls([]);
     setPendingApprovals([]);
+    setApprovalLoading(false);
     userScrolledUpRef.current = false;
     setUserScrolledUp(false);
     setPlanConfirmationStatus(undefined);
+    setPlanId(undefined);
     setReviewResult(undefined);
     setParallelProgress([]);
     setPlanConfirmLoading(false);
@@ -292,8 +433,16 @@ export function useAiChat() {
   }, []);
 
   const handleSelectSession = useCallback((sessionId: string) => {
+    if (deletedSessions.has(sessionId)) return;
+    viewVersionRef.current++;
+    currentSessionIdRef.current = sessionId;
+    detachStream();
+    setMessages([]);
+    setProcessDataMap({});
+    setApprovalLoading(false);
+    setPlanConfirmLoading(false);
+    setCheckpointLoading(null);
     if (activeStream && activeStream.sessionId !== sessionId) {
-      activeStream.onStateChange = undefined;
       resetStreamingUI();
     }
 
@@ -303,7 +452,6 @@ export function useAiChat() {
       attachToActiveStream();
     } else if (completedStreamResult && completedStreamResult.sessionId === sessionId) {
       const result = completedStreamResult;
-      completedStreamResult = null;
       setMessages(result.messages);
       setProcessDataMap(prev => ({ ...prev, ...result.processDataMap }));
     } else {
@@ -312,27 +460,62 @@ export function useAiChat() {
   }, [loadMessages, resetStreamingUI, attachToActiveStream]);
 
   const handleNewChat = useCallback(() => {
-    if (activeStream) {
-      activeStream.onStateChange = undefined;
-    }
+    viewVersionRef.current++;
+    currentSessionIdRef.current = null;
+    detachStream();
+    setProcessDataMap({});
     resetStreamingUI();
     setCurrentSessionId(null);
     setMessages([]);
   }, [resetStreamingUI]);
 
-  const handleDeleteSession = useCallback(async (sessionId: string) => {
-    try {
-      await deleteChatSession(sessionId);
-      message.success(t('common.deleted'));
-      if (currentSessionId === sessionId) {
+  useEffect(() => {
+    const onDelete = (sessionId: string) => {
+      sessionsRequestRef.current++;
+      setLoadingSessions(false);
+      setSessions(prev => prev.filter(session => session.id !== sessionId));
+      void loadSessions();
+      if (currentSessionIdRef.current === sessionId) {
+        viewVersionRef.current++;
+        currentSessionIdRef.current = null;
+        detachStream();
+        resetStreamingUI();
         setCurrentSessionId(null);
         setMessages([]);
+        setProcessDataMap({});
       }
-      loadSessions();
-    } catch {
-      message.error(t('common.deleteFailed'));
+    };
+    deleteSubscribers.add(onDelete);
+    return () => { deleteSubscribers.delete(onDelete); };
+  }, [detachStream, resetStreamingUI, loadSessions]);
+
+  const handleDeleteSession = useCallback(async (sessionId: string) => {
+    if (activeStream && (!activeStream.sessionId || activeStream.sessionId === sessionId)) {
+      message.warning(t('chat.stopStreamBeforeDelete', 'Stop the active response before deleting this conversation.'));
+      return;
     }
-  }, [currentSessionId, loadSessions, t]);
+    const epoch = getSessionEpoch();
+    const deletion = {};
+    let finishDeletion!: () => void;
+    const done = new Promise<void>(resolve => { finishDeletion = resolve; });
+    pendingSessionDeletes.set(deletion, { sessionId, done });
+    try {
+      const res = await deleteChatSession(sessionId);
+      if (epoch !== getSessionEpoch()) return;
+      if (res.code !== 200) throw new Error('delete failed');
+      deletedSessions.add(sessionId);
+      if (latestStream?.sessionId === sessionId) latestStream = null;
+      if (completedStreamResult?.sessionId === sessionId) { completedStreamResult = null; completedStreamOwner = null; }
+      deleteSubscribers.forEach(listener => listener(sessionId));
+      if (!mountedRef.current) return;
+      message.success(t('common.deleted'));
+    } catch {
+      if (mountedRef.current && epoch === getSessionEpoch()) message.error(t('common.deleteFailed'));
+    } finally {
+      pendingSessionDeletes.delete(deletion);
+      finishDeletion();
+    }
+  }, [loadSessions, resetStreamingUI, t]);
 
   const handleProviderChange = useCallback((val: string) => {
     setProvider(val);
@@ -374,41 +557,66 @@ export function useAiChat() {
   }, []);
 
   const handleApprove = useCallback(async (taskId: string) => {
+    const stream = attachedStreamRef.current;
+    if (!stream || activeStream !== stream || !stream.pendingApprovals.some(a => a.taskId === taskId && a.status === 'pending')) return;
+    const epoch = getSessionEpoch(), version = viewVersionRef.current;
+    const valid = () => epoch === getSessionEpoch() && activeStream === stream;
+    const visible = () => valid() && mountedRef.current && version === viewVersionRef.current && attachedStreamRef.current === stream;
     setApprovalLoading(true);
     try {
       const res = await approveExecution(taskId);
+      if (!valid()) return;
       if (res.code === 200) {
-        message.success(t('chat.executionConfirmed'));
-        setPendingApprovals(prev => prev.map(a => a.taskId === taskId ? { ...a, status: 'approved' as const } : a));
-      } else {
+        stream.pendingApprovals = stream.pendingApprovals.map(a => a.taskId === taskId && a.status === 'pending' ? { ...a, status: 'approved' as const } : a);
+        notifyStream(stream);
+        if (visible()) message.success(t('chat.executionConfirmed'));
+      } else if (visible()) {
         message.error(res.message || t('common.error'));
       }
     } catch {
-      message.error(t('common.error'));
+      if (visible()) message.error(t('common.error'));
     } finally {
-      setApprovalLoading(false);
+      if (visible()) setApprovalLoading(false);
     }
   }, []);
 
   const handleReject = useCallback(async (taskId: string) => {
+    const stream = attachedStreamRef.current;
+    if (!stream || activeStream !== stream || !stream.pendingApprovals.some(a => a.taskId === taskId && a.status === 'pending')) return;
+    const epoch = getSessionEpoch(), version = viewVersionRef.current;
+    const valid = () => epoch === getSessionEpoch() && activeStream === stream;
+    const visible = () => valid() && mountedRef.current && version === viewVersionRef.current && attachedStreamRef.current === stream;
     setApprovalLoading(true);
     try {
       const res = await rejectExecution(taskId);
+      if (!valid()) return;
       if (res.code === 200) {
-        message.success(t('chat.executionCancelled'));
-        setPendingApprovals(prev => prev.map(a => a.taskId === taskId ? { ...a, status: 'rejected' as const } : a));
-      } else {
+        stream.pendingApprovals = stream.pendingApprovals.map(a => a.taskId === taskId && a.status === 'pending' ? { ...a, status: 'rejected' as const } : a);
+        notifyStream(stream);
+        if (visible()) message.success(t('chat.executionCancelled'));
+      } else if (visible()) {
         message.error(res.message || t('common.error'));
       }
     } catch {
-      message.error(t('common.error'));
+      if (visible()) message.error(t('common.error'));
     } finally {
-      setApprovalLoading(false);
+      if (visible()) setApprovalLoading(false);
     }
   }, [t]);
 
-  const doSend = useCallback(async (text: string) => {
-    if (!text || loading) return;
+  const viewVersion = viewVersionRef.current;
+  const doSend = useCallback(async (text: string, retryMessages?: AiChatMessage[]) => {
+    if (!mountedRef.current || sessionEpoch !== getSessionEpoch() || viewVersion !== viewVersionRef.current || currentSessionIdRef.current !== currentSessionId) return;
+    if (messages !== messagesRef.current) return;
+    if (!text || loading || activeStream) return;
+    if (currentSessionId && deletedSessions.has(currentSessionId)) return;
+    if (pendingSessionDeletes.size) {
+      message.warning(t('chat.waitForSessionDelete', 'Wait for the conversation deletion to finish before sending a message.'));
+      return;
+    }
+    viewVersionRef.current++;
+    const epoch = sessionEpoch;
+    const isCurrentEpoch = () => epoch === getSessionEpoch();
 
     const userMsg: AiChatMessage = {
       id: Date.now(),
@@ -418,7 +626,7 @@ export function useAiChat() {
       createdAt: new Date().toISOString(),
     };
 
-    const currentMessages = [...messages, userMsg];
+    const currentMessages = retryMessages ?? [...messages, userMsg];
     setMessages(currentMessages);
     setInputValue('');
     setLoading(true);
@@ -431,6 +639,9 @@ export function useAiChat() {
     setStreamingStepDescription('');
     setStreamingToolCalls([]);
     setPendingApprovals([]);
+
+    setPlanId(undefined);
+    setPlanConfirmationStatus(undefined);
 
     const actualTargetIds = selectedTargetIds.filter(id => !id.startsWith('cluster_') && id !== 'ungrouped');
 
@@ -463,23 +674,32 @@ export function useAiChat() {
       reviewResult: undefined,
       parallelProgress: [],
     };
+    completedStreamResult = null;
+    completedStreamOwner = null;
+    latestStream = singletonState;
     activeStream = singletonState;
+    attachedStreamRef.current = singletonState;
+    attachToActiveStream();
+
+    const singletonCheckpoints = new Set<number>();
+    streamCheckpoints.set(singletonState, singletonCheckpoints);
 
     const controller = sendChatStream(
       requestData,
       (event: AgentEvent) => {
+        if (!isCurrentEpoch() || activeStream !== singletonState) return;
         switch (event.type) {
           case 'SESSION':
             if (event.sessionId) {
               streamSessionId = event.sessionId;
               singletonState.sessionId = event.sessionId;
-              setCurrentSessionId(event.sessionId);
+
             }
             break;
           case 'PLAN':
             if (event.plan) {
               singletonState.plan = event.plan;
-              setStreamingPlan(event.plan);
+
             }
             break;
           case 'STEP_START':
@@ -487,21 +707,21 @@ export function useAiChat() {
               singletonState.stepIndex = event.stepIndex;
               singletonState.agent = event.agent || '';
               singletonState.stepDescription = event.stepDescription || '';
-              setStreamingStepIndex(event.stepIndex);
-              setStreamingAgent(event.agent || '');
-              setStreamingStepDescription(event.stepDescription || '');
+
+
+
             }
             break;
           case 'THINKING':
             if (event.agent !== 'system') {
               singletonState.thinkingLog = [...singletonState.thinkingLog, event.content || ''];
-              setStreamingThinkingLog(prev => [...prev, event.content || '']);
+
             }
             break;
           case 'TOOL_CALL': {
             const newCall = { toolName: event.toolName || '', toolArgs: event.toolArgs || '' };
             singletonState.toolCalls = [...singletonState.toolCalls, newCall];
-            setStreamingToolCalls(prev => [...prev, newCall]);
+
             break;
           }
           case 'TOOL_RESULT': {
@@ -510,28 +730,20 @@ export function useAiChat() {
               const realIdx = singletonState.toolCalls.length - 1 - ridx;
               singletonState.toolCalls = singletonState.toolCalls.map((tc, i) => i === realIdx ? { ...tc, toolResult: event.toolResult } : tc);
             }
-            setStreamingToolCalls(prev => {
-              const idx = [...prev].reverse().findIndex(tc => tc.toolName === event.toolName && !tc.toolResult);
-              if (idx >= 0) {
-                const ri = prev.length - 1 - idx;
-                return prev.map((tc, i) => i === ri ? { ...tc, toolResult: event.toolResult } : tc);
-              }
-              return prev;
-            });
             break;
           }
           case 'CONTENT':
             singletonState.content += (event.content || '');
-            setStreamingContent(singletonState.content);
+
             break;
           case 'STEP_COMPLETE':
             singletonState.agent = '';
             singletonState.stepDescription = '';
-            setStreamingAgent('');
-            setStreamingStepDescription('');
+
+
             break;
           case 'ERROR':
-            message.error(event.content || t('common.error'));
+            if (attachedStreamRef.current === singletonState) message.error(event.content || t('common.error'));
             break;
           case 'APPROVAL':
             if (event.approvalData && typeof event.approvalData.taskId === 'string') {
@@ -541,7 +753,7 @@ export function useAiChat() {
                 status: 'pending',
               };
               singletonState.pendingApprovals = [...singletonState.pendingApprovals, approval];
-              setPendingApprovals(prev => [...prev, approval]);
+
             }
             break;
           case 'DONE':
@@ -549,82 +761,88 @@ export function useAiChat() {
           case 'ITERATION_START': {
             const iterMsg = `--- ${t('ai.chat.iteration', { current: event.iteration ?? '?', max: event.maxIterations ?? '?' })} ---`;
             singletonState.thinkingLog = [...singletonState.thinkingLog, iterMsg];
-            setStreamingThinkingLog(prev => [...prev, iterMsg]);
+
             break;
           }
           case 'REFLECTION': {
             const refMsg = `[${t('ai.chat.reflection')}] ${event.content || ''}`;
             singletonState.thinkingLog = [...singletonState.thinkingLog, refMsg];
-            setStreamingThinkingLog(prev => [...prev, refMsg]);
+
             break;
           }
           case 'SUBTASK_STARTED': {
             const stAgent = event.metadata?.agentName || event.agent || '';
             const stMsg = `[${t('ai.chat.subtask_started', { agent: stAgent, description: event.content || '' })}]`;
             singletonState.thinkingLog = [...singletonState.thinkingLog, stMsg];
-            setStreamingThinkingLog(prev => [...prev, stMsg]);
+
             break;
           }
           case 'SUBTASK_COMPLETED': {
             const scMsg = `[${t('ai.chat.subtask_completed')}] ${event.content || ''}`;
             singletonState.thinkingLog = [...singletonState.thinkingLog, scMsg];
-            setStreamingThinkingLog(prev => [...prev, scMsg]);
+
             break;
           }
           case 'SUBTASK_PROGRESS': {
             const spMsg = `[${t('ai.chat.subtask_progress')}] ${event.content || ''}`;
             singletonState.thinkingLog = [...singletonState.thinkingLog, spMsg];
-            setStreamingThinkingLog(prev => [...prev, spMsg]);
+
             break;
           }
           case 'PLAN_AWAIT_CONFIRMATION':
+            singletonState.planId = event.planId;
+
             singletonState.planConfirmationStatus = 'awaiting';
             if (event.plan) {
               singletonState.plan = event.plan;
-              setStreamingPlan(event.plan);
+
             }
-            setPlanConfirmationStatus('awaiting');
+
             break;
           case 'PLAN_CONFIRMED':
+            singletonState.planId = undefined;
+
             singletonState.planConfirmationStatus = 'confirmed';
-            setPlanConfirmationStatus('confirmed');
+
             singletonState.thinkingLog = [...singletonState.thinkingLog, `[${t('ai.chat.plan_confirmed')}]`];
-            setStreamingThinkingLog(prev => [...prev, `[${t('ai.chat.plan_confirmed')}]`]);
+
             break;
           case 'PLAN_REJECTED':
+            singletonState.planId = undefined;
+
             singletonState.planConfirmationStatus = 'rejected';
-            setPlanConfirmationStatus('rejected');
+
             singletonState.thinkingLog = [...singletonState.thinkingLog, `[${t('ai.chat.plan_rejected')}]`];
-            setStreamingThinkingLog(prev => [...prev, `[${t('ai.chat.plan_rejected')}]`]);
+
             break;
           case 'STEP_RETRY': {
             const retryMsg = `[${t('ai.chat.step_retry')}] Step ${event.stepIndex ?? '?'}: ${event.content || ''}`;
             singletonState.thinkingLog = [...singletonState.thinkingLog, retryMsg];
-            setStreamingThinkingLog(prev => [...prev, retryMsg]);
+
             break;
           }
           case 'PLAN_SUMMARY':
             if (event.content) {
               singletonState.content += event.content;
-              setStreamingContent(singletonState.content);
+
             }
             if (event.plan) {
               singletonState.plan = event.plan;
-              setStreamingPlan(event.plan);
+
             }
             break;
           case 'REVIEW_START': {
             const rsMsg = `[${t('ai.chat.review_start')}]`;
             singletonState.thinkingLog = [...singletonState.thinkingLog, rsMsg];
-            setStreamingThinkingLog(prev => [...prev, rsMsg]);
+
             break;
           }
           case 'REVIEW_COMPLETE': {
             singletonState.reviewResult = event.content || '';
-            setReviewResult(event.content || '');
+
             const rcMsg = `[${t('ai.chat.review_complete')}] ${event.content || ''}`;
             singletonState.thinkingLog = [...singletonState.thinkingLog, rcMsg];
-            setStreamingThinkingLog(prev => [...prev, rcMsg]);
+
             break;
           }
           case 'PARALLEL_START': {
@@ -632,10 +850,10 @@ export function useAiChat() {
             const total = event.totalTasks ?? 0;
             const newProgress = [...(singletonState.parallelProgress || []), { group: pg, completed: 0, total }];
             singletonState.parallelProgress = newProgress;
-            setParallelProgress([...newProgress]);
+
             const psMsg = `[${t('ai.chat.parallel_start')}] Group ${pg}: ${total} tasks`;
             singletonState.thinkingLog = [...singletonState.thinkingLog, psMsg];
-            setStreamingThinkingLog(prev => [...prev, psMsg]);
+
             break;
           }
           case 'PARALLEL_PROGRESS': {
@@ -646,7 +864,7 @@ export function useAiChat() {
               p.group === ppg ? { ...p, completed: ppCompleted, total: ppTotal } : p
             );
             singletonState.parallelProgress = updatedProgress;
-            setParallelProgress([...updatedProgress]);
+
             break;
           }
           case 'PARALLEL_COMPLETE': {
@@ -655,42 +873,42 @@ export function useAiChat() {
               p.group === pcg ? { ...p, completed: p.total } : p
             );
             singletonState.parallelProgress = updatedPc;
-            setParallelProgress([...updatedPc]);
+
             const pcMsg = `[${t('ai.chat.parallel_complete')}] Group ${pcg}`;
             singletonState.thinkingLog = [...singletonState.thinkingLog, pcMsg];
-            setStreamingThinkingLog(prev => [...prev, pcMsg]);
+
             break;
           }
           case 'MEMORY_RETRIEVED': {
             const memMsg = `[${t('ai.chat.memory_retrieved')}] ${event.content || ''}`;
             singletonState.thinkingLog = [...singletonState.thinkingLog, memMsg];
-            setStreamingThinkingLog(prev => [...prev, memMsg]);
+
             break;
           }
           case 'SOP_MATCHED': {
             const sopMsg = `[${t('ai.chat.sop_matched')}] ${event.content || ''}`;
             singletonState.thinkingLog = [...singletonState.thinkingLog, sopMsg];
-            setStreamingThinkingLog(prev => [...prev, sopMsg]);
+
             break;
           }
           case 'SOP_APPLIED': {
             const sopAppliedMsg = `[${t('ai.chat.sop_applied')}] SOP #${event.content || ''}`;
             singletonState.thinkingLog = [...singletonState.thinkingLog, sopAppliedMsg];
-            setStreamingThinkingLog(prev => [...prev, sopAppliedMsg]);
+
             break;
           }
           case 'TASK_CLASSIFIED': {
             const taskClassifiedMsg = `[${t('ai.chat.task_classified')}] ${event.content || ''}`;
             singletonState.thinkingLog = [...singletonState.thinkingLog, taskClassifiedMsg];
-            setStreamingThinkingLog(prev => [...prev, taskClassifiedMsg]);
+
             break;
           }
           case 'STEP_CHECKPOINT': {
             const checkpointMsg = `[${t('ai.chat.step_checkpoint')}] Step ${event.stepIndex}: ${event.stepDescription || ''}`;
             singletonState.thinkingLog = [...singletonState.thinkingLog, checkpointMsg];
-            setStreamingThinkingLog(prev => [...prev, checkpointMsg]);
+
             if (event.stepIndex !== undefined) {
-              setCheckpointSteps(prev => new Set(prev).add(event.stepIndex!));
+              singletonCheckpoints.add(event.stepIndex);
             }
             break;
           }
@@ -698,28 +916,40 @@ export function useAiChat() {
             const condResult = event.metadata?.result === 'true' ? '✓' : '✗';
             const condMsg = `[${t('ai.chat.step_condition_eval')}] Step ${event.stepIndex}: ${event.content || ''} → ${condResult}`;
             singletonState.thinkingLog = [...singletonState.thinkingLog, condMsg];
-            setStreamingThinkingLog(prev => [...prev, condMsg]);
+
             break;
           }
           case 'VARIABLE_SET': {
             const varMsg = `[${t('ai.chat.variable_set')}] ${event.metadata?.varName || ''} = ${event.content || ''}`;
             singletonState.thinkingLog = [...singletonState.thinkingLog, varMsg];
-            setStreamingThinkingLog(prev => [...prev, varMsg]);
+
             break;
           }
         }
-        if (singletonState.onStateChange) {
-          singletonState.onStateChange();
-        }
+        notifyStream(singletonState);
       },
       (err: Error) => {
-        message.error(t('chat.streamError') + err.message);
+        if (!isCurrentEpoch() || activeStream !== singletonState) return;
         singletonState.isStreaming = false;
+        const result: CompletedStreamResult = {
+          sessionId: streamSessionId,
+          messages: singletonState.content ? [...singletonState.messages, {
+            id: Date.now() + 1, sessionId: streamSessionId, role: 'assistant',
+            content: singletonState.content, createdAt: new Date().toISOString(),
+          }] : [...singletonState.messages],
+          processDataMap: {},
+        };
+        streamResults.set(singletonState, result);
+        completedStreamResult = result;
+        completedStreamOwner = singletonState;
+        if (streamSubscribers.get(singletonState)?.size) {
+          notifyStream(singletonState);
+          message.error(t('chat.streamError') + err.message);
+        }
         activeStream = null;
-        setLoading(false);
-        setIsStreaming(false);
       },
       () => {
+        if (!isCurrentEpoch() || activeStream !== singletonState) return;
         singletonState.isStreaming = false;
 
         const tempMsgId = Date.now() + 1;
@@ -745,15 +975,22 @@ export function useAiChat() {
           };
         }
 
-        const isViewingThisSession = currentSessionIdRef.current === streamSessionId;
+        const result = { sessionId: streamSessionId, messages: [...singletonState.messages], processDataMap: localProcessData };
+        streamResults.set(singletonState, result);
+        completedStreamOwner = singletonState;
+        completedStreamResult = result;
+        const hasSubscriber = !!streamSubscribers.get(singletonState)?.size;
+        notifyStream(singletonState);
+        const isViewingThisSession = hasSubscriber || (mountedRef.current && attachedStreamRef.current === singletonState);
 
-        if (isViewingThisSession) {
+        if (isViewingThisSession && mountedRef.current && currentSessionIdRef.current === streamSessionId) {
           setMessages([...singletonState.messages]);
           if (Object.keys(localProcessData).length > 0) {
             setProcessDataMap(prev => ({ ...prev, ...localProcessData }));
           }
           resetStreamingUI();
-        } else {
+        } else if (!isViewingThisSession) {
+          completedStreamOwner = singletonState;
           completedStreamResult = {
             sessionId: streamSessionId,
             messages: [...singletonState.messages],
@@ -762,12 +999,25 @@ export function useAiChat() {
         }
 
         activeStream = null;
-        loadSessions();
+        if (isViewingThisSession) attachedStreamRef.current = null;
+        if (mountedRef.current) loadSessions();
 
-        const finalize = () => {
-          if (streamSessionId) {
-            getChatMessages(streamSessionId).then(res => {
-              if (res.code === 200) {
+        const finalizeVersion = viewVersionRef.current;
+        const finalize = async () => {
+          const valid = () => isCurrentEpoch() && latestStream === singletonState && !!streamSessionId && !deletedSessions.has(streamSessionId);
+          const waitForDeletes = async () => {
+            while (valid()) {
+              const pending = [...pendingSessionDeletes.values()].filter(deletion => deletion.sessionId === streamSessionId);
+              if (!pending.length) return;
+              await Promise.all(pending.map(deletion => deletion.done));
+            }
+          };
+          await waitForDeletes();
+          if (valid()) {
+            try {
+              const res = await getChatMessages(streamSessionId);
+              await waitForDeletes();
+              if (valid() && res.code === 200) {
                 const msgs = res.data || [];
                 const newProcessDataMap: Record<number, ProcessData> = {};
                 for (const msg of msgs) {
@@ -778,7 +1028,7 @@ export function useAiChat() {
                     } catch { }
                   }
                 }
-                if (currentSessionIdRef.current === streamSessionId) {
+                if (mountedRef.current && viewVersionRef.current === finalizeVersion && currentSessionIdRef.current === streamSessionId && !activeStream) {
                   // Only update messages if server returned data, otherwise preserve local state
                   // This prevents conversation from disappearing when server returns empty array
                   if (msgs.length > 0) {
@@ -787,19 +1037,20 @@ export function useAiChat() {
                   if (Object.keys(newProcessDataMap).length > 0) {
                     setProcessDataMap(prev => ({ ...prev, ...newProcessDataMap }));
                   }
-                } else if (completedStreamResult && completedStreamResult.sessionId === streamSessionId) {
+                }
+                if (!activeStream && completedStreamOwner === singletonState && completedStreamResult && completedStreamResult.sessionId === streamSessionId) {
                   completedStreamResult = {
                     sessionId: streamSessionId,
-                    messages: msgs,
-                    processDataMap: newProcessDataMap,
+                    messages: msgs.length ? msgs : completedStreamResult.messages,
+                    processDataMap: { ...completedStreamResult.processDataMap, ...newProcessDataMap },
                   };
                 }
               }
-            }).catch(() => {});
+            } catch { /* Ignore failed finalization. */ }
           }
         };
 
-        if (hasProcessData && streamSessionId) {
+        if (isCurrentEpoch() && hasProcessData && streamSessionId) {
           const processDataJson = JSON.stringify({
             plan: singletonState.plan,
             thinkingLog: [...singletonState.thinkingLog],
@@ -811,67 +1062,52 @@ export function useAiChat() {
           finalize();
         }
 
-        setTimeout(() => { inputRef.current?.focus(); }, 100);
+        setTimeout(() => { if (isCurrentEpoch()) inputRef.current?.focus(); }, 100);
       },
     );
 
     singletonState.controller = controller;
     abortRef.current = controller;
-  }, [loading, currentSessionId, provider, model, enableTools, selectedTargetIds, loadSessions, resetStreamingUI, messages, t]);
+  }, [sessionEpoch, viewVersion, loading, currentSessionId, provider, model, enableTools, selectedTargetIds, loadSessions, resetStreamingUI, attachToActiveStream, messages, t]);
 
   const handleSend = useCallback(() => {
     doSend(inputValue.trim());
   }, [inputValue, doSend]);
 
   const handleRetry = useCallback(() => {
-    const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
-    if (lastUserMsg) {
-      setMessages(prev => {
-        const idx = prev.length - 1;
-        if (idx >= 0 && prev[idx].role === 'assistant') {
-          return prev.slice(0, idx);
-        }
-        return prev;
-      });
-      doSend(lastUserMsg.content);
+    if (messages !== messagesRef.current) return;
+    const lastUserIndex = messages.length - 1 - [...messages].reverse().findIndex(m => m.role === 'user');
+    if (lastUserIndex < messages.length) {
+      doSend(messages[lastUserIndex].content, messages.slice(0, lastUserIndex + 1));
     }
   }, [messages, doSend]);
 
   const handleStop = useCallback(() => {
-    abortRef.current?.abort();
-    const stoppedContent = activeStream ? activeStream.content : streamingContent;
-    const plan = activeStream ? activeStream.plan : streamingPlanRef.current;
-    const thinkingLog = activeStream ? activeStream.thinkingLog : streamingThinkingLogRef.current;
-    const toolCalls = activeStream ? activeStream.toolCalls : streamingToolCallsRef.current;
-
+    if (!activeStream || attachedStreamRef.current !== activeStream) return;
+    const stoppedStream = activeStream;
+    viewVersionRef.current++;
+    stoppedStream.isStreaming = false;
     const msgId = Date.now() + 1;
-    if (stoppedContent) {
-      const assistantMsg: AiChatMessage = {
-        id: msgId,
-        sessionId: currentSessionId || '',
-        role: 'assistant',
-        content: stoppedContent + '\n\n*[' + t('chat.stopped') + ']*',
+    const stoppedMessages = [...stoppedStream.messages];
+    if (stoppedStream.content) {
+      stoppedMessages.push({
+        id: msgId, sessionId: stoppedStream.sessionId, role: 'assistant',
+        content: stoppedStream.content + '\n\n*[' + t('chat.stopped') + ']*',
         createdAt: new Date().toISOString(),
-      };
-      setMessages(prev => [...prev, assistantMsg]);
+      });
     }
-    if (plan || thinkingLog.length > 0 || toolCalls.length > 0) {
-      setProcessDataMap(prev => ({
-        ...prev,
-        [msgId]: { plan, thinkingLog: [...thinkingLog], toolCalls: [...toolCalls] },
-      }));
+    const processDataMap: Record<number, ProcessData> = {};
+    if (stoppedStream.plan || stoppedStream.thinkingLog.length || stoppedStream.toolCalls.length) {
+      processDataMap[msgId] = { plan: stoppedStream.plan, thinkingLog: [...stoppedStream.thinkingLog], toolCalls: [...stoppedStream.toolCalls] };
     }
+    const result = { sessionId: stoppedStream.sessionId, messages: stoppedMessages, processDataMap };
+    streamResults.set(stoppedStream, result);
+    completedStreamResult = result;
+    completedStreamOwner = stoppedStream;
+    notifyStream(stoppedStream);
     activeStream = null;
-    setStreamingContent('');
-    setStreamingPlan(null);
-    setStreamingStepIndex(-1);
-    setStreamingThinkingLog([]);
-    setStreamingAgent('');
-    setStreamingStepDescription('');
-    setStreamingToolCalls([]);
-    setLoading(false);
-    setIsStreaming(false);
-  }, [streamingContent, currentSessionId]);
+    stoppedStream.controller?.abort();
+  }, [currentSessionId, resetStreamingUI, t]);
 
   const handleSuggestedPrompt = useCallback((text: string) => {
     doSend(text);
@@ -885,68 +1121,92 @@ export function useAiChat() {
   }, [handleSend]);
 
   const handleConfirmPlan = useCallback(async () => {
-    if (!currentSessionId) return;
+    const stream = attachedStreamRef.current;
+    if (!currentSessionId || !planId || !stream || activeStream !== stream || stream.planId !== planId || stream.planConfirmationStatus !== 'awaiting') return;
+    const epoch = getSessionEpoch(), version = viewVersionRef.current;
+    const visible = () => epoch === getSessionEpoch() && activeStream === stream && mountedRef.current && version === viewVersionRef.current && attachedStreamRef.current === stream;
     setPlanConfirmLoading(true);
     try {
-      await confirmPlan(currentSessionId);
+      const res = await confirmPlan(currentSessionId, planId);
+      if (epoch === getSessionEpoch() && activeStream === stream && res.code === 200 && stream.planId === planId && stream.planConfirmationStatus === 'awaiting') {
+        stream.planId = undefined;
+        stream.planConfirmationStatus = 'confirmed';
+        notifyStream(stream);
+      }
+      if (visible() && res.code !== 200) message.error(t('common.error'));
     } catch {
-      message.error(t('common.error'));
+      if (visible()) message.error(t('common.error'));
     } finally {
-      setPlanConfirmLoading(false);
+      if (visible()) setPlanConfirmLoading(false);
     }
-  }, [currentSessionId, t]);
+  }, [currentSessionId, planId, t]);
 
   const handleRejectPlan = useCallback(async () => {
-    if (!currentSessionId) return;
+    const stream = attachedStreamRef.current;
+    if (!currentSessionId || !planId || !stream || activeStream !== stream || stream.planId !== planId || stream.planConfirmationStatus !== 'awaiting') return;
+    const epoch = getSessionEpoch(), version = viewVersionRef.current;
+    const visible = () => epoch === getSessionEpoch() && activeStream === stream && mountedRef.current && version === viewVersionRef.current && attachedStreamRef.current === stream;
     setPlanConfirmLoading(true);
     try {
-      await rejectPlan(currentSessionId);
+      const res = await rejectPlan(currentSessionId, planId);
+      if (epoch === getSessionEpoch() && activeStream === stream && res.code === 200 && stream.planId === planId && stream.planConfirmationStatus === 'awaiting') {
+        stream.planId = undefined;
+        stream.planConfirmationStatus = 'rejected';
+        notifyStream(stream);
+      }
+      if (visible() && res.code !== 200) message.error(t('common.error'));
     } catch {
-      message.error(t('common.error'));
+      if (visible()) message.error(t('common.error'));
     } finally {
-      setPlanConfirmLoading(false);
+      if (visible()) setPlanConfirmLoading(false);
     }
-  }, [currentSessionId, t]);
+  }, [currentSessionId, planId, t]);
 
   const handleApproveCheckpoint = useCallback(async (stepIndex: number) => {
-    if (!currentSessionId) return;
+    const stream = attachedStreamRef.current;
+    const checkpoints = stream && streamCheckpoints.get(stream);
+    if (!currentSessionId || !stream || activeStream !== stream || !checkpoints?.has(stepIndex)) return;
+    const epoch = getSessionEpoch(), version = viewVersionRef.current;
+    const valid = () => epoch === getSessionEpoch() && activeStream === stream;
+    const visible = () => valid() && mountedRef.current && version === viewVersionRef.current && attachedStreamRef.current === stream;
     setCheckpointLoading(stepIndex);
     try {
       const res = await approveCheckpoint(currentSessionId, stepIndex);
+      if (!valid()) return;
       if (res.code === 200) {
-        setCheckpointSteps(prev => {
-          const next = new Set(prev);
-          next.delete(stepIndex);
-          return next;
-        });
-      } else {
+        checkpoints.delete(stepIndex);
+        notifyStream(stream);
+      } else if (visible()) {
         message.error(t('dag.checkpoint.approveFailed', 'Approve failed'));
       }
     } catch {
-      message.error(t('dag.checkpoint.approveFailed', 'Approve failed'));
+      if (visible()) message.error(t('dag.checkpoint.approveFailed', 'Approve failed'));
     } finally {
-      setCheckpointLoading(null);
+      if (visible()) setCheckpointLoading(null);
     }
   }, [currentSessionId, t]);
 
   const handleRejectCheckpoint = useCallback(async (stepIndex: number) => {
-    if (!currentSessionId) return;
+    const stream = attachedStreamRef.current;
+    const checkpoints = stream && streamCheckpoints.get(stream);
+    if (!currentSessionId || !stream || activeStream !== stream || !checkpoints?.has(stepIndex)) return;
+    const epoch = getSessionEpoch(), version = viewVersionRef.current;
+    const valid = () => epoch === getSessionEpoch() && activeStream === stream;
+    const visible = () => valid() && mountedRef.current && version === viewVersionRef.current && attachedStreamRef.current === stream;
     setCheckpointLoading(stepIndex);
     try {
       const res = await rejectCheckpoint(currentSessionId, stepIndex);
+      if (!valid()) return;
       if (res.code === 200) {
-        setCheckpointSteps(prev => {
-          const next = new Set(prev);
-          next.delete(stepIndex);
-          return next;
-        });
-      } else {
+        checkpoints.delete(stepIndex);
+        notifyStream(stream);
+      } else if (visible()) {
         message.error(t('dag.checkpoint.rejectFailed', 'Reject failed'));
       }
     } catch {
-      message.error(t('dag.checkpoint.rejectFailed', 'Reject failed'));
+      if (visible()) message.error(t('dag.checkpoint.rejectFailed', 'Reject failed'));
     } finally {
-      setCheckpointLoading(null);
+      if (visible()) setCheckpointLoading(null);
     }
   }, [currentSessionId, t]);
 

@@ -67,6 +67,10 @@ test_*.js
 test_*.mjs
 update_script_workbench.js
 *.png
+# Playwright 视觉回归基线（唯一允许入库的 png）
+# 必须与 easyshell-web/playwright.config.ts 的 snapshotDir 配对：
+# snapshotDir 默认落在 tests/**/*-snapshots/，那里仍被上面的 *.png 吃掉。
+!easyshell-web/.visual-baselines/**/*.png
 package.json
 package-lock.json
 
