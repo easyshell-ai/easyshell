@@ -1,4 +1,7 @@
 {
+  "channelIdentity": {
+    "temporarilyUnavailable": "渠道 AI 暂不可用，请稍后重试。"
+  },
   "hostPermissions": {
     "title": "主机权限",
     "independentPermissionsNotice": "三种权限相互独立，授予一项不自动授予其他两项。",

@@ -1,4 +1,7 @@
 {
+  "channelIdentity": {
+    "temporarilyUnavailable": "Channel AI is temporarily unavailable."
+  },
   "hostPermissions": {
     "title": "Host permissions",
     "independentPermissionsNotice": "The three permissions are independent; granting one does not automatically grant the other two.",
