@@ -1,6 +1,6 @@
 import { useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Button, Collapse, Tag, Tooltip } from 'antd';
+import { Button, Collapse, Tag, Tooltip, theme } from 'antd';
 import {
   CheckCircleOutlined,
   ClockCircleOutlined,
@@ -18,16 +18,19 @@ import type { ApprovalRequest } from './types';
 import type { ExecutionPlan } from '../../../types';
 
 export const StepStatusIcon: React.FC<{ status: string }> = ({ status }) => {
+  const { token } = theme.useToken();
   switch (status) {
-    case 'completed': return <CheckCircleOutlined style={{ color: '#52c41a' }} />;
-    case 'running': return <SyncOutlined spin style={{ color: '#1677ff' }} />;
-    case 'failed': return <StopOutlined style={{ color: '#ff4d4f' }} />;
-    case 'skipped': return <MinusCircleOutlined style={{ color: '#999' }} />;
-    default: return <ClockCircleOutlined style={{ color: '#d9d9d9' }} />;
+    case 'completed': return <CheckCircleOutlined style={{ color: token.colorSuccess }} />;
+    case 'running': return <SyncOutlined spin style={{ color: token.colorPrimary }} />;
+    case 'failed': return <StopOutlined style={{ color: token.colorError }} />;
+    case 'skipped': return <MinusCircleOutlined style={{ color: token.colorTextTertiary }} />;
+    default: return <ClockCircleOutlined style={{ color: token.colorTextQuaternary }} />;
   }
 };
 
-export const ExecutionPlanView: React.FC<{ plan: ExecutionPlan; currentStepIndex: number }> = ({ plan, currentStepIndex }) => (
+export const ExecutionPlanView: React.FC<{ plan: ExecutionPlan; currentStepIndex: number }> = ({ plan, currentStepIndex }) => {
+  const { token } = theme.useToken();
+  return (
   <div style={{ marginBottom: 12 }}>
     <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>{plan.summary}</div>
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -41,15 +44,15 @@ export const ExecutionPlanView: React.FC<{ plan: ExecutionPlan; currentStepIndex
               alignItems: 'center',
               gap: 8,
               padding: '4px 8px',
-              borderLeft: status === 'running' ? '3px solid #1677ff' : '3px solid transparent',
+              borderLeft: status === 'running' ? `3px solid ${token.colorPrimary}` : '3px solid transparent',
               borderRadius: 2,
-              background: status === 'running' ? 'rgba(22,119,255,0.04)' : 'transparent',
+              background: status === 'running' ? token.colorPrimaryBg : 'transparent',
               fontSize: 13,
               flexWrap: 'wrap',
             }}
           >
             <StepStatusIcon status={status} />
-            <span style={{ color: '#999', fontSize: 12, minWidth: 16 }}>#{step.index + 1}</span>
+            <span style={{ color: token.colorTextTertiary, fontSize: 12, minWidth: 16 }}>#{step.index + 1}</span>
             <span style={{ flex: 1, minWidth: 0 }}>{step.description}</span>
             {step.parallelGroup != null && (
               <Tag color="blue" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', margin: 0 }}>
@@ -61,8 +64,8 @@ export const ExecutionPlanView: React.FC<{ plan: ExecutionPlan; currentStepIndex
                 fontSize: 11,
                 padding: '1px 6px',
                 borderRadius: 4,
-                background: 'rgba(22,119,255,0.08)',
-                color: '#1677ff',
+                background: token.colorPrimaryBg,
+                color: token.colorPrimary,
               }}>
                 {step.agent}
               </span>
@@ -73,12 +76,12 @@ export const ExecutionPlanView: React.FC<{ plan: ExecutionPlan; currentStepIndex
               </Tag>
             ))}
             {step.error && (
-              <span style={{ fontSize: 11, color: '#ff4d4f', maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <span style={{ fontSize: 11, color: token.colorError, maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {step.error}
               </span>
             )}
             {step.result && !step.error && (
-              <span style={{ fontSize: 11, color: '#999', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <span style={{ fontSize: 11, color: token.colorTextTertiary, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {step.result}
               </span>
             )}
@@ -96,25 +99,27 @@ export const ExecutionPlanView: React.FC<{ plan: ExecutionPlan; currentStepIndex
       })}
     </div>
   </div>
-);
+  );
+};
 
 export const ToolCallView: React.FC<{ toolName: string; toolArgs: string; toolResult?: string }> = ({ toolName, toolArgs, toolResult }) => {
   const { t } = useTranslation();
+  const { token } = theme.useToken();
   const isComplete = toolResult !== undefined;
   return (
     <Collapse
       size="small"
-      style={{ marginBottom: 6, border: isComplete ? '1px solid #d9f7be' : '1px solid #ffe58f', overflow: 'hidden', width: '100%' }}
+      style={{ marginBottom: 6, border: `1px solid ${isComplete ? token.colorSuccessBorder : token.colorWarningBorder}`, overflow: 'hidden', width: '100%' }}
       items={[{
         key: '1',
         label: (
           <span style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
-            <ThunderboltOutlined style={{ color: isComplete ? '#52c41a' : '#faad14' }} />
+            <ThunderboltOutlined style={{ color: isComplete ? token.colorSuccess : token.colorWarning }} />
             <span style={{ fontFamily: "'SFMono-Regular', Consolas, monospace", fontWeight: 500 }}>{toolName}</span>
             {isComplete ? (
-              <CheckCircleOutlined style={{ color: '#52c41a', marginLeft: 'auto' }} />
+              <CheckCircleOutlined style={{ color: token.colorSuccess, marginLeft: 'auto' }} />
             ) : (
-              <SyncOutlined spin style={{ color: '#1677ff', marginLeft: 'auto' }} />
+              <SyncOutlined spin style={{ color: token.colorPrimary, marginLeft: 'auto' }} />
             )}
           </span>
         ),
@@ -122,9 +127,10 @@ export const ToolCallView: React.FC<{ toolName: string; toolArgs: string; toolRe
           <div style={{ fontSize: 12 }}>
             {toolArgs && (
               <div style={{ marginBottom: toolResult ? 8 : 0 }}>
-                <div style={{ color: '#999', marginBottom: 2 }}>{t('components.toolCall.params')}</div>
+                <div style={{ color: token.colorTextTertiary, marginBottom: 2 }}>{t('components.toolCall.params')}</div>
                 <pre style={{
-                  background: '#f5f5f5',
+                  background: token.colorFillTertiary,
+                  color: token.colorText,
                   padding: 8,
                   borderRadius: 4,
                   fontSize: 11,
@@ -139,9 +145,10 @@ export const ToolCallView: React.FC<{ toolName: string; toolArgs: string; toolRe
             )}
             {toolResult !== undefined && (
               <div>
-                <div style={{ color: '#999', marginBottom: 2 }}>{t('components.toolCall.result')}</div>
+                <div style={{ color: token.colorTextTertiary, marginBottom: 2 }}>{t('components.toolCall.result')}</div>
                 <pre style={{
-                  background: '#f5f5f5',
+                  background: token.colorFillTertiary,
+                  color: token.colorText,
                   padding: 8,
                   borderRadius: 4,
                   fontSize: 11,
@@ -169,6 +176,7 @@ export const ThinkingLog: React.FC<{ messages: string[] }> = ({ messages }) => {
     }
   }, [messages]);
 
+  const { token } = theme.useToken();
   if (messages.length === 0) return null;
 
   // Helper: check if msg starts with any of the given bracketed keywords
@@ -185,95 +193,95 @@ export const ThinkingLog: React.FC<{ messages: string[] }> = ({ messages }) => {
     if (msg.startsWith('---') && msg.endsWith('---')) {
       return {
         icon: null,
-        color: '#1677ff',
+        color: token.colorPrimary,
         fontWeight: 600,
-        borderBottom: '1px solid rgba(22,119,255,0.2)',
+        borderBottom: `1px solid ${token.colorPrimaryBorder}`,
       };
     }
     // [反思] / [Reflection]
     if (bracketMatch(msg, '反思', 'Reflection')) {
       return {
-        icon: <ExclamationCircleOutlined style={{ color: '#faad14', fontSize: 10, flexShrink: 0 }} />,
-        color: '#d48806',
+        icon: <ExclamationCircleOutlined style={{ color: token.colorWarning, fontSize: 10, flexShrink: 0 }} />,
+        color: token.colorWarning,
       };
     }
     // [子任务完成] / [Subtask completed] — must check before subtask started
     if (bracketMatch(msg, '子任务完成', 'Subtask completed')) {
       return {
-        icon: <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 10, flexShrink: 0 }} />,
-        color: '#52c41a',
+        icon: <CheckCircleOutlined style={{ color: token.colorSuccess, fontSize: 10, flexShrink: 0 }} />,
+        color: token.colorSuccess,
       };
     }
     // [子任务进度] / [Subtask progress]
     if (bracketMatch(msg, '子任务进度', 'Subtask progress')) {
       return {
-        icon: <SyncOutlined spin={isLatest} style={{ color: '#999', fontSize: 10, flexShrink: 0 }} />,
-        color: '#999',
+        icon: <SyncOutlined spin={isLatest} style={{ color: token.colorTextTertiary, fontSize: 10, flexShrink: 0 }} />,
+        color: token.colorTextTertiary,
       };
     }
     // [子任务: ...] / [Subtask: ...]
     if (bracketMatch(msg, '子任务', 'Subtask')) {
       return {
-        icon: <RobotOutlined style={{ color: '#1677ff', fontSize: 10, flexShrink: 0 }} />,
-        color: '#1677ff',
+        icon: <RobotOutlined style={{ color: token.colorPrimary, fontSize: 10, flexShrink: 0 }} />,
+        color: token.colorPrimary,
       };
     }
     // Phase 2: [计划已确认] / [Plan confirmed]
     if (bracketMatch(msg, '计划已确认', 'Plan confirmed')) {
       return {
-        icon: <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 10, flexShrink: 0 }} />,
-        color: '#52c41a',
+        icon: <CheckCircleOutlined style={{ color: token.colorSuccess, fontSize: 10, flexShrink: 0 }} />,
+        color: token.colorSuccess,
       };
     }
     // Phase 2: [计划已拒绝] / [Plan rejected]
     if (bracketMatch(msg, '计划已拒绝', 'Plan rejected')) {
       return {
-        icon: <StopOutlined style={{ color: '#ff4d4f', fontSize: 10, flexShrink: 0 }} />,
-        color: '#ff4d4f',
+        icon: <StopOutlined style={{ color: token.colorError, fontSize: 10, flexShrink: 0 }} />,
+        color: token.colorError,
       };
     }
     // Phase 2: [步骤重试] / [Step retry]
     if (bracketMatch(msg, '步骤重试', 'Step retry')) {
       return {
-        icon: <ReloadOutlined style={{ color: '#fa8c16', fontSize: 10, flexShrink: 0 }} />,
-        color: '#fa8c16',
+        icon: <ReloadOutlined style={{ color: token.colorWarning, fontSize: 10, flexShrink: 0 }} />,
+        color: token.colorWarning,
       };
     }
     // Phase 2: [开始审查] / [Review started]
     if (bracketMatch(msg, '开始审查', 'Review started')) {
       return {
-        icon: <AuditOutlined style={{ color: '#1677ff', fontSize: 10, flexShrink: 0 }} />,
-        color: '#1677ff',
+        icon: <AuditOutlined style={{ color: token.colorPrimary, fontSize: 10, flexShrink: 0 }} />,
+        color: token.colorPrimary,
       };
     }
     // Phase 2: [审查完成] / [Review complete]
     if (bracketMatch(msg, '审查完成', 'Review complete')) {
       const pass = msg.includes('PASS') || msg.includes('通过');
       return {
-        icon: <AuditOutlined style={{ color: pass ? '#52c41a' : '#ff4d4f', fontSize: 10, flexShrink: 0 }} />,
-        color: pass ? '#52c41a' : '#ff4d4f',
+        icon: <AuditOutlined style={{ color: pass ? token.colorSuccess : token.colorError, fontSize: 10, flexShrink: 0 }} />,
+        color: pass ? token.colorSuccess : token.colorError,
       };
     }
     // Phase 2: [并行任务开始] / [Parallel tasks started]
     if (bracketMatch(msg, '并行任务开始', 'Parallel tasks started')) {
       return {
-        icon: <ThunderboltOutlined style={{ color: '#1677ff', fontSize: 10, flexShrink: 0 }} />,
-        color: '#1677ff',
+        icon: <ThunderboltOutlined style={{ color: token.colorPrimary, fontSize: 10, flexShrink: 0 }} />,
+        color: token.colorPrimary,
       };
     }
     // Phase 2: [并行任务完成] / [Parallel tasks complete]
     if (bracketMatch(msg, '并行任务完成', 'Parallel tasks complete')) {
       return {
-        icon: <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 10, flexShrink: 0 }} />,
-        color: '#52c41a',
+        icon: <CheckCircleOutlined style={{ color: token.colorSuccess, fontSize: 10, flexShrink: 0 }} />,
+        color: token.colorSuccess,
       };
     }
     // Default
     return {
       icon: isLatest
-        ? <SyncOutlined spin style={{ color: '#1677ff', fontSize: 10, flexShrink: 0 }} />
-        : <CheckCircleOutlined style={{ color: '#d9d9d9', fontSize: 10, flexShrink: 0 }} />,
-      color: isLatest ? '#666' : '#bbb',
+        ? <SyncOutlined spin style={{ color: token.colorPrimary, fontSize: 10, flexShrink: 0 }} />
+        : <CheckCircleOutlined style={{ color: token.colorTextQuaternary, fontSize: 10, flexShrink: 0 }} />,
+      color: isLatest ? token.colorTextSecondary : token.colorTextTertiary,
     };
   };
 
@@ -285,9 +293,9 @@ export const ThinkingLog: React.FC<{ messages: string[] }> = ({ messages }) => {
         overflowY: 'auto',
         marginBottom: 10,
         padding: '6px 8px',
-        background: 'rgba(0,0,0,0.02)',
+        background: token.colorFillTertiary,
         borderRadius: 6,
-        borderLeft: '3px solid #d9d9d9',
+        borderLeft: `3px solid ${token.colorBorder}`,
       }}
     >
       {messages.map((msg, i) => {
@@ -318,6 +326,7 @@ export const ThinkingLog: React.FC<{ messages: string[] }> = ({ messages }) => {
 };
 
 export const AgentStatusHeader: React.FC<{ agent: string; stepDescription: string }> = ({ agent, stepDescription }) => {
+  const { token } = theme.useToken();
   if (!agent) return null;
   const isExecutor = agent === 'executor';
   return (
@@ -327,30 +336,30 @@ export const AgentStatusHeader: React.FC<{ agent: string; stepDescription: strin
       gap: 8,
       marginBottom: 10,
       padding: '6px 10px',
-      background: isExecutor ? 'rgba(250,173,20,0.06)' : 'rgba(22,119,255,0.06)',
+      background: isExecutor ? token.colorWarningBg : token.colorPrimaryBg,
       borderRadius: 6,
-      border: `1px solid ${isExecutor ? 'rgba(250,173,20,0.2)' : 'rgba(22,119,255,0.2)'}`,
+      border: `1px solid ${isExecutor ? token.colorWarningBorder : token.colorPrimaryBorder}`,
     }}>
       {isExecutor ? (
-        <ThunderboltOutlined style={{ color: '#faad14', fontSize: 14 }} />
+        <ThunderboltOutlined style={{ color: token.colorWarning, fontSize: 14 }} />
       ) : (
-        <RobotOutlined style={{ color: '#1677ff', fontSize: 14 }} />
+        <RobotOutlined style={{ color: token.colorPrimary, fontSize: 14 }} />
       )}
       <span style={{
         fontSize: 12,
         fontFamily: "'SFMono-Regular', Consolas, monospace",
         fontWeight: 600,
-        color: isExecutor ? '#d48806' : '#1677ff',
+        color: isExecutor ? token.colorWarning : token.colorPrimary,
       }}>
         {agent}
       </span>
       {stepDescription && (
         <>
-          <span style={{ color: '#d9d9d9' }}>|</span>
-          <span style={{ fontSize: 12, color: '#999' }}>{stepDescription}</span>
+          <span style={{ color: token.colorTextQuaternary }}>|</span>
+          <span style={{ fontSize: 12, color: token.colorTextSecondary }}>{stepDescription}</span>
         </>
       )}
-      <SyncOutlined spin style={{ color: '#999', fontSize: 11, marginLeft: 'auto' }} />
+      <SyncOutlined spin style={{ color: token.colorTextTertiary, fontSize: 11, marginLeft: 'auto' }} />
     </div>
   );
 };
@@ -362,23 +371,24 @@ export const ApprovalCard: React.FC<{
   loading: boolean;
 }> = ({ approval, onApprove, onReject, loading }) => {
   const { t } = useTranslation();
+  const { token } = theme.useToken();
   return (
     <div style={{
-      border: '1px solid #faad14',
+      border: `1px solid ${token.colorWarningBorder}`,
       borderRadius: 8,
-      padding: 16,
+      padding: 12,
       marginBottom: 12,
-      background: 'rgba(250, 173, 20, 0.06)',
+      background: token.colorWarningBg,
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-        <ExclamationCircleOutlined style={{ color: '#faad14', fontSize: 18 }} />
-        <span style={{ fontWeight: 600, fontSize: 14 }}>{t('components.approval.needConfirm')}</span>
+        <ExclamationCircleOutlined style={{ color: token.colorWarning, fontSize: 18 }} />
+        <span style={{ fontWeight: 600, fontSize: 14, color: token.colorText }}>{t('components.approval.needConfirm')}</span>
       </div>
-      <div style={{ fontSize: 13, color: '#666', marginBottom: 12 }}>
+      <div style={{ fontSize: 13, color: token.colorTextSecondary, marginBottom: 12 }}>
         {approval.description}
       </div>
-      <div style={{ fontSize: 12, color: '#999', marginBottom: 12 }}>
-        {t('components.approval.taskId')} <code style={{ background: 'rgba(0,0,0,0.06)', padding: '1px 4px', borderRadius: 2 }}>{approval.taskId}</code>
+      <div style={{ fontSize: 12, color: token.colorTextTertiary, marginBottom: 12 }}>
+        {t('components.approval.taskId')} <code style={{ background: token.colorFillTertiary, color: token.colorText, padding: '1px 4px', borderRadius: 2 }}>{approval.taskId}</code>
       </div>
       {approval.status === 'pending' ? (
         <div style={{ display: 'flex', gap: 8 }}>
@@ -387,7 +397,7 @@ export const ApprovalCard: React.FC<{
             icon={<CheckCircleOutlined />}
             onClick={() => onApprove(approval.taskId)}
             loading={loading}
-            style={{ background: '#52c41a', borderColor: '#52c41a' }}
+            style={{ background: token.colorSuccess, borderColor: token.colorSuccess }}
           >
             {t('components.approval.confirmExecute')}
           </Button>
@@ -404,7 +414,7 @@ export const ApprovalCard: React.FC<{
         <div style={{
           fontSize: 13,
           fontWeight: 500,
-          color: approval.status === 'approved' ? '#52c41a' : '#ff4d4f',
+          color: approval.status === 'approved' ? token.colorSuccess : token.colorError,
         }}>
           {approval.status === 'approved' ? `✅ ${t('components.approval.approved')}` : `❌ ${t('components.approval.rejected')}`}
         </div>

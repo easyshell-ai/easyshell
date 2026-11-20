@@ -214,7 +214,7 @@ const ClusterPage: React.FC = () => {
         <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>{t('cluster.create')}</Button>
       </div>
 
-      <Card style={{ borderRadius: 12 }} styles={{ body: { padding: 0 } }}>
+      <Card styles={{ body: { padding: 0 } }}>
         <Table<ClusterVO>
           columns={columns}
           dataSource={clusters}
@@ -265,7 +265,7 @@ const ClusterPage: React.FC = () => {
               <Descriptions.Item label={t('cluster.col.agentCount')}>{clusterDetail.agents?.length || 0}</Descriptions.Item>
               <Descriptions.Item label={t('cluster.field.description')} span={2}>{clusterDetail.description || '-'}</Descriptions.Item>
             </Descriptions>
-            <div style={{ marginTop: 24 }}>
+            <div style={{ marginTop: 16 }}>
               <Typography.Title level={5}><DesktopOutlined style={{ marginRight: 8 }} />{t('cluster.clusterAgents')}</Typography.Title>
               {clusterDetail.agents?.length ? (
                 <Table<Agent>
@@ -281,7 +281,7 @@ const ClusterPage: React.FC = () => {
             </div>
           </>
         ) : detailLoading ? (
-          <div style={{ textAlign: 'center', padding: 40, color: token.colorTextTertiary }}>{t('common.loading')}</div>
+          <div style={{ textAlign: 'center', padding: 16, color: token.colorTextTertiary }}>{t('common.loading')}</div>
         ) : null}
       </Drawer>
 

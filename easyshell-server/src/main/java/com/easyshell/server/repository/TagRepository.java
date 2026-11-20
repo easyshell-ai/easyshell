@@ -12,4 +12,8 @@ public interface TagRepository extends JpaRepository<Tag, Long> {
     Optional<Tag> findByName(String name);
 
     boolean existsByName(String name);
+
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @org.springframework.data.jpa.repository.Query("select t from Tag t where t.id = :id")
+    Optional<Tag> lockById(@org.springframework.data.repository.query.Param("id") Long id);
 }

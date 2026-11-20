@@ -1,0 +1,25 @@
+{
+  "code": 200,
+  "message": "ok",
+  "data": [
+    {
+      "id": 31,
+      "runId": "run-demo-002",
+      "workflowId": 2,
+      "workflowName": "Nginx 巡检",
+      "nodeKey": "n4",
+      "nodeType": "approval",
+      "title": "确认清理 30 天前的访问日志",
+      "detail": { "threshold": 80, "usage": 91 },
+      "riskLevel": "MEDIUM",
+      "riskMatches": "truncate",
+      "status": "pending",
+      "approverRole": "ADMIN",
+      "decidedBy": null,
+      "decidedAt": null,
+      "reason": null,
+      "expiresAt": "2026-02-11T09:30:00",
+      "createdAt": "2026-02-10T09:31:00"
+    }
+  ]
+}

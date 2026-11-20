@@ -29,7 +29,22 @@ spring:
       hibernate:
         dialect: org.hibernate.dialect.MySQLDialect
         format_sql: true
+        # Hibernate 的 create/drop/migrate 排除 workflow* 和指定的 Flyway JDBC 表；
+        # 其他仅由 JDBC 使用的 Flyway 表目前没有 Hibernate 实体映射。
+        hbm2ddl:
+          schema_filter_provider: com.easyshell.server.config.WorkflowSchemaFilterProvider
     show-sql: false
+
+  # Flyway 纳管工作流、主机身份/ACL、目标快照及其他独立表；
+  # 存量实体仍由上面的 ddl-auto 管理，迁移脚本不 ALTER 或 DROP 存量表。
+  flyway:
+    enabled: true
+    # 非空库没有 flyway_schema_history 时先 baseline，再运行更高版本的迁移；
+    # 此处未指定 baseline-version，Flyway 默认值为 1，可被外部配置覆盖。
+    # 工作流运行、审批及审计数据须永久保留；回退须另行设计，不以删表代替。
+    baseline-on-migrate: true
+    # 启动即校验：已 applied 的迁移脚本被改动/校验和不一致直接 fail-fast
+    validate-on-migrate: true
 
   data:
     redis:
@@ -79,7 +94,7 @@ logging:
     org.hibernate.SQL: info
 
 easyshell:
-  version: ${EASYSHELL_VERSION:1.1.2}
+  version: ${EASYSHELL_VERSION:1.2.0}
   auth:
     # No defaults on purpose - see SecretValidator.
     jwt-secret: ${JWT_SECRET}
@@ -96,6 +111,10 @@ easyshell:
   websocket:
     # Comma separated list of browser origins allowed to open WebSockets. Empty = same-origin only.
     allowed-origins: ${WEBSOCKET_ALLOWED_ORIGINS:}
+  workflow:
+    # 启动时把五个工作流实体与 Flyway DDL 逐字段比对，不一致即 fail-fast（不建议关闭）
+    schema-check:
+      enabled: ${WORKFLOW_SCHEMA_CHECK_ENABLED:true}
   provision:
     server-url: ${PROVISION_SERVER_URL:http://127.0.0.1:18080}
     agent-binary-dir: ${AGENT_BINARY_DIR:/opt/easyshell/agent-binaries}

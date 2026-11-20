@@ -7,6 +7,7 @@ import com.easyshell.server.common.exception.BusinessException;
 import com.easyshell.server.common.utils.ScriptParameterUtils;
 import com.easyshell.server.model.dto.JobResultRequest;
 import com.easyshell.server.model.dto.TaskCreateRequest;
+import com.easyshell.server.model.dto.TaskTargetSnapshot;
 import com.easyshell.server.model.entity.Agent;
 import com.easyshell.server.model.entity.Job;
 import com.easyshell.server.model.entity.Script;
@@ -14,9 +15,15 @@ import com.easyshell.server.model.entity.Task;
 import com.easyshell.server.model.vo.TaskDetailVO;
 import com.easyshell.server.repository.AgentRepository;
 import com.easyshell.server.repository.JobRepository;
-import com.easyshell.server.repository.ScriptRepository;
+import com.easyshell.server.security.ScriptAccess;
 import com.easyshell.server.repository.TaskRepository;
+import com.easyshell.server.repository.TaskTargetSnapshotRepository;
+import com.easyshell.server.service.AuditLogService;
 import com.easyshell.server.service.ClusterService;
+import com.easyshell.server.service.DispatchAuthority;
+import com.easyshell.server.service.DispatchEvidenceVerifier;
+import com.easyshell.server.service.HostAclService;
+import com.easyshell.server.service.HostIdentityService;
 import com.easyshell.server.service.TagService;
 import com.easyshell.server.service.TaskService;
 import com.easyshell.server.websocket.AgentWebSocketHandler;
@@ -34,6 +41,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
@@ -52,7 +60,7 @@ public class TaskServiceImpl implements TaskService {
 
     private final TaskRepository taskRepository;
     private final JobRepository jobRepository;
-    private final ScriptRepository scriptRepository;
+    private final ScriptAccess scriptAccess;
     private final AgentRepository agentRepository;
     private final TaskCounterService taskCounterService;
     private final TaskLogWebSocketHandler logWebSocketHandler;
@@ -60,21 +68,30 @@ public class TaskServiceImpl implements TaskService {
     private final ClusterService clusterService;
     private final TagService tagService;
     private final CommandRiskEngine riskEngine;
+    private final AuditLogService auditLogService;
+    private final HostAclService hostAclService;
+    private final HostIdentityService hostIdentityService;
+    private final TaskTargetSnapshotRepository targetSnapshots;
+    /** 授权证据校验器（按 supports() 分派）；没有校验器的授权值一律 fail-closed */
+    private final List<DispatchEvidenceVerifier> evidenceVerifiers;
 
     public TaskServiceImpl(
             TaskRepository taskRepository,
             JobRepository jobRepository,
-            ScriptRepository scriptRepository,
+            ScriptAccess scriptAccess,
             AgentRepository agentRepository,
             TaskCounterService taskCounterService,
             TaskLogWebSocketHandler logWebSocketHandler,
             @Lazy AgentWebSocketHandler agentWebSocketHandler,
             @Lazy ClusterService clusterService,
             @Lazy TagService tagService,
-            CommandRiskEngine riskEngine) {
+            CommandRiskEngine riskEngine,
+            AuditLogService auditLogService,
+            List<DispatchEvidenceVerifier> evidenceVerifiers, HostAclService hostAclService,
+            HostIdentityService hostIdentityService, TaskTargetSnapshotRepository targetSnapshots) {
         this.taskRepository = taskRepository;
         this.jobRepository = jobRepository;
-        this.scriptRepository = scriptRepository;
+        this.scriptAccess = scriptAccess;
         this.agentRepository = agentRepository;
         this.taskCounterService = taskCounterService;
         this.logWebSocketHandler = logWebSocketHandler;
@@ -82,17 +99,35 @@ public class TaskServiceImpl implements TaskService {
         this.clusterService = clusterService;
         this.tagService = tagService;
         this.riskEngine = riskEngine;
+        this.auditLogService = auditLogService;
+        this.evidenceVerifiers = evidenceVerifiers;
+        this.hostAclService = hostAclService;
+        this.hostIdentityService = hostIdentityService;
+        this.targetSnapshots = targetSnapshots;
     }
 
     @Override
     @Transactional
     public Task createAndDispatch(TaskCreateRequest request, Long userId) {
+        // 无授权调用方（Controller / AI 工具 / AI 自动执行）：门禁默认最严，非 LOW 一律拒绝
+        return createAndDispatch(request, userId, null, null);
+    }
+
+    @Override
+    @Transactional
+    public Task createAndDispatch(TaskCreateRequest request, Long userId,
+                                  DispatchAuthority authority, String evidenceRef) {
+        if (userId == null) {
+            throw new BusinessException(403, "Dispatch identity is required");
+        }
         String scriptContent = request.getScriptContent();
         String scriptType = "shell";
 
         if (request.getScriptId() != null) {
-            Script script = scriptRepository.findById(request.getScriptId())
-                    .orElseThrow(() -> new BusinessException(404, "Script not found"));
+            Script script = scriptAccess.requireRead(userId, request.getScriptId());
+            if (scriptContent != null) {
+                throw new BusinessException(400, "Specify either scriptId or scriptContent");
+            }
             scriptContent = script.getContent();
             scriptType = script.getScriptType();
         }
@@ -107,20 +142,6 @@ public class TaskServiceImpl implements TaskService {
                 throw new BusinessException(400, "Missing parameter values: " + String.join(", ", missing));
             }
             scriptContent = ScriptParameterUtils.substituteParameters(scriptContent, request.getParameters());
-        }
-
-        // 风险门禁下沉到唯一咽喉要道（B1-b）：无论调用方是 Controller、AI 工具、
-        // 定时巡检还是未来的工作流，只要没显式带上"上游已授权"标记，替换后的完整
-        // 脚本都要在这里过 CommandRiskEngine，非 LOW 一律拒绝派发。
-        // 与 TaskController 的事前校验使用同一引擎、同一份（替换后）脚本，结果一致，
-        // 已放行的 LOW 脚本二次校验不会行为变化（幂等）。
-        if (!request.isRiskCleared()) {
-            RiskAssessment risk = riskEngine.assessScript(scriptContent);
-            if (risk.getOverallRisk() != RiskLevel.LOW) {
-                log.warn("Blocked dispatch at chokepoint: risk={}, reason={}",
-                        risk.getOverallRisk(), risk.getExplanation());
-                throw new BusinessException(449, risk.getExplanation());
-            }
         }
 
         Set<String> resolvedAgentIds = new LinkedHashSet<>();
@@ -138,13 +159,48 @@ public class TaskServiceImpl implements TaskService {
             throw new BusinessException(400, "At least one agent must be specified (via agentIds, clusterIds, or tagIds)");
         }
 
+        DispatchEvidenceVerifier workflowVerifier = null;
+        DispatchEvidenceVerifier.PreparedEvidence preparedEvidence = null;
+        if (authority == DispatchAuthority.HUMAN_APPROVED && isWorkflowEvidence(evidenceRef)) {
+            for (DispatchEvidenceVerifier verifier : evidenceVerifiers) {
+                if (verifier.supports() == authority) {
+                    if (workflowVerifier != null) {
+                        throw new BusinessException(449, "派发授权证据不成立，已拒绝派发");
+                    }
+                    workflowVerifier = verifier;
+                }
+            }
+            if (workflowVerifier == null
+                    || (preparedEvidence = workflowVerifier.prepare(evidenceRef, userId)) == null) {
+                throw new BusinessException(449, "派发授权证据不成立，已拒绝派发");
+            }
+        }
+
+        String taskId = "task_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+        int effectiveTimeout = request.getTimeoutSeconds() != null ? request.getTimeoutSeconds() : 3600;
+        List<TaskTargetSnapshot.Target> targets = new ArrayList<>();
+        for (String agentId : resolvedAgentIds.stream().sorted().toList()) {
+            var identity = hostIdentityService.lock(agentId);
+            if (!identity.active() || identity.generation() <= 0 || !agentRepository.existsById(agentId)
+                    || !hostAclService.allowedForGeneration(userId, agentId, identity.generation(), HostAclService.Permission.EXECUTE)) {
+                throw new BusinessException(403, "Host execute permission required");
+            }
+            targets.add(new TaskTargetSnapshot.Target(agentId, identity.generation()));
+        }
+
+        // 唯一风险门禁在全部目标 generation 锁定及授权后执行，且在任何任务写入前执行。
+        DispatchEvidenceVerifier.DispatchContext context = new DispatchEvidenceVerifier.DispatchContext(
+                scriptContent, userId, targets, effectiveTimeout, taskId);
+        enforceRiskGate(scriptContent, userId, authority, evidenceRef,
+                workflowVerifier, preparedEvidence, context);
+
         Task task = new Task();
-        task.setId("task_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16));
+        task.setId(taskId);
         task.setName(request.getName());
         task.setScriptId(request.getScriptId());
         task.setScriptContent(scriptContent);
         task.setScriptType(scriptType);
-        task.setTimeoutSeconds(request.getTimeoutSeconds());
+        task.setTimeoutSeconds(effectiveTimeout);
         task.setStatus(1);
         task.setTotalCount(resolvedAgentIds.size());
         task.setSuccessCount(0);
@@ -152,6 +208,7 @@ public class TaskServiceImpl implements TaskService {
         task.setCreatedBy(userId);
         task.setStartedAt(LocalDateTime.now());
         taskRepository.save(task);
+        targetSnapshots.create(new TaskTargetSnapshot(task.getId(), targets));
 
         // Collect dispatch actions to execute AFTER transaction commits
         // This prevents the race condition where fast agents return results
@@ -159,7 +216,8 @@ public class TaskServiceImpl implements TaskService {
         List<Runnable> postCommitDispatches = new ArrayList<>();
 
         int dispatchedCount = 0;
-        for (String agentId : resolvedAgentIds) {
+        for (TaskTargetSnapshot.Target target : targets) {
+            String agentId = target.agentId();
             Agent agent = agentRepository.findById(agentId).orElse(null);
             if (agent == null) {
                 log.warn("Skipping unknown agent: {}", agentId);
@@ -204,6 +262,20 @@ public class TaskServiceImpl implements TaskService {
             final Integer capturedTimeout = task.getTimeoutSeconds();
 
             postCommitDispatches.add(() -> {
+                boolean authorized;
+                try {
+                    authorized = hostAclService.allowedForGeneration(userId, capturedAgentId, target.generation(), HostAclService.Permission.EXECUTE);
+                } catch (Exception e) {
+                    log.warn("Host ACL check failed before dispatch for job {}", capturedJob.getId(), e);
+                    authorized = false;
+                }
+                if (!authorized) {
+                    capturedJob.setStatus(3);
+                    capturedJob.setOutput("Host execute permission unavailable or revoked");
+                    capturedJob.setFinishedAt(LocalDateTime.now());
+                    taskCounterService.applyJobResultInNewTransaction(capturedJob, 3);
+                    return;
+                }
                 boolean dispatched = agentWebSocketHandler.dispatchJob(
                         capturedAgentId, capturedJob, capturedScript, capturedTimeout);
                 if (!dispatched) {
@@ -244,6 +316,82 @@ public class TaskServiceImpl implements TaskService {
         }
 
         return task;
+    }
+
+    /**
+     * 风险门禁（B1-b 咽喉要道的判定核心）：
+     * <ul>
+     *   <li>无授权（authority == null，Controller / AI 工具 / AI 自动执行）：非 LOW 一律 449；</li>
+     *   <li>带授权：工作流与非人工授权均不能放过 BANNED；其余先过证据校验（不成立 449），
+     *       通过后同步写审计（授权值 + 证据 + 风险等级 + 命中模式，不存脚本原文）。</li>
+     * </ul>
+     * 与 TaskController 的事前校验使用同一引擎、同一份（替换后）脚本，结果一致，
+     * 已放行的 LOW 脚本二次校验不会行为变化（幂等）。
+     */
+    private void enforceRiskGate(String scriptContent, Long userId,
+                                 DispatchAuthority authority, String evidenceRef,
+                                 DispatchEvidenceVerifier workflowVerifier,
+                                 DispatchEvidenceVerifier.PreparedEvidence preparedEvidence,
+                                 DispatchEvidenceVerifier.DispatchContext context) {
+        RiskAssessment risk = riskEngine.assessScript(scriptContent);
+
+        if (authority == null) {
+            if (risk.getOverallRisk() != RiskLevel.LOW) {
+                log.warn("Blocked dispatch at chokepoint: risk={}, reason={}",
+                        risk.getOverallRisk(), risk.getExplanation());
+                throw new BusinessException(449, risk.getExplanation());
+            }
+            return;
+        }
+
+        // 工作流 BANNED 在唯一门禁中拒绝，不能消费已准备的证据。
+        if (risk.getOverallRisk() == RiskLevel.BANNED
+                && (authority != DispatchAuthority.HUMAN_APPROVED || isWorkflowEvidence(evidenceRef))) {
+            log.warn("Blocked banned script dispatch despite authority={}", authority);
+            throw new BusinessException(449, risk.getExplanation());
+        }
+
+        // 授权值只是意图声明，真正放行由证据校验决定（换脚本/换任务/换用户都会失败）
+        String evidence = workflowVerifier != null
+                ? workflowVerifier.verifyAndConsume(preparedEvidence, evidenceRef, context)
+                : verifyDispatchEvidence(authority, evidenceRef, scriptContent, userId);
+        if (evidence == null) {
+            log.warn("Blocked dispatch: authority={} evidence verification failed", authority);
+            throw new BusinessException(449, "派发授权证据不成立，已拒绝派发");
+        }
+
+        // 被豁免的派发必须留痕：授权值 + 证据 + 风险等级 + 命中模式（不存脚本原文）
+        auditLogService.logSync(userId, "SYSTEM", "SCRIPT_DISPATCH", "task", null,
+                "authority=" + authority + ", evidence=" + evidence
+                        + ", risk=" + risk.getOverallRisk()
+                        + ", matches=" + String.join(",", risk.getBannedMatches()),
+                null, "success");
+    }
+
+    /**
+     * 证据校验：普通任务审批行缺少目标代次及一次性消费绑定，暂不能作为派发证据；
+     * 工作流侧的同名授权证据是 {@code workflow_approval:<runId>:<id>}（§6.3.3），
+     * 由注册的 {@link DispatchEvidenceVerifier} 校验；其余授权值交给校验器，
+     * 没有校验器一律 fail-closed。
+     */
+    private String verifyDispatchEvidence(DispatchAuthority authority, String evidenceRef,
+                                          String scriptContent, Long userId) {
+        if (authority == DispatchAuthority.HUMAN_APPROVED && !isWorkflowEvidence(evidenceRef)) {
+            // A task row does not bind the actual targets, their generations, timeout,
+            // or a single consumption. Never infer a valid authorization from it.
+            return null;
+        }
+        for (DispatchEvidenceVerifier verifier : evidenceVerifiers) {
+            if (verifier.supports() == authority) {
+                return verifier.verify(evidenceRef, scriptContent, userId);
+            }
+        }
+        return null;
+    }
+
+    /** 工作流授权证据前缀：{@code workflow_approval:<runId>:<approvalId>}（§6.3.3） */
+    private static boolean isWorkflowEvidence(String evidenceRef) {
+        return evidenceRef != null && evidenceRef.startsWith("workflow_approval:");
     }
 
     @Override

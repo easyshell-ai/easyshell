@@ -1,6 +1,6 @@
 {
   "name": "@easyshell/mcp-server",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "description": "MCP server for EasyShell \u2014 AI-Native Server Operations Platform. Manage hosts, execute scripts, orchestrate multi-host tasks, and schedule inspections from any AI assistant.",
   "license": "MIT",
   "type": "module",

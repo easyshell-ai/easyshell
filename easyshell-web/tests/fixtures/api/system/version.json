@@ -1,0 +1,8 @@
+{
+  "code": 200,
+  "message": "ok",
+  "data": {
+    "version": "1.3.0",
+    "agentVersion": "1.3.0"
+  }
+}

@@ -287,7 +287,7 @@ const Users: React.FC = () => {
         </Button>
       </div>
 
-      <Card style={{ borderRadius: 12 }} styles={{ body: { padding: 0 } }}>
+      <Card styles={{ body: { padding: 0 } }}>
         <Table<UserVO>
           columns={columns}
           dataSource={users}

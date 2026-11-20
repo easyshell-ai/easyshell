@@ -95,7 +95,7 @@ public class PlanExecutor {
             String lastUserMsg = request.getHistory() != null && !request.getHistory().isEmpty()
                     ? request.getHistory().get(request.getHistory().size() - 1).getText()
                     : null;
-            String reviewResult = reviewerAgent.review(plan, lastUserMsg);
+            String reviewResult = reviewerAgent.review(plan, lastUserMsg, request.getUserId(), request.getSourceIp());
             sink.next(AgentEvent.reviewComplete(reviewResult != null ? reviewResult : i18n("ai.review.complete")));
         }
     }
@@ -234,7 +234,7 @@ public class PlanExecutor {
         try {
             // Build enriched prompt with host context and step tools
             String enrichedPrompt = SubAgentPromptBuilder.buildSubAgentPrompt(step, request);
-            String result = orchestratorEngine.executeAsSubAgent(agentDef, enrichedPrompt, chatModelFactory);
+            String result = orchestratorEngine.executeAsSubAgent(agentDef, enrichedPrompt, chatModelFactory, request.getUserId(), request.getSourceIp());
             step.setResult(result);
             step.setStatus("completed");
             sink.next(AgentEvent.stepComplete(step.getIndex(), agentDef.getName()));

@@ -44,7 +44,7 @@ const ParallelTaskPanel: React.FC<ParallelTaskPanelProps> = ({ groups }) => {
               percent={percent}
               size="small"
               style={{ flex: 1, margin: 0 }}
-              strokeColor={percent === 100 ? '#52c41a' : token.colorPrimary}
+              strokeColor={percent === 100 ? token.colorSuccess : token.colorPrimary}
             />
             <span style={{ fontSize: 11, color: token.colorTextSecondary, minWidth: 30 }}>
               {g.completed}/{g.total}

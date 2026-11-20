@@ -29,11 +29,14 @@ class ScriptManageToolTest {
     @Mock
     private ScriptService scriptService;
 
+    @Mock
+    private com.easyshell.server.security.ScriptAccess access;
+
     private ScriptManageTool tool;
 
     @BeforeEach
     void setUp() {
-        tool = new ScriptManageTool(scriptService);
+        tool = new ScriptManageTool(scriptService, access);
     }
 
     @Test
@@ -44,7 +47,7 @@ class ScriptManageToolTest {
         saved.setName("disk");
         when(scriptService.create(any(ScriptRequest.class), eq(42L))).thenReturn(saved);
 
-        tool.setContext(42L, "10.0.0.1");
+        tool = tool.forUser(42L, "10.0.0.1");
         String result = tool.createScript("disk", "df -h", "check disk");
 
         assertThat(result).contains("7");

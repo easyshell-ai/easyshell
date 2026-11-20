@@ -31,9 +31,12 @@ public class FileProxyServiceImpl implements FileProxyService {
     private final AgentWebSocketHandler agentHandler;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    private final Map<String, CompletableFuture<String>> pendingRequests = new ConcurrentHashMap<>();
+    private record PendingRequest(String agentId, CompletableFuture<String> future) {}
+    private record DownloadRequest(String agentId, BlockingQueue<String> queue) {}
+
+    private final Map<String, PendingRequest> pendingRequests = new ConcurrentHashMap<>();
     // For download: accumulate chunks
-    private final Map<String, BlockingQueue<String>> downloadQueues = new ConcurrentHashMap<>();
+    private final Map<String, DownloadRequest> downloadQueues = new ConcurrentHashMap<>();
 
     private static final long LIST_TIMEOUT_SECONDS = 10;
     // Bounded so a stuck agent cannot pin a Tomcat thread indefinitely.
@@ -105,7 +108,7 @@ public class FileProxyServiceImpl implements FileProxyService {
         validateProxyPath(path);
         String requestId = UUID.randomUUID().toString();
         CompletableFuture<String> future = new CompletableFuture<>();
-        pendingRequests.put(requestId, future);
+        pendingRequests.put(requestId, new PendingRequest(agentId, future));
 
         try {
             Map<String, Object> msg = Map.of(
@@ -133,7 +136,7 @@ public class FileProxyServiceImpl implements FileProxyService {
         validateProxyPath(path);
         String requestId = UUID.randomUUID().toString();
         BlockingQueue<String> queue = new LinkedBlockingQueue<>();
-        downloadQueues.put(requestId, queue);
+        downloadQueues.put(requestId, new DownloadRequest(agentId, queue));
 
         try {
             Map<String, Object> msg = Map.of(
@@ -244,7 +247,7 @@ public class FileProxyServiceImpl implements FileProxyService {
 
             // Send upload start
             CompletableFuture<String> startFuture = new CompletableFuture<>();
-            pendingRequests.put(requestId, startFuture);
+            pendingRequests.put(requestId, new PendingRequest(agentId, startFuture));
 
             String destPath = path.endsWith("/") ? path + file.getOriginalFilename() : path + "/" + file.getOriginalFilename();
 
@@ -271,7 +274,7 @@ public class FileProxyServiceImpl implements FileProxyService {
                 while (!chunkSent) {
                     String chunkRequestId = requestId + "_chunk_" + i;
                     CompletableFuture<String> chunkFuture = new CompletableFuture<>();
-                    pendingRequests.put(chunkRequestId, chunkFuture);
+                    pendingRequests.put(chunkRequestId, new PendingRequest(agentId, chunkFuture));
 
                     try {
                         int start = i * CHUNK_SIZE;
@@ -339,7 +342,7 @@ public class FileProxyServiceImpl implements FileProxyService {
         validateProxyPath(newPath);
         String requestId = UUID.randomUUID().toString();
         CompletableFuture<String> future = new CompletableFuture<>();
-        pendingRequests.put(requestId, future);
+        pendingRequests.put(requestId, new PendingRequest(agentId, future));
 
         try {
             Map<String, Object> msg = new HashMap<>();
@@ -363,27 +366,31 @@ public class FileProxyServiceImpl implements FileProxyService {
     }
 
     @Override
-    public void handleFileResponse(String requestId, String responseJson) {
+    public void handleFileResponse(String agentId, String requestId, String responseJson) {
         // First check download queues (for streaming chunks)
-        BlockingQueue<String> downloadQueue = downloadQueues.get(requestId);
+        DownloadRequest downloadQueue = downloadQueues.get(requestId);
         if (downloadQueue != null) {
-            downloadQueue.offer(responseJson);
+            if (Objects.equals(downloadQueue.agentId(), agentId) && agentId != null) {
+                downloadQueue.queue().offer(responseJson);
+            } else {
+                log.warn("Ignoring file response for request {} from wrong agent {}", requestId, agentId);
+            }
             return;
         }
 
         // Then check pending futures
-        CompletableFuture<String> future = pendingRequests.get(requestId);
-        if (future != null) {
-            future.complete(responseJson);
+        PendingRequest pending = pendingRequests.get(requestId);
+        if (pending != null) {
+            completeIfOwned(pending, agentId, requestId, responseJson);
             return;
         }
 
         // Check chunk-specific futures for uploads
         // Upload chunks use requestId + "_chunk_" + index
         // The agent sends back the original requestId, so we need to find matching chunk futures
-        for (Map.Entry<String, CompletableFuture<String>> entry : pendingRequests.entrySet()) {
+        for (Map.Entry<String, PendingRequest> entry : pendingRequests.entrySet()) {
             if (entry.getKey().startsWith(requestId + "_chunk_")) {
-                entry.getValue().complete(responseJson);
+                completeIfOwned(entry.getValue(), agentId, requestId, responseJson);
                 return;
             }
         }
@@ -391,12 +398,20 @@ public class FileProxyServiceImpl implements FileProxyService {
         log.warn("No pending request found for requestId: {}", requestId);
     }
 
+    private void completeIfOwned(PendingRequest pending, String agentId, String requestId, String responseJson) {
+        if (agentId != null && Objects.equals(pending.agentId(), agentId)) {
+            pending.future().complete(responseJson);
+        } else {
+            log.warn("Ignoring file response for request {} from wrong agent {}", requestId, agentId);
+        }
+    }
+
     // --- Private helpers ---
 
     private void simpleFileOperation(String agentId, String type, String path, long timeoutSeconds) {
         String requestId = UUID.randomUUID().toString();
         CompletableFuture<String> future = new CompletableFuture<>();
-        pendingRequests.put(requestId, future);
+        pendingRequests.put(requestId, new PendingRequest(agentId, future));
 
         try {
             Map<String, Object> msg = Map.of(

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, Empty } from 'antd';
+import { Modal, Empty, theme } from 'antd';
 import {
   EyeOutlined,
   ApartmentOutlined,
@@ -19,12 +19,13 @@ interface ProcessModalProps {
 
 const ProcessModal: React.FC<ProcessModalProps> = ({ visible, onClose, processData }) => {
   const { t } = useTranslation();
+  const { token } = theme.useToken();
   
   return (
   <Modal
     title={
       <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <EyeOutlined style={{ color: '#1677ff' }} />
+        <EyeOutlined style={{ color: token.colorPrimary }} />
         {t('process.title')}
       </span>
     }
@@ -41,7 +42,7 @@ const ProcessModal: React.FC<ProcessModalProps> = ({ visible, onClose, processDa
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           {data.plan && (
             <div>
-              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, color: '#1677ff' }}>
+              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, color: token.colorPrimary }}>
                 <ApartmentOutlined style={{ marginRight: 6 }} />
                 {t('process.executionPlan')}
               </div>
@@ -50,7 +51,7 @@ const ProcessModal: React.FC<ProcessModalProps> = ({ visible, onClose, processDa
           )}
           {data.thinkingLog.length > 0 && (
             <div>
-              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, color: '#722ed1' }}>
+              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, color: token.colorPrimary }}>
                 <SyncOutlined style={{ marginRight: 6 }} />
                 {t('process.thinkingProcess', { count: data.thinkingLog.length })}
               </div>
@@ -58,14 +59,14 @@ const ProcessModal: React.FC<ProcessModalProps> = ({ visible, onClose, processDa
                 maxHeight: 240,
                 overflowY: 'auto',
                 padding: '8px 10px',
-                background: 'rgba(0,0,0,0.02)',
+                background: token.colorFillTertiary,
                 borderRadius: 6,
-                borderLeft: '3px solid #722ed1',
+                borderLeft: `3px solid ${token.colorPrimary}`,
               }}>
                 {data.thinkingLog.map((msg, i) => (
                   <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '3px 0', fontSize: 13 }}>
-                    <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 11, flexShrink: 0, marginTop: 3 }} />
-                    <span style={{ color: '#555' }}>{msg}</span>
+                    <CheckCircleOutlined style={{ color: token.colorSuccess, fontSize: 11, flexShrink: 0, marginTop: 3 }} />
+                    <span style={{ color: token.colorTextSecondary }}>{msg}</span>
                   </div>
                 ))}
               </div>
@@ -73,7 +74,7 @@ const ProcessModal: React.FC<ProcessModalProps> = ({ visible, onClose, processDa
           )}
           {data.toolCalls.length > 0 && (
             <div>
-              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, color: '#fa8c16' }}>
+              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, color: token.colorWarning }}>
                 <ThunderboltOutlined style={{ marginRight: 6 }} />
                 {t('process.toolCalls', { count: data.toolCalls.length })}
               </div>

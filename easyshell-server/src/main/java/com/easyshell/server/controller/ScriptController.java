@@ -1,6 +1,7 @@
 package com.easyshell.server.controller;
 
 import com.easyshell.server.security.AuditUsers;
+import com.easyshell.server.security.ScriptAccess;
 import com.easyshell.server.common.exception.BusinessException;
 import com.easyshell.server.common.result.R;
 import com.easyshell.server.common.utils.ScriptParameterUtils;
@@ -25,6 +26,7 @@ public class ScriptController {
 
     private final ScriptService scriptService;
     private final AuditLogService auditLogService;
+    private final ScriptAccess scriptAccess;
 
     @PostMapping
     public R<Script> create(@Valid @RequestBody ScriptRequest request, Authentication auth,
@@ -62,25 +64,27 @@ public class ScriptController {
     }
 
     @GetMapping("/{id}")
-    public R<Script> detail(@PathVariable Long id) {
-        return scriptService.findById(id)
-                .map(R::ok)
-                .orElse(R.fail(404, "Script not found"));
+    public R<Script> detail(@PathVariable Long id, Authentication auth) {
+        Long userId = requireReadIdentity(auth);
+        return R.ok(scriptAccess.requireRead(userId, id));
     }
 
     @GetMapping("/list")
-    public R<List<Script>> list() {
-        return R.ok(scriptService.findAll());
+    public R<List<Script>> list(Authentication auth) {
+        var user = scriptAccess.requireActiveUser(requireReadIdentity(auth));
+        return R.ok(scriptService.findAll().stream().filter(script -> scriptAccess.canRead(user, script)).toList());
     }
 
     @GetMapping("/templates")
-    public R<List<Script>> templates() {
-        return R.ok(scriptService.findTemplates());
+    public R<List<Script>> templates(Authentication auth) {
+        var user = scriptAccess.requireActiveUser(requireReadIdentity(auth));
+        return R.ok(scriptService.findTemplates().stream().filter(script -> scriptAccess.canRead(user, script)).toList());
     }
 
     @GetMapping("/user-scripts")
-    public R<List<Script>> userScripts() {
-        return R.ok(scriptService.findUserScripts());
+    public R<List<Script>> userScripts(Authentication auth) {
+        var user = scriptAccess.requireActiveUser(requireReadIdentity(auth));
+        return R.ok(scriptService.findUserScripts().stream().filter(script -> scriptAccess.canRead(user, script)).toList());
     }
 
     @PostMapping("/parse-parameters")
@@ -93,10 +97,16 @@ public class ScriptController {
     }
 
     @GetMapping("/{id}/parameters")
-    public R<Set<String>> getScriptParameters(@PathVariable Long id) {
-        return scriptService.findById(id)
-                .map(script -> R.ok(ScriptParameterUtils.extractParameters(script.getContent())))
-                .orElse(R.fail(404, "Script not found"));
+    public R<Set<String>> getScriptParameters(@PathVariable Long id, Authentication auth) {
+        Long userId = requireReadIdentity(auth);
+        return R.ok(ScriptParameterUtils.extractParameters(scriptAccess.requireRead(userId, id).getContent()));
+    }
+
+    private Long requireReadIdentity(Authentication auth) {
+        if (auth == null || !auth.isAuthenticated() || !(auth.getPrincipal() instanceof Long userId)) {
+            throw new BusinessException(401, "Authentication required");
+        }
+        return userId;
     }
 
     /**

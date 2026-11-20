@@ -8,13 +8,22 @@ import com.easyshell.server.common.exception.BusinessException;
 import com.easyshell.server.common.result.R;
 import com.easyshell.server.common.utils.ScriptParameterUtils;
 import com.easyshell.server.model.dto.TaskCreateRequest;
+import com.easyshell.server.model.dto.TaskTargetSnapshot;
 import com.easyshell.server.model.entity.Job;
 import com.easyshell.server.model.entity.Script;
 import com.easyshell.server.model.entity.Task;
 import com.easyshell.server.model.vo.TaskDetailVO;
-import com.easyshell.server.repository.ScriptRepository;
+import com.easyshell.server.model.vo.TaskRiskAssessmentVO;
+import com.easyshell.server.security.ScriptAccess;
 import com.easyshell.server.repository.TaskRepository;
+import com.easyshell.server.repository.TaskAccessQueryRepository;
+import com.easyshell.server.repository.TaskTargetSnapshotRepository;
+import com.easyshell.server.repository.AgentRepository;
+import com.easyshell.server.repository.WorkflowNodeRunRepository;
 import com.easyshell.server.service.AuditLogService;
+import com.easyshell.server.service.HostAclService;
+import com.easyshell.server.service.HostIdentityService;
+import com.easyshell.server.workflow.controller.WorkflowAccess;
 import com.easyshell.server.service.ClusterService;
 import com.easyshell.server.service.TagService;
 import com.easyshell.server.service.TaskService;
@@ -24,10 +33,11 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
 
@@ -40,25 +50,45 @@ public class TaskController {
     private final TaskService taskService;
     private final AuditLogService auditLogService;
     private final CommandRiskEngine riskEngine;
-    private final ScriptRepository scriptRepository;
+    private final ScriptAccess scriptAccess;
     private final TaskRepository taskRepository;
     private final ClusterService clusterService;
     private final TagService tagService;
     private final ObjectMapper objectMapper;
+    private final WorkflowNodeRunRepository nodeRunRepository;
+    private final WorkflowAccess workflowAccess;
+    private final HostAclService hostAclService;
+    private final HostIdentityService hostIdentityService;
+    private final AgentRepository agentRepository;
+    private final TaskTargetSnapshotRepository targetSnapshots;
+    private final TaskAccessQueryRepository taskAccessQueries;
 
-    private static final int MAX_PAGE_SIZE = 200;
+    private static final String TASK_IDENTITY_UNAVAILABLE =
+            "TASK_RESOURCE_IDENTITY_UNAVAILABLE: task host identity cannot be verified";
 
     @PostMapping
     public R<?> create(@Valid @RequestBody TaskCreateRequest request, Authentication auth,
                           HttpServletRequest httpRequest) {
-        Long userId = (Long) auth.getPrincipal();
+        try {
+            return createTask(request, auth, httpRequest);
+        } catch (BusinessException e) {
+            if (e.getCode() == 449) {
+                // A later dispatch assessment can fail after the initial one, and its
+                // exception message may contain a user-configured literal rule/command.
+                throw new BusinessException(449, "需人工确认");
+            }
+            throw e;
+        }
+    }
+
+    private R<?> createTask(TaskCreateRequest request, Authentication auth, HttpServletRequest httpRequest) {
+        Long userId = scriptActor(auth);
 
         String scriptContent = request.getScriptContent();
-        if (scriptContent == null && request.getScriptId() != null) {
-            Script script = scriptRepository.findById(request.getScriptId()).orElse(null);
-            if (script != null) {
-                scriptContent = script.getContent();
-            }
+        if (request.getScriptId() != null) {
+            Script script = scriptAccess.requireRead(userId, request.getScriptId());
+            rejectAmbiguousScript(request);
+            scriptContent = script.getContent();
         }
 
         if (scriptContent != null && request.getParameters() != null && !request.getParameters().isEmpty()) {
@@ -73,7 +103,8 @@ public class TaskController {
                 // Return 449 with risk assessment data so frontend can prompt for approval.
                 // Anything that is not explicitly low risk must go through the approval flow,
                 // otherwise the MEDIUM gate could be bypassed by posting a task directly.
-                return R.of(449, risk.getExplanation(), risk);
+                TaskRiskAssessmentVO response = TaskRiskAssessmentVO.from(risk);
+                return R.of(449, response.getExplanation(), response);
             }
         }
 
@@ -84,15 +115,16 @@ public class TaskController {
     }
 
     @PostMapping("/submit-approval")
+    @Transactional
     public R<Task> submitForApproval(@Valid @RequestBody TaskCreateRequest request, Authentication auth,
                                      HttpServletRequest httpRequest) {
-        Long userId = (Long) auth.getPrincipal();
+        Long userId = scriptActor(auth);
 
         String scriptContent = request.getScriptContent();
         String scriptType = "shell";
-        if (scriptContent == null && request.getScriptId() != null) {
-            Script script = scriptRepository.findById(request.getScriptId())
-                    .orElseThrow(() -> new RuntimeException("Script not found"));
+        if (request.getScriptId() != null) {
+            Script script = scriptAccess.requireRead(userId, request.getScriptId());
+            rejectAmbiguousScript(request);
             scriptContent = script.getContent();
             scriptType = script.getScriptType();
         }
@@ -127,7 +159,16 @@ public class TaskController {
             return R.fail(400, "At least one agent must be specified");
         }
 
-        // Create pending approval task (same pattern as AiExecutionService.createPendingApprovalTask)
+        List<TaskTargetSnapshot.Target> targets = new ArrayList<>();
+        for (String agentId : resolvedAgentIds.stream().sorted().toList()) {
+            var identity = hostIdentityService.lock(agentId);
+            if (!identity.active() || identity.generation() <= 0 || !agentRepository.existsById(agentId)
+                    || !hostAclService.allowedForGeneration(userId, agentId, identity.generation(), HostAclService.Permission.EXECUTE)) {
+                throw new BusinessException(403, "Host execute permission required");
+            }
+            targets.add(new TaskTargetSnapshot.Target(agentId, identity.generation()));
+        }
+
         try {
             Task task = new Task();
             task.setId("task_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16));
@@ -146,6 +187,7 @@ public class TaskController {
             task.setApprovalStatus("pending");
             task.setTargetAgentIds(objectMapper.writeValueAsString(new ArrayList<>(resolvedAgentIds)));
             taskRepository.save(task);
+            targetSnapshots.create(new TaskTargetSnapshot(task.getId(), targets));
 
             auditLogService.log(userId, AuditUsers.name(auth), "SUBMIT_APPROVAL", "task",
                     task.getId(), request.getName(), httpRequest.getRemoteAddr(), "pending");
@@ -156,18 +198,13 @@ public class TaskController {
             return R.ok(task);
         } catch (Exception e) {
             log.error("Failed to create pending approval task", e);
-            return R.fail(500, "Failed to submit for approval: " + e.getMessage());
+            throw new IllegalStateException("Failed to submit for approval", e);
         }
     }
 
     @GetMapping("/list")
     public R<List<Task>> list(Authentication auth) {
-        // 归属过滤（B2）：管理员看全部，其余角色只能看自己创建的任务，
-        // 与 agentJobs / detail 端点的所有权语义保持一致。
-        if (isAdmin(auth)) {
-            return R.ok(taskService.listTasks());
-        }
-        return R.ok(taskService.listTasks((Long) auth.getPrincipal()));
+        return R.ok(taskAccessQueries.list((Long) auth.getPrincipal()));
     }
 
     @GetMapping("/page")
@@ -176,40 +213,68 @@ public class TaskController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
             Authentication auth) {
-        int safePage = Math.max(page, 0);
-        int safeSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
-        Pageable pageable = PageRequest.of(safePage, safeSize);
-        if (!isAdmin(auth)) {
-            Long userId = (Long) auth.getPrincipal();
-            Page<Task> tasks = status != null
-                    ? taskService.listTasksByUser(status, userId, pageable)
-                    : taskService.listTasksByUser(userId, pageable);
-            return R.ok(tasks);
-        }
-        return R.ok(taskService.listTasks(status, pageable));
+        return R.ok(taskAccessQueries.page((Long) auth.getPrincipal(), status, page, size));
     }
 
     @GetMapping("/{taskId}")
     public R<TaskDetailVO> detail(@PathVariable String taskId, Authentication auth) {
+        Long actor = (Long) auth.getPrincipal();
+        String currentRole = taskAccessQueries.currentRole(actor);
+        Authentication currentAuth = new UsernamePasswordAuthenticationToken(actor, null,
+                List.of(new SimpleGrantedAuthority("ROLE_" + currentRole.toUpperCase(Locale.ROOT))));
         TaskDetailVO detail = taskService.getTaskDetail(taskId);
-        requireAccess(auth, detail.getTask().getCreatedBy());
+        requireAccess(currentAuth, detail.getTask().getCreatedBy());
+        var snapshot = targetSnapshots.findComplete(taskId).orElseThrow(this::taskIdentityUnavailable);
+        Set<String> targetIds = new HashSet<>();
+        for (var target : snapshot.targets()) targetIds.add(target.agentId());
+        if (!Objects.equals(detail.getTask().getTotalCount(), targetIds.size())
+                || detail.getJobs() == null
+                || detail.getJobs().stream().anyMatch(job -> !targetIds.contains(job.getAgentId()))) {
+            throw taskIdentityUnavailable();
+        }
+        Long userId = (Long) auth.getPrincipal();
+        for (var target : snapshot.targets()) {
+            if (!hostAclService.allowedForGeneration(userId, target.agentId(), target.generation(), HostAclService.Permission.VIEW)) {
+                throw new BusinessException(403, "Host view permission required");
+            }
+        }
+        var nodes = nodeRunRepository.findByTaskId(taskId);
+        var provenanceRuns = taskAccessQueries.provenanceRunIds(taskId);
+        Set<String> nodeRunIds = new HashSet<>();
+        for (var node : nodes) nodeRunIds.add(node.getRunId());
+        if (("workflow".equals(detail.getTask().getSource()) && nodes.isEmpty())
+                || !nodeRunIds.containsAll(provenanceRuns)
+                || !new HashSet<>(provenanceRuns).containsAll(nodeRunIds)) {
+            throw taskIdentityUnavailable();
+        }
+        if (!nodes.isEmpty()) {
+            for (var node : nodes) workflowAccess.requireRunAccess(node.getRunId(), currentAuth);
+            var node = nodes.get(0);
+            detail.setWorkflowSource(new TaskDetailVO.WorkflowSource(node.getRunId(), node.getNodeKey(), node.getAttempt()));
+        }
         return R.ok(detail);
     }
 
     @GetMapping("/agent/{agentId}/jobs")
     public R<List<Job>> agentJobs(@PathVariable String agentId, Authentication auth) {
-        if (!isAdmin(auth)) {
-            // Non-administrators only see jobs belonging to their own tasks
-            Long userId = (Long) auth.getPrincipal();
-            List<Job> jobs = taskService.getAgentJobs(agentId).stream()
-                    .filter(job -> {
-                        Task task = taskRepository.findById(job.getTaskId()).orElse(null);
-                        return task != null && userId.equals(task.getCreatedBy());
-                    })
-                    .toList();
-            return R.ok(jobs);
+        return R.ok(taskAccessQueries.agentJobs((Long) auth.getPrincipal(), agentId));
+    }
+
+    private BusinessException taskIdentityUnavailable() {
+        return new BusinessException(503, TASK_IDENTITY_UNAVAILABLE);
+    }
+
+    private Long scriptActor(Authentication auth) {
+        if (auth == null || !auth.isAuthenticated() || !(auth.getPrincipal() instanceof Long userId)) {
+            throw new BusinessException(401, "Authentication required");
         }
-        return R.ok(taskService.getAgentJobs(agentId));
+        return userId;
+    }
+
+    private void rejectAmbiguousScript(TaskCreateRequest request) {
+        if (request.getScriptContent() != null) {
+            throw new BusinessException(400, "Specify either scriptId or scriptContent");
+        }
     }
 
     private void requireAccess(Authentication auth, Long createdBy) {

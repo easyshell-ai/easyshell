@@ -1,0 +1,44 @@
+{
+  "code": 200,
+  "message": "ok",
+  "data": {
+    "content": [
+      {
+        "id": 2,
+        "name": "Nginx 巡检",
+        "description": "每日巡检 nginx 状态并通知",
+        "category": "ops",
+        "status": "published",
+        "visibility": "public",
+        "currentVersionId": 11,
+        "currentVersion": 3,
+        "runCount": 42,
+        "successCount": 40,
+        "lastRunAt": "2026-02-10T09:30:00",
+        "createdBy": 1,
+        "createdAt": "2026-01-12T10:00:00",
+        "updatedAt": "2026-02-10T09:30:00"
+      },
+      {
+        "id": 7,
+        "name": "磁盘清理审批",
+        "description": "磁盘超过阈值时走人工审批再清理",
+        "category": "cleanup",
+        "status": "draft",
+        "visibility": "private",
+        "currentVersionId": null,
+        "currentVersion": null,
+        "runCount": 0,
+        "successCount": 0,
+        "lastRunAt": null,
+        "createdBy": 1,
+        "createdAt": "2026-02-14T14:20:00",
+        "updatedAt": "2026-02-14T14:20:00"
+      }
+    ],
+    "totalElements": 2,
+    "totalPages": 1,
+    "size": 20,
+    "number": 0
+  }
+}

@@ -6,7 +6,8 @@ import com.easyshell.server.model.entity.Tag;
 import com.easyshell.server.repository.AgentRepository;
 import com.easyshell.server.repository.AgentTagRepository;
 import com.easyshell.server.repository.TagRepository;
-import lombok.RequiredArgsConstructor;
+import com.easyshell.server.service.HostAclService;
+import com.easyshell.server.repository.UserRepository;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
@@ -15,16 +16,38 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 @Component
-@RequiredArgsConstructor
 public class HostListTool {
 
     private final AgentRepository agentRepository;
     private final AgentTagRepository agentTagRepository;
     private final TagRepository tagRepository;
 
+    private final HostAclService hostAclService;
+    private final UserRepository users;
+    private Long currentUserId;
+
+    public HostListTool(AgentRepository agentRepository, AgentTagRepository agentTagRepository, TagRepository tagRepository, HostAclService hostAclService, UserRepository users) {
+        this.agentRepository = agentRepository;
+        this.agentTagRepository = agentTagRepository;
+        this.tagRepository = tagRepository;
+        this.hostAclService = hostAclService;
+        this.users = users;
+    }
+
+    public HostListTool forUser(Long userId, String sourceIp) {
+        HostListTool bound = new HostListTool(agentRepository, agentTagRepository, tagRepository, hostAclService, users);
+        bound.currentUserId = userId;
+        return bound;
+    }
+
+    private boolean canView(String agentId) {
+        return currentUserId != null && currentUserId > 0 && hostAclService.allowed(currentUserId, agentId, HostAclService.Permission.VIEW);
+    }
+
     @Tool(description = "获取所有主机列表，包含主机名、IP、操作系统、状态、CPU/内存/磁盘使用率等信息")
     public String listHosts() {
-        List<Agent> agents = agentRepository.findAll();
+        if (currentUserId == null || currentUserId <= 0) return "错误：无法确定当前用户身份，已拒绝查询。";
+        List<Agent> agents = agentRepository.findAll().stream().filter(a -> canView(a.getId())).toList();
         if (agents.isEmpty()) {
             return "当前没有已注册的主机";
         }
@@ -61,7 +84,8 @@ public class HostListTool {
 
     @Tool(description = "根据状态筛选主机。status: 0=离线, 1=在线, 2=不稳定")
     public String listHostsByStatus(@ToolParam(description = "主机状态: 0=离线, 1=在线, 2=不稳定") int status) {
-        List<Agent> agents = agentRepository.findByStatus(status);
+        if (currentUserId == null || currentUserId <= 0) return "错误：无法确定当前用户身份，已拒绝查询。";
+        List<Agent> agents = agentRepository.findByStatus(status).stream().filter(a -> canView(a.getId())).toList();
         if (agents.isEmpty()) {
             return "没有找到状态为 " + statusText(status) + " 的主机";
         }

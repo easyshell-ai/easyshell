@@ -1,6 +1,5 @@
 package com.easyshell.server.ai.agent;
 
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
@@ -11,10 +10,25 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class GetTaskResultTool {
 
     private final BackgroundTaskManager backgroundTaskManager;
+    private final Long currentUserId;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public GetTaskResultTool(BackgroundTaskManager backgroundTaskManager) {
+        this(backgroundTaskManager, null);
+    }
+
+    private GetTaskResultTool(BackgroundTaskManager backgroundTaskManager, Long currentUserId) {
+        this.backgroundTaskManager = backgroundTaskManager;
+        this.currentUserId = currentUserId;
+    }
+
+    public GetTaskResultTool forUser(Long userId, String sourceIp) {
+        return new GetTaskResultTool(backgroundTaskManager, userId);
+    }
+
 
     /** Track poll attempts per taskId for exponential backoff: 5s, 10s, 20s, 40s... cap at 60s */
     private final ConcurrentHashMap<String, AtomicInteger> pollCounts = new ConcurrentHashMap<>();
@@ -26,9 +40,10 @@ public class GetTaskResultTool {
     public String getTaskResult(
             @ToolParam(description = "delegate_task 返回的任务ID") String taskId) {
 
+        if (currentUserId == null || currentUserId <= 0 || taskId == null) return "错误：无法确定当前用户身份或任务。";
         log.info("GetTaskResult invoked: taskId={}", taskId);
 
-        BackgroundTask task = backgroundTaskManager.getTask(taskId);
+        BackgroundTask task = backgroundTaskManager.getTask(taskId, currentUserId);
         if (task == null) {
             pollCounts.remove(taskId);
             return "错误: 未找到任务ID '" + taskId + "'";

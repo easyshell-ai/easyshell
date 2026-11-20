@@ -1,0 +1,7 @@
+[Unit]
+Description=EasyShell isolated code execution stack
+Requires=easyshell-code-control.service
+After=easyshell-code-control.service
+
+[Install]
+WantedBy=multi-user.target

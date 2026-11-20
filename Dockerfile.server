@@ -1,4 +1,4 @@
-ARG VERSION=1.1.2
+ARG VERSION=1.2.0
 
 # ---- Stage 1: Build Go Agent binaries (always cross-compile both) ----
 FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS agent-builder
@@ -20,7 +20,7 @@ COPY easyshell-server/ .
 RUN gradle test bootJar --no-daemon
 
 # ---- Stage 3: Production runtime ----
-FROM eclipse-temurin:25-jre-jammy
+FROM eclipse-temurin:17-jre-jammy
 
 RUN apt-get update && apt-get install -y --no-install-recommends curl tzdata && \
     rm -rf /var/lib/apt/lists/* && \
@@ -40,7 +40,7 @@ COPY scripts/init-secrets.sh scripts/server-entrypoint.sh scripts/
 RUN chmod 700 scripts/init-secrets.sh scripts/server-entrypoint.sh
 
 ARG VERSION
-ENV EASYSHELL_VERSION=${VERSION:-1.1.2} \
+ENV EASYSHELL_VERSION=${VERSION:-1.2.0} \
     MYSQL_HOST=easyshell-mysql \
     MYSQL_PORT=3306 \
     MYSQL_DATABASE=easyshell \
@@ -54,6 +54,6 @@ ENV EASYSHELL_VERSION=${VERSION:-1.1.2} \
 EXPOSE 18080
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=3 \
-    CMD curl -sf http://localhost:18080/actuator/health || exit 1
+    CMD curl -sf "http://localhost:${SERVER_PORT:-18080}/actuator/health" || exit 1
 
 ENTRYPOINT ["/opt/easyshell/scripts/server-entrypoint.sh"]

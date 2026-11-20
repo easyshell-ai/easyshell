@@ -15,13 +15,13 @@ const MemoryCard: React.FC<MemoryCardProps> = ({ content }) => {
     <div style={{
       marginBottom: 10,
       padding: '8px 12px',
-      background: 'rgba(114,46,209,0.04)',
+      background: token.colorPrimaryBg,
       borderRadius: 8,
-      border: '1px solid rgba(114,46,209,0.15)',
+      border: `1px solid ${token.colorPrimaryBorder}`,
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: content ? 6 : 0 }}>
-        <BulbOutlined style={{ color: '#722ed1', fontSize: 14 }} />
-        <span style={{ fontSize: 12, fontWeight: 600, color: '#722ed1' }}>
+        <BulbOutlined style={{ color: token.colorPrimary, fontSize: 14 }} />
+        <span style={{ fontSize: 12, fontWeight: 600, color: token.colorPrimary }}>
           {t('ai.chat.memory_retrieved')}
         </span>
       </div>

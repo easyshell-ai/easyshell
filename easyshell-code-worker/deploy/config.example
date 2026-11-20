@@ -1,0 +1,17 @@
+# TEMPLATE ONLY. Root-owned reviewed substitutions; never source untrusted input.
+# Replace @TOKENS@ in copied service templates during protected release rendering.
+# These values are identities/paths, not private keys or real deployment endpoints.
+CONTROL_UID=17001
+CONTROL_GID=17001
+CLIENT_DNS=code-client.example.invalid
+LISTEN_HOST=127.0.0.1
+LISTEN_PORT=9443
+TLS_CERT=/etc/easyshell-code/tls/server.crt
+TLS_KEY=/etc/easyshell-code/tls/server.key
+TLS_CA=/etc/easyshell-code/tls/client-ca.crt
+RUNTIME_SOCKET=/run/easyshell-code/runtime/docker.sock
+RPC_SOCKET=/run/easyshell-code/control-rpc/orchestrator.sock
+# Must be independently enrolled, never auto-discovered/accepted from a socket.
+DAEMON_ID=@TRUSTED_DAEMON_ID@
+TASK_IMAGE=@APPROVED_REPOSITORY@sha256:@64_LOWERCASE_HEX@
+# service-entry obtains the live session from the protected journal, never a static token.

@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Table, Button, Form, Input, Select, InputNumber, Tag, Space, Drawer, Card,
-  Row, Col, message, Divider, Descriptions, theme, Modal,
+  Row, Col, message, Divider, Descriptions, theme, Modal, Alert, Spin,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { PlayCircleOutlined, EyeOutlined, ClusterOutlined, TagsOutlined, ReloadOutlined } from '@ant-design/icons';
@@ -10,11 +10,16 @@ import dayjs from 'dayjs';
 import CodeMirror from '@uiw/react-codemirror';
 import { StreamLanguage } from '@codemirror/language';
 import { shell } from '@codemirror/legacy-modes/mode/shell';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { getWorkflowPage, getWorkflowDetail, getWorkflowVersion, triggerWorkflowRun } from '../workflow/api';
+import { TriggerModal } from '../workflow/editor/modals';
+import type { WorkflowDefinition, WorkflowSummary } from '../workflow/types';
 import { createTask, getTaskList, getTaskDetail, submitTaskForApproval } from '../../api/task';
 import { getToken } from '../../api/request';
 import { buildTaskLogWsUrl } from '../../utils/ws';
 import { getScriptList, getScriptParameters } from '../../api/script';
 import { getHostList } from '../../api/host';
+import { queryMyHostPermissions } from '../../api/myHostPermissions';
 import { getClusterList } from '../../api/cluster';
 import { getTagList } from '../../api/tag';
 import type { Task, TaskDetail, Script, Agent, Job, TaskCreateRequest, ClusterVO, TagVO, RiskAssessment } from '../../types';
@@ -30,11 +35,27 @@ const MAX_TASK_LOG_LINES = 5000;
 const TaskPage: React.FC = () => {
   const { t } = useTranslation();
   const { token } = theme.useToken();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const taskIdFromUrl = searchParams.get('taskId');
+  const [workflowPickerOpen, setWorkflowPickerOpen] = useState(false);
+  const [workflowLoading, setWorkflowLoading] = useState(false);
+  const [workflowPage, setWorkflowPage] = useState({ content: [] as WorkflowSummary[], number: 0, totalElements: 0, size: 20 });
+  const [triggerTarget, setTriggerTarget] = useState<{ id: number; name: string; versionId: number; version: number; definition: WorkflowDefinition } | null>(null);
+  const [triggerLoading, setTriggerLoading] = useState(false);
+  const workflowRequestRef = useRef(0);
+  const detailRequestRef = useRef(0);
+  const taskListRequestRef = useRef(0);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
+  const [taskListError, setTaskListError] = useState<'identity' | 'fetch' | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [scripts, setScripts] = useState<Script[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [hostPermissions, setHostPermissions] = useState<Record<string, boolean>>({});
+  const [permissionStatus, setPermissionStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const permissionRequestRef = useRef(0);
+  const permissionSnapshotRef = useRef<{ status: 'loading' | 'ready' | 'error'; values: Record<string, boolean> }>({ status: 'loading', values: {} });
   const [clusters, setClusters] = useState<ClusterVO[]>([]);
   const [tags, setTags] = useState<TagVO[]>([]);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -45,6 +66,11 @@ const TaskPage: React.FC = () => {
   const [hasRealLogs, setHasRealLogs] = useState(false);
   const [scriptMode, setScriptMode] = useState<'select' | 'manual'>('select');
   const [targetMode, setTargetMode] = useState<'agent' | 'cluster' | 'tag'>('agent');
+  const targetModeRef = useRef(targetMode);
+  const changeTargetMode = (mode: 'agent' | 'cluster' | 'tag') => {
+    targetModeRef.current = mode;
+    setTargetMode(mode);
+  };
   const [form] = Form.useForm<TaskCreateRequest & { scriptContentManual?: string }>();
   const wsRef = useRef<WebSocket | null>(null);
   const logContainerRef = useRef<HTMLDivElement>(null);
@@ -104,20 +130,66 @@ const TaskPage: React.FC = () => {
   }, []);
 
   const fetchTasks = useCallback(() => {
+    const requestId = ++taskListRequestRef.current;
     setLoading(true);
+    setTaskListError(null);
     getTaskList()
       .then((res) => {
+        if (requestId !== taskListRequestRef.current) return;
         if (res.code === 200) setTasks(res.data || []);
+        else setTaskListError(res.code === 503 ? 'identity' : 'fetch');
       })
-      .finally(() => setLoading(false));
+      .catch((error: unknown) => {
+        if (requestId !== taskListRequestRef.current) return;
+        const code = (error as { response?: { data?: { code?: number } } })?.response?.data?.code;
+        setTaskListError(code === 503 ? 'identity' : 'fetch');
+      })
+      .finally(() => { if (requestId === taskListRequestRef.current) setLoading(false); });
+  }, []);
+
+  const loadHostPermissions = useCallback(async (hosts: Agent[]) => {
+    const requestId = ++permissionRequestRef.current;
+    permissionSnapshotRef.current = { status: 'loading', values: {} };
+    setPermissionStatus('loading');
+    setHostPermissions({});
+    try {
+      const ids = hosts.filter((host) => host.status === 1).map((host) => host.id);
+      const batches: (typeof ids)[] = [];
+      for (let i = 0; i < ids.length; i += 100) batches.push(ids.slice(i, i + 100));
+      const responses = await Promise.all(batches.map((batch) => queryMyHostPermissions(batch)));
+      if (responses.some((res) => res.code !== 200 || !Array.isArray(res.data))) throw new Error('Permission query failed');
+      const values: Record<string, boolean> = {};
+      responses.forEach((res, index) => res.data.forEach((permission) => {
+        if (batches[index].includes(permission.agentId) && typeof permission.execute === 'boolean') values[permission.agentId] = permission.execute;
+      }));
+      if (requestId !== permissionRequestRef.current) return;
+      permissionSnapshotRef.current = { status: 'ready', values };
+      setHostPermissions(values);
+      setPermissionStatus('ready');
+    } catch {
+      if (requestId !== permissionRequestRef.current) return;
+      permissionSnapshotRef.current = { status: 'error', values: {} };
+      setPermissionStatus('error');
+    }
   }, []);
 
   const fetchOptions = useCallback(() => {
     getScriptList().then((res) => {
       if (res.code === 200) setScripts(res.data || []);
     });
+    const hostRequestId = ++permissionRequestRef.current;
+    permissionSnapshotRef.current = { status: 'loading', values: {} };
+    setHostPermissions({});
+    setPermissionStatus('loading');
     getHostList().then((res) => {
-      if (res.code === 200) setAgents(res.data || []);
+      if (hostRequestId !== permissionRequestRef.current) return;
+      if (res.code !== 200 || !Array.isArray(res.data)) throw new Error('Host list failed');
+      setAgents(res.data);
+      void loadHostPermissions(res.data);
+    }).catch(() => {
+      if (hostRequestId !== permissionRequestRef.current) return;
+      permissionSnapshotRef.current = { status: 'error', values: {} };
+      setPermissionStatus('error');
     });
     getClusterList().then((res) => {
       if (res.code === 200) setClusters(res.data || []);
@@ -125,7 +197,7 @@ const TaskPage: React.FC = () => {
     getTagList().then((res) => {
       if (res.code === 200) setTags(res.data || []);
     });
-  }, []);
+  }, [loadHostPermissions]);
 
   useEffect(() => {
     fetchTasks();
@@ -185,6 +257,10 @@ const TaskPage: React.FC = () => {
 
   useEffect(() => {
     return () => {
+      ++detailRequestRef.current;
+      ++workflowRequestRef.current;
+      ++taskListRequestRef.current;
+      ++permissionRequestRef.current;
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;
@@ -225,21 +301,39 @@ const TaskPage: React.FC = () => {
     wsRef.current = ws;
   };
 
-  const handleViewDetail = (taskId: string) => {
+  const handleViewDetail = useCallback((taskId: string) => {
+    const requestId = ++detailRequestRef.current;
     setDrawerOpen(true);
     setDetailLoading(true);
     setTaskDetail(null);
+    if (wsRef.current) { wsRef.current.close(); wsRef.current = null; }
+    if (detailTimerRef.current) { clearInterval(detailTimerRef.current); detailTimerRef.current = null; }
+    setLogs([]);
+    setHasRealLogs(false);
+    setWsStatus('idle');
     getTaskDetail(taskId)
       .then((res) => {
-        if (res.code === 200) setTaskDetail(res.data);
+        if (requestId !== detailRequestRef.current) return;
+        if (res.code === 200 && res.data?.task) {
+          setTaskDetail(res.data);
+          connectWebSocket(taskId);
+          detailTimerRef.current = setInterval(() => refreshTaskDetail(taskId), 2000);
+        } else {
+          message.error(res.code === 403 ? t('workflow.error.403') : t('task.detailLoadFailed'));
+        }
       })
-      .finally(() => setDetailLoading(false));
-    connectWebSocket(taskId);
-    if (detailTimerRef.current) clearInterval(detailTimerRef.current);
-    detailTimerRef.current = setInterval(() => refreshTaskDetail(taskId), 2000);
-  };
+      .catch(() => { if (requestId === detailRequestRef.current) message.error(t('task.detailLoadFailed')); })
+      .finally(() => { if (requestId === detailRequestRef.current) setDetailLoading(false); });
+  // connectWebSocket uses stable setters and refs only.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshTaskDetail, t]);
+
+  useEffect(() => {
+    if (taskIdFromUrl) handleViewDetail(taskIdFromUrl);
+  }, [taskIdFromUrl, handleViewDetail]);
 
   const handleCloseDrawer = () => {
+    ++detailRequestRef.current;
     setDrawerOpen(false);
     setTaskDetail(null);
     setLogs([]);
@@ -255,6 +349,78 @@ const TaskPage: React.FC = () => {
     }
   };
 
+  const loadWorkflows = async (page: number) => {
+    const requestId = ++workflowRequestRef.current;
+    setWorkflowLoading(true);
+    setWorkflowPage((prev) => ({ ...prev, content: [] }));
+    try {
+      const res = await getWorkflowPage({ page, size: 20, status: 'published' });
+      if (res.code !== 200 || !res.data) {
+        if (requestId === workflowRequestRef.current) message.error(res.code === 403 ? t('workflow.error.403') : t('workflow.list.fetchFailed'));
+        return;
+      }
+      // The list includes public workflows belonging to other users. Only a successful
+      // owner/admin detail check makes a row selectable; public is not authority.
+      const checked = await Promise.all(res.data.content.map(async (workflow) => {
+        try {
+          const detail = await getWorkflowDetail(workflow.id);
+          return detail.code === 200 && detail.data?.workflow?.status === 'published' && detail.data.workflow.currentVersionId ? workflow : null;
+        } catch { return null; }
+      }));
+      if (requestId === workflowRequestRef.current) setWorkflowPage({ ...res.data, content: checked.filter((item): item is WorkflowSummary => item !== null) });
+    } catch {
+      if (requestId === workflowRequestRef.current) message.error(t('workflow.list.fetchFailed'));
+    } finally {
+      if (requestId === workflowRequestRef.current) setWorkflowLoading(false);
+    }
+  };
+
+  const selectWorkflow = async (workflow: WorkflowSummary) => {
+    const requestId = ++workflowRequestRef.current;
+    setWorkflowLoading(true);
+    try {
+      const detail = await getWorkflowDetail(workflow.id);
+      if (detail.code !== 200 || !detail.data?.workflow) {
+        message.error(detail.code === 403 ? t('workflow.error.403') : t('workflow.list.fetchFailed'));
+        return;
+      }
+      const versionId = detail.data.workflow.currentVersionId;
+      if (detail.data.workflow.status !== 'published' || !versionId) {
+        message.warning(t('workflow.trigger.notPublished'));
+        return;
+      }
+      const version = await getWorkflowVersion(workflow.id, versionId);
+      if (version.code !== 200 || version.data?.id !== versionId || !version.data.definition) {
+        message.error(version.code === 403 ? t('workflow.error.403') : t('workflow.list.fetchFailed'));
+        return;
+      }
+      if (requestId !== workflowRequestRef.current) return;
+      setWorkflowPickerOpen(false);
+      setTriggerTarget({ id: workflow.id, name: detail.data.workflow.name, versionId, version: version.data.version, definition: version.data.definition });
+    } catch {
+      if (requestId === workflowRequestRef.current) message.error(t('workflow.list.fetchFailed'));
+    } finally {
+      if (requestId === workflowRequestRef.current) setWorkflowLoading(false);
+    }
+  };
+
+  const handleTriggerWorkflow = async (inputs: Record<string, unknown>, idempotencyKey: string) => {
+    if (!triggerTarget || triggerLoading) return;
+    setTriggerLoading(true);
+    try {
+      const res = await triggerWorkflowRun(triggerTarget.id, { input: inputs, idempotencyKey, versionId: triggerTarget.versionId });
+      if (res.code === 200 && res.data?.id) {
+        setTriggerTarget(null);
+        message.success(t('workflow.trigger.success'));
+        navigate(`/workflow/run/${res.data.id}`);
+      } else if (res.code === 403) message.error(t('workflow.error.403'));
+      else if (res.code === 409) message.warning(t('workflow.trigger.notPublished'));
+      else if (res.code === 429) message.warning(t('workflow.trigger.concurrency'));
+      else message.error(res.message || t('workflow.trigger.failed'));
+    } catch { message.error(t('workflow.trigger.failed')); }
+    finally { setTriggerLoading(false); }
+  };
+
   const handleSubmit = () => {
     // Validate manual script content before form validation
     if (scriptMode === 'manual' && !manualScriptContent.trim()) {
@@ -262,6 +428,9 @@ const TaskPage: React.FC = () => {
       return;
     }
     form.validateFields().then((values) => {
+      if (targetModeRef.current !== targetMode) return;
+      if (targetMode === 'agent' && (permissionSnapshotRef.current.status !== 'ready' ||
+        !values.agentIds?.length || values.agentIds.some((id) => permissionSnapshotRef.current.values[id] !== true))) return;
       setSubmitting(true);
       const taskRequest: TaskCreateRequest = {
         name: values.name,
@@ -322,7 +491,7 @@ const TaskPage: React.FC = () => {
                     <p><strong>{t('task.risk.bannedCommands')}:</strong> {risk.bannedMatches.join(', ')}</p>
                   )}
                   <p><strong>{t('task.risk.explanation')}:</strong> {risk.explanation}</p>
-                  <p style={{ marginTop: 12, color: '#faad14' }}>{t('task.risk.confirmHint')}</p>
+                  <p style={{ marginTop: 12, color: token.colorWarning }}>{t('task.risk.confirmHint')}</p>
                 </div>
               ),
               okText: t('task.risk.submitApproval'),
@@ -351,6 +520,8 @@ const TaskPage: React.FC = () => {
   };
 
   const onlineAgents = agents.filter((a) => a.status === 1);
+  const selectedAgents = Form.useWatch('agentIds', form) || [];
+  const hostSubmitBlocked = permissionStatus !== 'ready' || selectedAgents.some((id) => hostPermissions[id] !== true);
 
   const taskColumns: ColumnsType<Task> = [
     { title: t('task.col.name'), dataIndex: 'name', key: 'name', width: 200 },
@@ -412,7 +583,7 @@ const TaskPage: React.FC = () => {
 
   return (
     <>
-      <Card title={<span style={{ color: token.colorText }}>{t('task.createTask')}</span>} size="small" style={{ marginBottom: 16, borderRadius: 12 }}>
+      <Card title={<span style={{ color: token.colorText }}>{t('task.createTask')}</span>} size="small" style={{ marginBottom: 16 }}>
         <Form form={form} layout="vertical">
           <Row gutter={16}>
             <Col span={8}>
@@ -424,15 +595,15 @@ const TaskPage: React.FC = () => {
               <Form.Item label={t('task.targetMode')}>
                 <Space>
                   <Button type={targetMode === 'agent' ? 'primary' : 'default'} size="small"
-                    onClick={() => setTargetMode('agent')}>
+                    onClick={() => changeTargetMode('agent')}>
                     {t('task.byHost')}
                   </Button>
                   <Button type={targetMode === 'cluster' ? 'primary' : 'default'} size="small"
-                    icon={<ClusterOutlined />} onClick={() => setTargetMode('cluster')}>
+                    icon={<ClusterOutlined />} onClick={() => changeTargetMode('cluster')}>
                     {t('task.byCluster')}
                   </Button>
                   <Button type={targetMode === 'tag' ? 'primary' : 'default'} size="small"
-                    icon={<TagsOutlined />} onClick={() => setTargetMode('tag')}>
+                    icon={<TagsOutlined />} onClick={() => changeTargetMode('tag')}>
                     {t('task.byTag')}
                   </Button>
                 </Space>
@@ -454,12 +625,17 @@ const TaskPage: React.FC = () => {
                     placeholder={t('task.pleaseSelectOnlineHost')}
                     options={onlineAgents.map((a) => ({
                       value: a.id,
-                      label: `${a.hostname} (${a.ip})`,
+                      label: `${a.hostname} (${a.ip})${hostPermissions[a.id] === false ? ` — ${t('task.hostExecuteDenied', { defaultValue: 'No execute permission' })}` : hostPermissions[a.id] !== true ? ` — ${t('task.hostExecuteUnknown', { defaultValue: 'Execute permission unknown' })}` : ''}`,
+                      disabled: hostPermissions[a.id] !== true,
                     }))}
                     maxTagCount={3}
                   />
                 </Form.Item>
               )}
+              {targetMode === 'agent' && permissionStatus === 'loading' && <Alert type="info" showIcon message={t('task.hostPermissionsLoading', { defaultValue: 'Checking host execute permissions…' })} />}
+              {targetMode === 'agent' && permissionStatus === 'error' && <Alert type="warning" showIcon message={t('task.hostPermissionsFailed', { defaultValue: 'Host permissions could not be checked. Retry before submitting.' })} action={<Button onClick={() => fetchOptions()}>{t('common.refresh')}</Button>} />}
+              {targetMode === 'agent' && permissionStatus === 'ready' && onlineAgents.some((a) => hostPermissions[a.id] === undefined) && <Alert type="warning" showIcon message={t('task.hostPermissionsIncomplete', { defaultValue: 'Some host permissions are unknown. Retry before selecting those hosts.' })} action={<Button onClick={() => void loadHostPermissions(agents)}>{t('common.refresh')}</Button>} />}
+              {targetMode !== 'agent' && <Alert type="info" showIcon message={t('task.dynamicTargetsPermissionHint', { defaultValue: 'Membership can change. Permissions for all resolved hosts are checked by the server when the task runs.' })} />}
               {targetMode === 'cluster' && (
                 <Form.Item name="clusterIds" label={t('task.targetCluster')}
                   rules={[{ required: true, message: t('task.pleaseSelectCluster') }]}>
@@ -468,7 +644,7 @@ const TaskPage: React.FC = () => {
                     placeholder={t('task.clusterPlaceholder')}
                     options={clusters.map((c) => ({
                       value: c.id,
-                      label: `${c.name} (${c.agentCount} ${t('task.hosts')})`,
+                      label: c.name,
                     }))}
                     maxTagCount={3}
                   />
@@ -482,7 +658,7 @@ const TaskPage: React.FC = () => {
                     placeholder={t('task.tagPlaceholder')}
                     options={tags.map((tag) => ({
                       value: tag.id,
-                      label: `${tag.name} (${tag.agentCount} ${t('task.hosts')})`,
+                      label: tag.name,
                     }))}
                     maxTagCount={3}
                   />
@@ -607,13 +783,23 @@ const TaskPage: React.FC = () => {
               </Col>
             </Row>
           )}
-          <Button type="primary" icon={<PlayCircleOutlined />} loading={submitting} onClick={handleSubmit}>
+          <Button type="primary" icon={<PlayCircleOutlined />} loading={submitting} disabled={targetMode === 'agent' && hostSubmitBlocked} onClick={handleSubmit}>
             {t('task.executeTask')}
+          </Button>
+          <Button style={{ marginLeft: 8 }} icon={<PlayCircleOutlined />} onClick={() => { setWorkflowPickerOpen(true); void loadWorkflows(0); }}>
+            {t('task.runWorkflow')}
           </Button>
         </Form>
       </Card>
 
-      <Card title={<span style={{ color: token.colorText }}>{t('task.taskList')}</span>} size="small" style={{ borderRadius: 12 }}>
+      <Card title={<span style={{ color: token.colorText }}>{t('task.taskList')}</span>} size="small">
+        {loading ? <Spin /> : taskListError ? (
+          <Alert type="error" showIcon message={taskListError === 'identity'
+            ? t('resourceIdentity.unavailable', { defaultValue: 'Permissions or resource identity cannot currently be verified. Please contact an administrator.' })
+            : t('resourceIdentity.fetchFailed', { defaultValue: 'Unable to load data. Check your connection and retry; contact an administrator if the problem persists.' })}
+          action={<Button onClick={fetchTasks}>{t('common.refresh')}</Button>} />
+        ) : <>
+        <Alert type="info" showIcon style={{ marginBottom: 16 }} message={t('task.historyVisibilityNotice', { defaultValue: 'Historical tasks whose identity has not been verified and workflow tasks are temporarily not shown in this list. The data has not been deleted.' })} />
         <Table<Task>
           columns={taskColumns}
           dataSource={tasks}
@@ -622,7 +808,19 @@ const TaskPage: React.FC = () => {
           scroll={{ x: 1000 }}
           pagination={{ pageSize: 15 }}
         />
+        </>}
       </Card>
+
+      <Modal title={t('task.runWorkflow')} open={workflowPickerOpen} footer={null} onCancel={() => { ++workflowRequestRef.current; setWorkflowPickerOpen(false); setWorkflowLoading(false); }}>
+        <Table<WorkflowSummary> rowKey="id" loading={workflowLoading} dataSource={workflowPage.content}
+          columns={[
+            { title: t('workflow.list.col.name'), dataIndex: 'name' },
+            { title: t('workflow.list.col.version'), dataIndex: 'currentVersion', render: (version: number | null) => version != null ? `v${version}` : '-' },
+            { title: t('common.actions'), render: (_, workflow) => <Button disabled={workflowLoading} onClick={() => void selectWorkflow(workflow)}>{t('workflow.trigger.action')}</Button> },
+          ]}
+          pagination={{ current: workflowPage.number + 1, pageSize: workflowPage.size, total: workflowPage.totalElements, showSizeChanger: false, onChange: (page) => void loadWorkflows(page - 1) }} />
+      </Modal>
+      {triggerTarget && <TriggerModal open definition={triggerTarget.definition} workflowName={triggerTarget.name} version={triggerTarget.version} loading={triggerLoading} onCancel={() => setTriggerTarget(null)} onSubmit={(inputs, key) => void handleTriggerWorkflow(inputs, key)} />}
 
       <Drawer
         title={
@@ -661,7 +859,7 @@ const TaskPage: React.FC = () => {
 
             {taskDetail.task.scriptContent && (
               <>
-                <Divider style={{ marginTop: 24 }}>{t('task.scriptContent')}</Divider>
+                <Divider style={{ marginTop: 16 }}>{t('task.scriptContent')}</Divider>
                 <pre style={{
                   background: token.colorFillAlter,
                   padding: 12,
@@ -680,7 +878,7 @@ const TaskPage: React.FC = () => {
               </>
             )}
 
-            <Divider style={{ marginTop: 24 }}>{t('task.executionNodes')}</Divider>
+            <Divider style={{ marginTop: 16 }}>{t('task.executionNodes')}</Divider>
             <Table<Job>
               columns={jobColumns}
               dataSource={taskDetail.jobs || []}
@@ -701,7 +899,7 @@ const TaskPage: React.FC = () => {
               }}
             />
 
-            <Divider style={{ marginTop: 24 }}>{t('task.realTimeLogs')}</Divider>
+            <Divider style={{ marginTop: 16 }}>{t('task.realTimeLogs')}</Divider>
             <div
               ref={logContainerRef}
               style={{
@@ -750,7 +948,7 @@ const TaskPage: React.FC = () => {
           </>
         )}
         {!taskDetail && detailLoading && (
-          <div style={{ textAlign: 'center', padding: 40, color: token.colorTextTertiary }}>{t('common.loading')}</div>
+          <div style={{ textAlign: 'center', padding: 16, color: token.colorTextTertiary }}>{t('common.loading')}</div>
         )}
       </Drawer>
     </>

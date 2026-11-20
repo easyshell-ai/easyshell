@@ -1,5 +1,5 @@
 import request from './request';
-import { getToken, clearSession } from './request';
+import { getToken, clearSession, getSessionEpoch, subscribeSessionEpoch } from './request';
 import i18n from '../i18n';
 import type { ApiResponse, Script, ScriptRequest, AgentEvent } from '../types';
 
@@ -54,10 +54,28 @@ export function generateScript(
   onComplete: () => void,
 ): AbortController {
   const controller = new AbortController();
+  const epoch = getSessionEpoch();
+  const isCurrentSession = () => epoch === getSessionEpoch();
   const token = getToken();
   let receivedTerminalEvent = false;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  const fetchAbort = new AbortController();
+  const cleanup = () => {
+    unsubscribe();
+    controller.signal.removeEventListener('abort', cancel);
+  };
+  const cancel = () => {
+    fetchAbort.abort();
+    if (reader) void reader.cancel().catch(() => {});
+    cleanup();
+  };
+  const unsubscribe = subscribeSessionEpoch(() => {
+    if (!isCurrentSession()) cancel();
+  });
+  controller.signal.addEventListener('abort', cancel, { once: true });
 
   const wrappedOnEvent = (event: AgentEvent) => {
+    if (!isCurrentSession()) return;
     if (event.type === 'DONE' || event.type === 'ERROR') {
       receivedTerminalEvent = true;
     }
@@ -73,26 +91,30 @@ export function generateScript(
       'Accept-Language': i18n.language || 'zh-CN',
     },
     body: JSON.stringify(data),
-    signal: controller.signal,
+    signal: fetchAbort.signal,
   })
     .then(async (response) => {
+      if (!isCurrentSession() || controller.signal.aborted) { cleanup(); return; }
       if (!response.ok) {
         if (response.status === 401) {
+          cleanup();
           clearSession();
           window.location.href = '/login';
           return;
         }
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
-      const reader = response.body?.getReader();
+      reader = response.body?.getReader();
       if (!reader) throw new Error('No response body');
+      const activeReader = reader;
 
       const decoder = new TextDecoder();
       let buffer = '';
 
       try {
         while (true) {
-          const { done, value } = await reader.read();
+          const { done, value } = await activeReader.read();
+          if (!isCurrentSession() || controller.signal.aborted) { cleanup(); return; }
           if (done) break;
 
           buffer += decoder.decode(value, { stream: true });
@@ -139,9 +161,12 @@ export function generateScript(
         }
       }
 
-      onComplete();
+      if (isCurrentSession() && !controller.signal.aborted) onComplete();
+      cleanup();
     })
     .catch((err) => {
+      cleanup();
+      if (!isCurrentSession() || controller.signal.aborted) return;
       if (err.name === 'AbortError') return;
       if (receivedTerminalEvent) {
         onComplete();

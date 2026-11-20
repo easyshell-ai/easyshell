@@ -345,7 +345,7 @@ const BotConfig: React.FC = () => {
                 {t('common.save')}
               </Button>
             }
-            style={{ borderRadius: 12 }}
+            style={{ borderRadius: 8 }}
           >
             <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
               {t('aiConfig.channel.description')}

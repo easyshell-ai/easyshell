@@ -1,0 +1,46 @@
+{
+  "code": 200,
+  "message": "ok",
+  "data": [
+    {
+      "id": "demo-agent-001",
+      "hostname": "prod-web-01",
+      "ip": "10.0.1.11",
+      "os": "Ubuntu 24.04.1 LTS",
+      "arch": "x86_64",
+      "kernel": "6.8.0-45-generic",
+      "cpuModel": "Intel(R) Xeon(R) Gold 6248R",
+      "cpuCores": 8,
+      "memTotal": 34359738368,
+      "agentVersion": "1.3.0",
+      "status": 1,
+      "lastHeartbeat": "2026-01-06T14:32:10",
+      "cpuUsage": 42.5,
+      "memUsage": 61.2,
+      "diskUsage": 55.8,
+      "registeredAt": "2025-11-20T09:05:40",
+      "createdAt": "2025-11-20T09:05:40",
+      "updatedAt": "2026-01-06T14:32:10"
+    },
+    {
+      "id": "demo-agent-002",
+      "hostname": "prod-db-01",
+      "ip": "10.0.1.12",
+      "os": "Debian GNU/Linux 12 (bookworm)",
+      "arch": "x86_64",
+      "kernel": "6.1.0-25-amd64",
+      "cpuModel": "AMD EPYC 7543 32-Core Processor",
+      "cpuCores": 16,
+      "memTotal": 68719476736,
+      "agentVersion": "1.3.0",
+      "status": 1,
+      "lastHeartbeat": "2026-01-06T14:31:02",
+      "cpuUsage": 87.3,
+      "memUsage": 79.6,
+      "diskUsage": 68.1,
+      "registeredAt": "2025-11-21T10:23:51",
+      "createdAt": "2025-11-21T10:23:51",
+      "updatedAt": "2026-01-06T14:31:02"
+    }
+  ]
+}

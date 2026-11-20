@@ -3,16 +3,39 @@ package com.easyshell.server.ai.tool;
 import com.easyshell.server.model.dto.HostProvisionRequest;
 import com.easyshell.server.model.vo.HostCredentialVO;
 import com.easyshell.server.service.HostProvisionService;
-import lombok.RequiredArgsConstructor;
+import com.easyshell.server.repository.UserRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
 
 @Component
-@RequiredArgsConstructor
 public class HostManageTool {
 
     private final HostProvisionService hostProvisionService;
+    private final UserRepository users;
+    private final Long currentUserId;
+
+    @Autowired
+    public HostManageTool(HostProvisionService hostProvisionService, UserRepository users) {
+        this(hostProvisionService, users, null);
+    }
+
+    private HostManageTool(HostProvisionService hostProvisionService, UserRepository users, Long currentUserId) {
+        this.hostProvisionService = hostProvisionService;
+        this.users = users;
+        this.currentUserId = currentUserId;
+    }
+
+    public HostManageTool forUser(Long userId, String sourceIp) {
+        return new HostManageTool(hostProvisionService, users, userId);
+    }
+
+    private boolean isActiveSuperAdmin() {
+        if (currentUserId == null || currentUserId <= 0) return false;
+        var user = users.findById(currentUserId).orElse(null);
+        return user != null && Integer.valueOf(1).equals(user.getStatus()) && "super_admin".equals(user.getRole());
+    }
 
     @Tool(description = "添加新主机到EasyShell管理平台。需要提供目标主机的IP地址、SSH端口、SSH用户名和SSH密码。系统会通过SSH连接到目标主机，自动安装并启动Agent。安装过程是异步的，返回部署记录ID供后续查询状态。")
     public String addHost(
@@ -21,6 +44,7 @@ public class HostManageTool {
             @ToolParam(description = "SSH用户名") String sshUsername,
             @ToolParam(description = "SSH密码") String sshPassword) {
         try {
+            if (!isActiveSuperAdmin()) return "错误：需要有效的超级管理员身份，操作已拒绝。";
             HostProvisionRequest request = new HostProvisionRequest();
             request.setIp(ip);
             request.setSshPort(sshPort != null ? sshPort : 22);
@@ -46,6 +70,7 @@ public class HostManageTool {
     public String removeHost(
             @ToolParam(description = "目标主机的 Agent ID。必须是真实存在的主机 ID，如果上下文中用户已指定目标主机则直接使用其 ID，否则请先调用 listHosts 工具获取") String agentId) {
         try {
+            if (!isActiveSuperAdmin()) return "错误：需要有效的超级管理员身份，操作已拒绝。";
             HostCredentialVO vo = hostProvisionService.uninstall(agentId);
             hostProvisionService.startUninstallAsync(vo.getId());
 

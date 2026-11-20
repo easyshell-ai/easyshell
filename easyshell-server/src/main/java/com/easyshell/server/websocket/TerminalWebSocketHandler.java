@@ -1,7 +1,9 @@
 package com.easyshell.server.websocket;
 
 import com.easyshell.server.config.WebSocketAuthInterceptor;
-import java.net.URI;
+import com.easyshell.server.service.AuditLogService;
+import com.easyshell.server.service.HostAclService;
+import com.easyshell.server.service.HostAclService.Permission;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -11,8 +13,9 @@ import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 import java.io.IOException;
+import java.net.URI;
 import java.util.Map;
-import java.util.Set;
+import java.util.OptionalLong;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -20,44 +23,52 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 public class TerminalWebSocketHandler extends TextWebSocketHandler {
 
-    /**
-     * 交互式 shell 是最高权限的交互操作，只放行具备操作角色的用户。
-     * viewer（只读角色）一律拒绝；角色缺失/未知同样拒绝（fail-closed）。
-     * agent 是全局资源、没有属主字段，无法按资源归属授权，只能用 RBAC 兜底。
-     */
-    private static final Set<String> TERMINAL_ALLOWED_ROLES =
-            Set.of("operator", "admin", "super_admin");
-
     private final AgentWebSocketHandler agentHandler;
+    private final HostAclService hostAclService;
+    private final AuditLogService auditLogService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private final Map<String, WebSocketSession> sessionMap = new ConcurrentHashMap<>();
     private final Map<String, String> sessionToAgent = new ConcurrentHashMap<>();
+    private final Map<String, Binding> bindings = new ConcurrentHashMap<>();
 
-    public TerminalWebSocketHandler(AgentWebSocketHandler agentHandler) {
+    private record Binding(Long userId, String agentId, long generation) { }
+
+    public TerminalWebSocketHandler(AgentWebSocketHandler agentHandler,
+                                    HostAclService hostAclService,
+                                    AuditLogService auditLogService) {
         this.agentHandler = agentHandler;
+        this.hostAclService = hostAclService;
+        this.auditLogService = auditLogService;
         agentHandler.setTerminalHandler(this);
     }
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
-        if (session.getAttributes().get(WebSocketAuthInterceptor.ATTR_USER_ID) == null) {
-            log.warn("Terminal WebSocket without authenticated user, closing");
-            session.close(CloseStatus.POLICY_VIOLATION);
-            return;
-        }
-
-        // 认证不等于授权：登录用户还要有操作角色才能拿到主机 shell（B4 存量越权）。
-        String role = roleOf(session);
-        if (role == null || !TERMINAL_ALLOWED_ROLES.contains(role)) {
-            log.warn("Rejected terminal WebSocket: role {} is not allowed to open a host shell", role);
-            session.close(CloseStatus.POLICY_VIOLATION);
-            return;
-        }
-
+        Object principal = session.getAttributes().get(WebSocketAuthInterceptor.ATTR_USER_ID);
+        Long userId = principal instanceof Long id ? id : null;
         String agentId = extractAgentId(session);
+        if (userId == null) {
+            denyAccess(session, null, agentId, "unauthenticated user");
+            return;
+        }
+
         if (agentId == null) {
-            session.close(CloseStatus.BAD_DATA);
+            denyAccess(session, userId, null, "missing agent id");
+            return;
+        }
+
+        OptionalLong generation;
+        try {
+            generation = hostAclService.authorizedGeneration(userId, agentId, Permission.TERMINAL);
+        } catch (Exception e) {
+            log.warn("Terminal WebSocket authorization failed for user {}: {}",
+                    userId, e.getClass().getSimpleName());
+            denyAccess(session, userId, agentId, "authorization failed");
+            return;
+        }
+        if (generation.isEmpty()) {
+            denyAccess(session, userId, agentId, "terminal access denied");
             return;
         }
 
@@ -72,6 +83,9 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler {
 
         sessionMap.put(sessionId, session);
         sessionToAgent.put(sessionId, agentId);
+        bindings.put(sessionId, new Binding(userId, agentId, generation.getAsLong()));
+
+        if (!revalidate(sessionId, session)) return;
 
         Map<String, Object> openMsg = Map.of(
                 "type", "terminal_open",
@@ -96,6 +110,7 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler {
 
         String agentId = sessionToAgent.get(sessionId);
         if (agentId == null) return;
+        if (!revalidate(sessionId, session)) return;
 
         var node = objectMapper.readTree(message.getPayload());
         String type = node.has("type") ? node.get("type").asText() : "";
@@ -134,7 +149,7 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler {
         if (sessionId == null) return;
 
         String agentId = sessionToAgent.get(sessionId);
-        if (agentId != null) {
+        if (agentId != null && revalidate(sessionId, session)) {
             try {
                 Map<String, Object> closeMsg = Map.of(
                         "type", "terminal_close",
@@ -153,6 +168,7 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler {
     public void handleAgentReady(String sessionId) {
         WebSocketSession session = sessionMap.get(sessionId);
         if (session == null || !session.isOpen()) return;
+        if (!revalidate(sessionId, session)) return;
 
         try {
             session.sendMessage(new TextMessage(objectMapper.writeValueAsString(
@@ -167,6 +183,7 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler {
     public void handleAgentOutput(String sessionId, String data) {
         WebSocketSession session = sessionMap.get(sessionId);
         if (session == null || !session.isOpen()) return;
+        if (!revalidate(sessionId, session)) return;
 
         try {
             Map<String, Object> payload = Map.of(
@@ -182,6 +199,7 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler {
     public void handleAgentError(String sessionId, String error) {
         WebSocketSession session = sessionMap.get(sessionId);
         if (session == null || !session.isOpen()) return;
+        if (!revalidate(sessionId, session)) return;
 
         try {
             Map<String, Object> payload = Map.of(
@@ -208,11 +226,45 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler {
     private void cleanup(String sessionId) {
         sessionMap.remove(sessionId);
         sessionToAgent.remove(sessionId);
+        bindings.remove(sessionId);
     }
 
-    private static String roleOf(WebSocketSession session) {
-        Object role = session.getAttributes().get(WebSocketAuthInterceptor.ATTR_ROLE);
-        return role != null ? role.toString() : null;
+    private boolean revalidate(String sessionId, WebSocketSession session) {
+        Binding binding = bindings.get(sessionId);
+        if (binding == null) return false;
+        try {
+            if (hostAclService.allowedForGeneration(binding.userId(), binding.agentId(),
+                    binding.generation(), Permission.TERMINAL)) return true;
+        } catch (Exception e) {
+            log.warn("Terminal WebSocket authorization recheck failed: {}", e.getClass().getSimpleName());
+        }
+        // Remove first: the close callback must not send anything to the agent after denial.
+        cleanup(sessionId);
+        denyAccess(session, binding.userId(), binding.agentId(), "terminal authorization lost");
+        return false;
+    }
+
+    /** 关闭与审计独立执行，任一失败都不能导致终端被登记或打开。 */
+    private void denyAccess(WebSocketSession session, Long userId, String agentId, String reason) {
+        // audit_log.resource_id 与 agent.id 都是 64 字符，过长的非法路径不能阻止审计。
+        String auditAgentId = agentId != null && agentId.length() <= 64 ? agentId : null;
+        String logAgentId = auditAgentId == null ? "<invalid>"
+                : auditAgentId.replaceAll("[\\p{Cntrl}\\p{Zl}\\p{Zp}]", "?");
+        log.warn("Rejected terminal WebSocket: user={} agent={} reason={}", userId, logAgentId, reason);
+        try {
+            session.close(CloseStatus.POLICY_VIOLATION);
+        } catch (Exception e) {
+            log.warn("Failed to close rejected terminal WebSocket: {}", e.getClass().getSimpleName());
+        }
+        try {
+            Object username = session.getAttributes().get(WebSocketAuthInterceptor.ATTR_USERNAME);
+            String auditUsername = username instanceof String name && !name.isBlank() ? name : "SYSTEM";
+            auditLogService.logSync(userId, auditUsername, "WS_ACCESS_DENIED", "agent", auditAgentId,
+                    reason, null, "denied");
+        } catch (Exception e) {
+            log.error("Failed to audit rejected terminal WebSocket for user {}: {}",
+                    userId, e.getClass().getSimpleName());
+        }
     }
 
     private String extractAgentId(WebSocketSession session) {

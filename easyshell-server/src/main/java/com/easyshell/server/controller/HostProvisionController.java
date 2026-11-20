@@ -21,6 +21,7 @@ import java.util.List;
 public class HostProvisionController {
 
     private final HostProvisionService hostProvisionService;
+    private final com.easyshell.server.service.UnifiedHostQueryService unifiedHosts;
 
     @PostMapping
     @PreAuthorize("hasRole('SUPER_ADMIN')")
@@ -114,7 +115,9 @@ public class HostProvisionController {
 
     @GetMapping("/unified-list")
     @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
-    public R<List<HostCredentialVO>> unifiedList() {
-        return R.ok(hostProvisionService.listUnified());
+    public R<List<HostCredentialVO>> unifiedList(org.springframework.security.core.Authentication auth) {
+        if (auth==null || !auth.isAuthenticated() || !(auth.getPrincipal() instanceof Long actor))
+            throw new com.easyshell.server.common.exception.BusinessException(401,"Authentication required");
+        return R.ok(unifiedHosts.list(actor));
     }
 }

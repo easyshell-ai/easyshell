@@ -1,0 +1,9 @@
+{
+  "code": 200,
+  "message": "ok",
+  "data": [
+    { "id": 1, "name": "生产环境", "color": "blue", "agentCount": 3 },
+    { "id": 2, "name": "核心服务", "color": "red", "agentCount": 1 },
+    { "id": 3, "name": "数据库", "color": "purple", "agentCount": 1 }
+  ]
+}

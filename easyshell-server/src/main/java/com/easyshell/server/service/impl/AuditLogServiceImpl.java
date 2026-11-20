@@ -38,6 +38,22 @@ public class AuditLogServiceImpl implements AuditLogService {
     }
 
     @Override
+    public void logSync(Long userId, String username, String action, String resourceType,
+                        String resourceId, String detail, String ip, String result) {
+        // 同步且不吞异常：审计写失败即使业务失败（高危事件留痕纪律）
+        AuditLog auditLog = new AuditLog();
+        auditLog.setUserId(userId);
+        auditLog.setUsername(username);
+        auditLog.setAction(action);
+        auditLog.setResourceType(resourceType);
+        auditLog.setResourceId(resourceId);
+        auditLog.setDetail(detail);
+        auditLog.setIp(ip);
+        auditLog.setResult(result);
+        auditLogRepository.save(auditLog);
+    }
+
+    @Override
     public Page<AuditLog> findAll(Pageable pageable) {
         return auditLogRepository.findAllByOrderByCreatedAtDesc(pageable);
     }

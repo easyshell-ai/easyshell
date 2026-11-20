@@ -2,24 +2,48 @@ package com.easyshell.server.ai.tool;
 
 import com.easyshell.server.model.entity.AuditLog;
 import com.easyshell.server.service.AuditLogService;
-import lombok.RequiredArgsConstructor;
+import com.easyshell.server.repository.UserRepository;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 @Component
-@RequiredArgsConstructor
 public class AuditQueryTool {
 
     private final AuditLogService auditLogService;
+    private final UserRepository users;
+    private final Long currentUserId;
+
+    @Autowired
+    public AuditQueryTool(AuditLogService auditLogService, UserRepository users) {
+        this(auditLogService, users, null);
+    }
+
+    private AuditQueryTool(AuditLogService auditLogService, UserRepository users, Long currentUserId) {
+        this.auditLogService = auditLogService;
+        this.users = users;
+        this.currentUserId = currentUserId;
+    }
+
+    public AuditQueryTool forUser(Long userId, String sourceIp) {
+        return new AuditQueryTool(auditLogService, users, userId);
+    }
 
     @Tool(description = "查询操作审计日志，可按操作类型过滤。操作类型包括: LOGIN, SCRIPT_EXECUTE, AI_CHAT, SCHEDULED_TASK_EXECUTE 等")
     public String queryAuditLogs(
             @ToolParam(description = "操作类型过滤，为空则查询全部。例如: LOGIN, SCRIPT_EXECUTE, AI_CHAT") String action,
             @ToolParam(description = "返回条数，默认 20") int limit) {
+        try {
+            if (currentUserId == null || currentUserId <= 0 || users.findById(currentUserId)
+                    .filter(user -> Integer.valueOf(1).equals(user.getStatus()) && "super_admin".equals(user.getRole()))
+                    .isEmpty()) return "错误：无权查询审计日志。";
+        } catch (RuntimeException ex) {
+            return "错误：无权查询审计日志。";
+        }
         if (limit <= 0) limit = 20;
         if (limit > 100) limit = 100;
 

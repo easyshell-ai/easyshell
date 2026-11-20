@@ -13,6 +13,7 @@ import {
   Audit,
   TerminalPage,
   Users,
+  HostPermissions,
   SystemConfig,
   AiConfig,
   BotConfig,
@@ -24,6 +25,11 @@ import {
   AiScheduled,
   AiReports,
   AiApproval,
+  WorkflowList,
+  WorkflowEditor,
+  WorkflowRunList,
+  WorkflowRunMonitor,
+  WorkflowApprovals,
 } from './lazyPages';
 
 const router = createBrowserRouter([
@@ -68,6 +74,26 @@ const router = createBrowserRouter([
         element: <LazyLoad><Task /></LazyLoad>,
       },
       {
+        path: 'workflow',
+        element: <LazyLoad><WorkflowList /></LazyLoad>,
+      },
+      {
+        path: 'workflow/editor/:id',
+        element: <LazyLoad><WorkflowEditor /></LazyLoad>,
+      },
+      {
+        path: 'workflow/run',
+        element: <LazyLoad><WorkflowRunList /></LazyLoad>,
+      },
+      {
+        path: 'workflow/run/:runId',
+        element: <LazyLoad><WorkflowRunMonitor /></LazyLoad>,
+      },
+      {
+        path: 'workflow/approvals',
+        element: <LazyLoad><WorkflowApprovals /></LazyLoad>,
+      },
+      {
         path: 'cluster',
         element: <LazyLoad><Cluster /></LazyLoad>,
       },
@@ -94,6 +120,10 @@ const router = createBrowserRouter([
       {
         path: 'system/users',
         element: <LazyLoad><Users /></LazyLoad>,
+      },
+      {
+        path: 'system/host-permissions',
+        element: <LazyLoad><HostPermissions /></LazyLoad>,
       },
       {
         path: 'system/config',

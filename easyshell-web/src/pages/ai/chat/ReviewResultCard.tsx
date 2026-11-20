@@ -9,15 +9,15 @@ interface ReviewResultCardProps {
 
 type ReviewVerdict = 'pass' | 'fail' | 'partial';
 
-const VERDICT_CONFIG: Record<ReviewVerdict, { color: string; icon: React.ReactNode; key: string }> = {
-  pass: { color: '#52c41a', icon: <CheckCircleOutlined />, key: 'review.pass' },
-  fail: { color: '#ff4d4f', icon: <CloseCircleOutlined />, key: 'review.fail' },
-  partial: { color: '#faad14', icon: <ExclamationCircleOutlined />, key: 'review.partial' },
-};
-
 const ReviewResultCard: React.FC<ReviewResultCardProps> = ({ content }) => {
   const { token } = theme.useToken();
   const { t } = useTranslation();
+
+  const verdictConfig: Record<ReviewVerdict, { color: string; icon: React.ReactNode; key: string }> = {
+    pass: { color: token.colorSuccess, icon: <CheckCircleOutlined />, key: 'review.pass' },
+    fail: { color: token.colorError, icon: <CloseCircleOutlined />, key: 'review.fail' },
+    partial: { color: token.colorWarning, icon: <ExclamationCircleOutlined />, key: 'review.partial' },
+  };
 
   const verdict = useMemo<ReviewVerdict>(() => {
     const upper = content.toUpperCase();
@@ -26,7 +26,7 @@ const ReviewResultCard: React.FC<ReviewResultCardProps> = ({ content }) => {
     return 'pass';
   }, [content]);
 
-  const config = VERDICT_CONFIG[verdict];
+  const config = verdictConfig[verdict];
 
   return (
     <div style={{

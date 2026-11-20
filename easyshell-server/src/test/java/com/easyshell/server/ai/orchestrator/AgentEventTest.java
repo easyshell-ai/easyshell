@@ -35,9 +35,10 @@ class AgentEventTest {
     @Test
     void planAwaitConfirmation_setsTypeAndPlan() {
         ExecutionPlan plan = ExecutionPlan.builder().summary("test").build();
-        AgentEvent e = AgentEvent.planAwaitConfirmation(plan);
+        AgentEvent e = AgentEvent.planAwaitConfirmation(plan, "server-id");
         assertThat(e.getType()).isEqualTo(AgentEvent.Type.PLAN_AWAIT_CONFIRMATION);
         assertThat(e.getPlan()).isSameAs(plan);
+        assertThat(e.getPlanId()).isEqualTo("server-id");
     }
 
     @Test

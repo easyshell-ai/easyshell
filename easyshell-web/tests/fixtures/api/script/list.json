@@ -1,0 +1,45 @@
+{
+  "code": 200,
+  "message": "ok",
+  "data": [
+    {
+      "id": 1,
+      "name": "清理 7 天前日志",
+      "description": "清理 nginx 与应用日志，保留最近 7 天",
+      "content": "find /var/log -name '*.log' -mtime +7 -delete",
+      "scriptType": "shell",
+      "isPublic": true,
+      "isTemplate": false,
+      "createdBy": "admin",
+      "version": 3,
+      "createdAt": "2025-10-01T09:00:00",
+      "updatedAt": "2025-12-11T15:30:00"
+    },
+    {
+      "id": 2,
+      "name": "磁盘使用率巡检",
+      "description": "输出各挂载点使用率，超过 85% 告警",
+      "content": "df -h | awk 'NR>1 {print $5, $6}'",
+      "scriptType": "shell",
+      "isPublic": true,
+      "isTemplate": true,
+      "createdBy": "system",
+      "version": 1,
+      "createdAt": "2025-10-05T11:20:00",
+      "updatedAt": "2025-10-05T11:20:00"
+    },
+    {
+      "id": 3,
+      "name": "容器健康检查",
+      "description": "列出异常退出的 Docker 容器",
+      "content": "docker ps -a --filter status=exited --format '{{.Names}}'",
+      "scriptType": "shell",
+      "isPublic": false,
+      "isTemplate": false,
+      "createdBy": "admin",
+      "version": 2,
+      "createdAt": "2025-11-18T14:00:00",
+      "updatedAt": "2025-12-30T10:05:00"
+    }
+  ]
+}

@@ -8,6 +8,8 @@ import com.easyshell.server.model.entity.MetricSnapshot;
 import com.easyshell.server.repository.AgentRepository;
 import com.easyshell.server.repository.MetricSnapshotRepository;
 import com.easyshell.server.service.AgentService;
+import com.easyshell.server.service.HostIdentityService;
+import com.easyshell.server.security.AgentCredentialGenerationValidator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -24,11 +26,20 @@ public class AgentServiceImpl implements AgentService {
 
     private final AgentRepository agentRepository;
     private final MetricSnapshotRepository metricSnapshotRepository;
+    private final HostIdentityService hostIdentityService;
+    private final AgentCredentialGenerationValidator credentialValidator;
 
     @Override
     @Transactional
     public Agent register(AgentRegisterRequest request, String remoteIp) {
+        HostIdentityService.Identity identity = hostIdentityService.lock(request.getAgentId());
+        // Binding and retirement acquire this same row lock. Keep the downgrade check and
+        // registration in one transaction, including when bootstrapping with a shared secret.
+        if (!credentialValidator.permitsLegacyLocked(request.getAgentId())) {
+            throw new BusinessException(403, "Bound agent identity cannot register with legacy credentials");
+        }
         Agent agent = agentRepository.findById(request.getAgentId()).orElse(null);
+        hostIdentityService.activate(identity);
 
         if (agent == null) {
             agent = new Agent();
@@ -57,6 +68,7 @@ public class AgentServiceImpl implements AgentService {
     @Override
     @Transactional
     public void heartbeat(AgentHeartbeatRequest request, String remoteIp) {
+        hostIdentityService.lock(request.getAgentId());
         Agent agent = agentRepository.findById(request.getAgentId())
                 .orElseThrow(() -> new BusinessException(404, "Agent not found: " + request.getAgentId()));
 
